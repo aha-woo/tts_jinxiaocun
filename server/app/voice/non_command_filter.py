@@ -29,6 +29,7 @@ from typing import Protocol
 __all__ = [
     "BUSINESS_VERBS",
     "CHITCHAT_KEYWORDS",
+    "CHITCHAT_PATTERNS",
     "FILLER_CHARS",
     "STATIC_INTENT_KEYWORDS",
     "FilterDecision",
@@ -60,13 +61,21 @@ CHITCHAT_KEYWORDS: tuple[str, ...] = (
     "谢谢",
     "多谢",
     "辛苦了",
-    "哈哈",
     "笑死",
     "无聊",
     "讲个笑话",
     "唱首歌",
     "你是谁",
     "你叫什么",
+)
+
+#: 笑声/敷衍的表情化表达（用**模式**而不是词表，避免误杀「娃哈哈」这类商品名：
+#: 商品名里最多两个「哈」，连续 3 个以上才判成笑）
+CHITCHAT_PATTERNS: tuple["re.Pattern[str]", ...] = (
+    re.compile(r"哈{3,}"),
+    re.compile(r"嘿{2,}"),
+    re.compile(r"呵{2,}"),
+    re.compile(r"^嗯+$|^啊+$|^哦+$"),
 )
 
 #: 静态意图关键词（本地话术直接返回，不调 LLM）
@@ -328,6 +337,12 @@ class NonCommandFilter:
         for keyword in CHITCHAT_KEYWORDS:
             if keyword in compact:
                 return FilterDecision("reject", "chitchat", matched=keyword, error_code="E_NON_COMMAND")
+        for pattern in CHITCHAT_PATTERNS:
+            matched = pattern.search(compact)
+            if matched is not None:
+                return FilterDecision(
+                    "reject", "chitchat", matched=matched.group(0), error_code="E_NON_COMMAND"
+                )
 
         # 3. 静态意图（本地内容，不调 LLM）
         for intent_id, keywords in STATIC_INTENT_KEYWORDS.items():

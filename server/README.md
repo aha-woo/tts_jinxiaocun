@@ -154,8 +154,16 @@ app/
   tenant/cache.py      # tenant_cache_key：t:{tenant_id}:{store_id}:{biz}:{id}
   tenant/guards.py     # 角色 / 归属 / 租户状态守卫
   schemas/auth.py      # LoginRequest / LoginResponse
+  domain/intent_registry.py  # 38 个 intent 的行为规格（**只从契约派生**，零复制）
+  voice/*.py           # 六层漏斗 22 个模块（gate/filter/template/llm/clarify/pipeline）
   services/auth.py     # JWT 签发校验 + 首次登录开通租户
   services/wx_provider.py # FakeWxProvider（仅本地/测试）/ RealWxProvider（jscode2session）
+  services/quota.py    # 租户令牌桶 30/min + 1000/day（Redis Lua，内存降级）
+  services/usage_meter.py # usage_ledger 唯一写入口（只写 CARD_CREATED，同事务）
+  services/degrade.py  # L0~L4 逐级降级（可查可导出）
+  services/cost_monitor.py # 命中率/调用率/缓存命中率/平均 tokens/单次成本
+  services/upload_ticket.py # 音频票据（只收 audio_object_ref，共用 100KiB 常量）
+  pay/deliver_callback.py # 虚拟支付发货（单路径 + 验签 + OutTradeNo 幂等）
   utils/{money,date_utils,unit}.py   # 与 packages/shared/utils/*.ts 同语义
 migrations/
   env.py               # 在线/离线双模式；URL 优先级 attributes > DATABASE_URL > alembic.ini
@@ -172,7 +180,69 @@ tests/
   test_rls_cross_tenant.py    # 真实 PG 行为（PG_TEST_URL 缺失时 skip 并写明替代证据）
   test_auth.py                # 登录/开通/token 失效/错误码冻结/provider 注入
   test_readyz.py              # 就绪探针 + /healthz 结构冻结
+  voice_demo.py               # T03 共享夹具（离线商品词表 + 离线流水线）
+  test_template_hit.py        # **G3 命中率实测** + 模板意图 0 次 LLM
+  test_conflict_snapshot_vs_increment.py # 12 类冲突逐类回归（C1 双向断言）
+  test_quota_idempotency.py   # 令牌桶 + usage_ledger 幂等/同事务
+  test_clarify_rounds.py      # 澄清 ≤2 轮 / 1 槽 / 2~3 选项 / 不重调 AI
+  test_audio_100k.py          # 100KiB 同一常量 + 类型层禁 base64 + voice_log 只存文本
+  test_deliver_idempotency.py # 验签失败不发 / 重复不重发 / 不写 usage_ledger
+  test_auth_bootstrap_guard.py# ast 护栏：set_auth_bootstrap 只允许 auth.py 调用
+  test_cost_guardrails.py     # cost_monitor/degrade/prompt 预算/provider 误用
 ```
+
+## 语音解析与成本护栏（T03）
+
+六层漏斗 G0~G6 全在 `app/voice/`，**规则层（G3）是唯一省钱点，LLM（G4）是唯一计费点**。
+本层只做「文本 -> `ParseResult`」，不写库、不建卡片（那是 T04）。
+
+### 规则层命中率（实测，非估算）
+
+用 `intents.json` 的全部 `sample_utterances`（84 条）跑完整流水线：
+
+| 口径 | 数字 |
+|---|---|
+| 回归集规模 | 84 条 |
+| 规则层命中（停在 G2/G3） | **42 条 = 50.0%** |
+| 其中 `template_hit=true` 样本 | 42 条，命中 **42/42 = 100%** |
+| 非模板意图被误猜 | **0 条** |
+| 18 个模板意图的模型调用 | **0 次**（`CountingLlmProvider.calls == 0` 逐意图断言） |
+
+PRD 假设目标 ≥45%，实测 50.0%。**规则表按 intent 语义人工编写，匹配时不读取
+`sample_utterances`**，样本只用于事后度量（否则「用样本命中样本」会让数字失效）。
+
+### 三条防线的落地位置
+
+- **不猜**：`conflict_detector` 12 类冲突（PRD §2.6 逐条），阻断级冲突不出写卡；
+  单位缺系数一律 `pending` + 待教学，代码里没有「常见 24 瓶」这类兜底。
+- **不超支**：`services/quota.py` 租户级令牌桶 30/min + 1000/day（Redis Lua 原子，
+  无 Redis 降级内存）；`services/usage_meter.py` 是 `usage_ledger` 的**唯一写入口**，
+  只写 `CARD_CREATED`（DB `CHECK` 约束兜底），与卡片插入**同一事务**。
+- **不静默**：`services/degrade.py` L0→L4 逐级关能力（L3 仍能手录、L4 仍能查账），
+  历史可查可导出；`services/cost_monitor.py` 给出命中率/调用率/缓存命中率/平均 tokens/单次成本。
+
+### 音频链路（100KiB）
+
+`callContainer` 请求体有 **文本 100KiB 硬限制**，所以音频**不进请求体**：
+`POST /upload/ticket` 发票据 → 端侧 `wx.cloud.uploadFile` 直传 → `/voice/*` 只收
+`audio_object_ref`。两个入口共用 `upload_ticket.MAX_AUDIO_BYTES` **同一个常量**；
+入参 Schema（`UploadTicketRequest`）**不定义任何音频字段**（`extra="forbid"`），
+从类型层禁掉 base64；`voice_log` 只存 `asr_text`，对象引用在 `voice_session` 上，
+短 TTL + 限期删除（**合规口径需核实**）。
+
+### 发货回调（虚拟支付）
+
+**单路径**：只认云开发云函数消息推送（`xpay_*`）；云托管消息推送被显式拒绝（否则必然重复发货）。
+四条次序：验签（失败 → `E_PAY_SIGN_INVALID`，不落 `deliver_event`、不发额度）→
+`OutTradeNo` 幂等（重复 → `E_DELIVER_DUPLICATE`，不重复发）→ 发额度/权益 →
+**绝不写 `usage_ledger`**（发货与扣次是两本账）。`query_order` 兜底走同一个 `deliver_once`。
+
+### 静态护栏
+
+`tests/test_auth_bootstrap_guard.py`：用 `ast` 扫全仓，断言 `set_auth_bootstrap`
+的**调用点只在 `app/services/auth.py`**（定义处 `app/tenant/rls.py` 与测试文件豁免），
+防止「随手关掉租户隔离」这类不报错的数据泄漏。
+`infra/ci/tenant-guard-scan.py` 覆盖目录已扩到 `app/{models,voice,services,domain}`，命中 0。
 
 ## 容器
 
@@ -186,9 +256,10 @@ docker run --rm -p 8000:80 voice-inventory-lite:local
 云托管内不部署有状态服务，PG/Redis 必须外挂托管（D7/§4.5）。默认公网域名仅供接口测试，
 **不能用于生产**。小程序备案（AppID 备案）与域名备案无关，是上线与开支付的前置。
 
-## 待办（T03+）
+## 待办（T04+）
 
-- T03：`app/voice/*`（六层漏斗）、`app/domain/intent_registry.py`、`app/services/{quota,upload_ticket}.py`
-- T04：`app/pay/*`、`app/services/{ledger,reversal,entitlement}.py`、API 全集
+- T04：卡片/预演与入账（`confirm_card` 与 `usage_meter.bill_card` 同事务）、
+  `/voice/*` 与 `/upload/ticket` 路由、全量业务 API、`app/services/{ledger,reversal,entitlement}.py`
+- T03 遗留：接真实 LLM/ASR 后需复验「模板意图仍 0 调用」「Schema 修正重试次数」
 - 运维：把 PG 的**应用账号**建成非 `BYPASSRLS`、非表 owner（`FORCE` 之外的第二重保证），
   并用 `tests/test_rls_cross_tenant.py` 在真库上复核一次

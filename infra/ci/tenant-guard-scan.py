@@ -85,7 +85,12 @@ STRUCTURAL_EXEMPTIONS: tuple[tuple[re.Pattern[str], str], ...] = (
 DEFAULT_TARGETS = ("server/app", "server/migrations")
 
 #: 汇总里要单独点名的目录（证明「模型层也被扫到了」）
-SPOTLIGHT_DIRS = ("server/app/models",)
+SPOTLIGHT_DIRS = (
+    "server/app/models",
+    "server/app/voice",
+    "server/app/services",
+    "server/app/domain",
+)
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 

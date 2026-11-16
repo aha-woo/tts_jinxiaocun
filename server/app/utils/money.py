@@ -41,11 +41,13 @@ def yuan_to_fen(value: str | int | float | Decimal) -> int:
     Raises:
         ValueError: 入参不是合法十进制数字。
     """
-    raw = value if isinstance(value, Decimal) else str(value)
-    try:
-        amount = Decimal(raw.strip())
-    except (InvalidOperation, AttributeError) as exc:
-        raise ValueError(f"yuan_to_fen: 非法的金额输入 {value!r}") from exc
+    if isinstance(value, Decimal):
+        amount = value
+    else:
+        try:
+            amount = Decimal(str(value).strip())
+        except (InvalidOperation, AttributeError) as exc:
+            raise ValueError(f"yuan_to_fen: 非法的金额输入 {value!r}") from exc
     if not amount.is_finite():
         raise ValueError(f"yuan_to_fen: 非法的金额输入 {value!r}")
     rounded = amount.quantize(_CENT, rounding=ROUND_HALF_UP)

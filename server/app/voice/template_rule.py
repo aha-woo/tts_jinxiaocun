@@ -29,9 +29,9 @@
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from decimal import Decimal
-from typing import Any, Iterable, Mapping, Sequence
+from typing import Any, Iterable, Sequence
 
 from app.utils.date_utils import resolve_relative_date
 from app.utils.unit import CANONICAL_UNITS, normalize_unit
@@ -47,6 +47,7 @@ __all__ = [
     "RuleMatch",
     "SlotSpan",
     "TemplateRule",
+    "best_match",
     "extract_alias_span",
     "extract_date_span",
     "extract_doc_ref_span",
@@ -310,7 +311,7 @@ def extract_date_span(
         if position < 0:
             continue
         resolved = resolve_relative_date(cue, today_iso, last_date_iso)
-        if resolved.date_iso is None:
+        if resolved.date is None:
             return SlotSpan(
                 code="D",
                 text=cue,
@@ -326,21 +327,21 @@ def extract_date_span(
             text=cue,
             start=position,
             end=position + len(cue),
-            value=resolved.date_iso,
+            value=resolved.date,
             source="asr",
             confidence=0.9 if not resolved.needs_confirm else 0.6,
-            note=resolved.trace if hasattr(resolved, "trace") else "",
+            note=resolved.matched_rule,
         )
     match = re.search(r"(?P<day>\d{1,2})\s*(?:号|日)", text)
     if match is not None:
         resolved = resolve_relative_date(match.group(0), today_iso, last_date_iso)
-        if resolved.date_iso is not None:
+        if resolved.date is not None:
             return SlotSpan(
                 code="D",
                 text=match.group(0),
                 start=match.start(),
                 end=match.end(),
-                value=resolved.date_iso,
+                value=resolved.date,
                 source="asr",
                 confidence=0.85,
             )
@@ -503,6 +504,8 @@ class TemplateRule:
     forbid_interrogative: bool = False
     require_quantity: bool = False
     require_money: bool = False
+    #: 必须是「一句话多商品」才命中（``*_multi`` 意图专用）
+    require_multi: bool = False
     #: 句子长度上限（控制类短指令用，避免「取消」吞掉整句业务）
     max_chars: int | None = None
     min_chars: int = 0
@@ -608,8 +611,9 @@ RULE_TABLE: tuple[TemplateRule, ...] = (
     _r(
         "stock.take_multi",
         PRIORITY_DANGER + 10,
-        (("盘点", "盘货", "盘了", "盘下", "盘一下", "数了下", "数一下", "点数", "清点"),),
+        (("盘点", "盘货", "盘了", "盘下", "盘一下", "数了下", "数一下", "点数", "清点", "还剩", "还有", "剩下"),),
         rule_id="rule.stock.take_multi",
+        require_multi=True,
         none_keywords=_REVERSAL_GUARD,
         require_quantity=True,
         forbid_interrogative=True,
@@ -618,7 +622,7 @@ RULE_TABLE: tuple[TemplateRule, ...] = (
     _r(
         "stock.take",
         PRIORITY_DANGER,
-        (("盘点", "盘货", "盘了", "盘下", "盘一下", "数了下", "数一下", "点数", "清点"),),
+        (("盘点", "盘货", "盘了", "盘下", "盘一下", "数了下", "数一下", "点数", "清点", "还剩", "还有", "剩下"),),
         rule_id="rule.stock.take",
         none_keywords=_REVERSAL_GUARD,
         require_quantity=True,
@@ -659,7 +663,7 @@ RULE_TABLE: tuple[TemplateRule, ...] = (
         "doc.query",
         PRIORITY_QUERY,
         (
-            ("单子", "单据", "上一单", "上一张", "那张单", "小票", "单号"),
+            ("单子", "单据", "上一单", "上一张", "那张单", "那张", "小票", "单号", "的单"),
             ("调出来", "给我看", "查", "看一下", "翻出来", "打开"),
         ),
         rule_id="rule.doc.query",
@@ -681,44 +685,96 @@ RULE_TABLE: tuple[TemplateRule, ...] = (
             ("赚", "卖", "进", "收入", "营业额", "毛利"),
         ),
         rule_id="rule.report.today",
-        none_keywords=("一共", "总共", "合计"),
+        none_keywords=("一共", "总共", "合计", "卖了几", "进出", "流水", "查一下"),
         require_interrogative=True,
-        note="含「一共」时归 doc.query_summary",
+        note="含「一共」时归 doc.query_summary；流水类走 LLM",
     ),
     # ---------------- 写操作通用模板 ----------------
     _r(
         "purchase.create_multi",
         PRIORITY_WRITE + 20,
-        (("进了", "进货", "进点货", "上货", "采购", "拿货", "提货", "到了", "拉到", "拉了", "拿了"),),
+        (("进了", "进货", "进点货", "上货", "采购", "拿货", "提货", "到了", "拉到", "拉了", "拿了", "再入", "又进", "补了", "补货"),),
         rule_id="rule.purchase.create_multi",
-        none_keywords=_REVERSAL_GUARD,
+        none_keywords=_REVERSAL_GUARD + ("以后", "我说"),
         require_quantity=True,
+        require_multi=True,
         forbid_interrogative=True,
     ),
     _r(
         "purchase.create",
         PRIORITY_WRITE,
-        (("进了", "进货", "进点货", "上货", "采购", "拿货", "提货", "到了", "拉到", "拉了", "拿了"),),
+        (("进了", "进货", "进点货", "上货", "采购", "拿货", "提货", "到了", "拉到", "拉了", "拿了", "再入", "又进", "补了", "补货"),),
         rule_id="rule.purchase.create",
-        none_keywords=_REVERSAL_GUARD,
+        none_keywords=_REVERSAL_GUARD + ("以后", "我说", "进价", "售价"),
         require_quantity=True,
         forbid_interrogative=True,
     ),
     _r(
         "sales.create_multi",
         PRIORITY_WRITE + 20,
-        (("卖了", "卖", "出库", "拿走", "要了", "提走", "发出了"),),
+        (("卖了", "卖", "出库", "拿走", "要了", "要", "提走", "发出了"),),
         rule_id="rule.sales.create_multi",
-        none_keywords=_REVERSAL_GUARD + ("卖得", "最好", "最多", "排行", "畅销", "下架", "别卖"),
+        require_multi=True,
+        none_keywords=_REVERSAL_GUARD
+        + (
+            "卖得",
+            "最好",
+            "最多",
+            "排行",
+            "畅销",
+            "下架",
+            "别卖",
+            "以后",
+            "我说",
+            "不要",
+            "需要",
+            "只要",
+            "主要",
+            "加个新品",
+            "新品",
+            "新增商品",
+            "建档",
+            "进价",
+            "售价",
+            "零售价",
+            "改价",
+            "调到",
+            "改到",
+        ),
         require_quantity=True,
         forbid_interrogative=True,
     ),
     _r(
         "sales.create",
         PRIORITY_WRITE,
-        (("卖了", "卖", "出库", "拿走", "要了", "提走", "发出了"),),
+        (("卖了", "卖", "出库", "拿走", "要了", "要", "提走", "发出了"),),
         rule_id="rule.sales.create",
-        none_keywords=_REVERSAL_GUARD + ("卖得", "最好", "最多", "排行", "畅销", "下架", "别卖"),
+        none_keywords=_REVERSAL_GUARD
+        + (
+            "卖得",
+            "最好",
+            "最多",
+            "排行",
+            "畅销",
+            "下架",
+            "别卖",
+            "以后",
+            "我说",
+            "不要",
+            "需要",
+            "只要",
+            "主要",
+            "加个新品",
+            "新品",
+            "新增商品",
+            "建档",
+            "进价",
+            "售价",
+            "零售价",
+            "改价",
+            "调到",
+            "改到",
+        ),
         require_quantity=True,
         forbid_interrogative=True,
     ),
@@ -732,9 +788,9 @@ RULE_TABLE: tuple[TemplateRule, ...] = (
     _r(
         "product.alias.add",
         PRIORITY_FEEDBACK,
-        (("别名",), ("叫", "就指", "就叫", "简称", "以后")),
+        (("别名", "就指", "又叫", "就叫", "简称", "以后"),),
         rule_id="rule.product.alias.add",
-        none_keywords=("改叫", "并到"),
+        none_keywords=("改叫", "并到", "以后我说", "就是", "教我说", "别卖", "不卖", "下架"),
         note="「改叫」属 partner.update，「并到」属 partner.merge",
     ),
 )
@@ -748,8 +804,11 @@ def _structural_ok(
     quantity_present: bool,
     money_present: bool,
     length: int,
+    multi_present: bool = False,
 ) -> bool:
     """结构前置条件（不含关键词）是否满足。"""
+    if rule.require_multi and not multi_present:
+        return False
     if rule.max_chars is not None and length > rule.max_chars:
         return False
     if length < rule.min_chars:
@@ -772,6 +831,7 @@ def match_rules(
     rules: Iterable[TemplateRule] = RULE_TABLE,
     quantity_present: bool | None = None,
     money_present: bool = False,
+    multi_present: bool = False,
     strip_hint: str | None = None,
 ) -> tuple[RuleMatch, ...]:
     """把原话匹配到规则表，返回**按优先级降序**的候选（可能多个）。
@@ -781,6 +841,7 @@ def match_rules(
         rules: 规则表（测试可注入子集）。
         quantity_present: 是否含「数字+单位」；``None`` 表示现场判断。
         money_present: 是否含金额片段。
+        multi_present: 是否「一句话多商品」（由引擎按商品命中数判定）。
         strip_hint: 已识别为商品名的片段（用于把商品词从证据里剔除，避免误算长度）。
 
     Returns:
@@ -804,6 +865,7 @@ def match_rules(
             quantity_present=quantity_present,
             money_present=money_present,
             length=length,
+            multi_present=multi_present,
         ):
             continue
         groups_hit, words = rule.evidence(haystack)

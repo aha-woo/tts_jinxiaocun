@@ -87,7 +87,7 @@ class AliasHit:
     @property
     def resolved(self) -> bool:
         """是否唯一命中（可以填 ``P``）。"""
-        return self.product is not None and not self.candidates
+        return self.product is not None and len(self.candidates) <= 1
 
     @property
     def ambiguous(self) -> bool:
