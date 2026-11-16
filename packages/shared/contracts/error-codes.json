@@ -1,0 +1,222 @@
+{
+  "$schema_note": "错误码单一真相源。来源：docs/02-架构设计.md §5.1 错误码清单 + §8.4 跨文件约定（含 v1.1 新增 5 个）。numeric 为 API 包络里的 code 整数（0 表示成功）。",
+  "version": "1.1.0",
+  "count": 25,
+  "success_code": 0,
+  "numeric_ranges": {
+    "gate_filter": [1001, 1099],
+    "parse_llm": [1101, 1199],
+    "card_confirm": [1201, 1299],
+    "auth_tenant": [1301, 1399],
+    "payment_entitlement": [1401, 1499],
+    "system": [1501, 1599]
+  },
+  "rule": "门禁/过滤类错误不扣次；E_PREVIEW_VERSION_CONFLICT 必须触发重新预演；E_R3_BLOCKED / E_R3_PC_REQUIRED 引导电脑版微信大屏管理页。",
+  "codes": {
+    "E_GATE_REJECT": {
+      "numeric": 1001,
+      "http_status": 422,
+      "category": "gate_filter",
+      "message_zh": "录音太短、太长或没检测到说话，请重新按一下说。",
+      "deduct_quota": false,
+      "client_action": "回到录音态，提示最短 0.8s / 最长 15s"
+    },
+    "E_NON_COMMAND": {
+      "numeric": 1002,
+      "http_status": 200,
+      "category": "gate_filter",
+      "message_zh": "这句听起来不是记账的，没记。",
+      "deduct_quota": false,
+      "client_action": "轻提示 + 展示「怎么跟我说」示例"
+    },
+    "E_FILTERED_DUP": {
+      "numeric": 1003,
+      "http_status": 200,
+      "category": "gate_filter",
+      "message_zh": "这句刚才已经录过了。",
+      "deduct_quota": false,
+      "client_action": "展示首次结果，不重复落账"
+    },
+    "E_LOW_CONFIDENCE": {
+      "numeric": 1004,
+      "http_status": 200,
+      "category": "gate_filter",
+      "message_zh": "没太听清，我确认一下。",
+      "deduct_quota": false,
+      "client_action": "进入澄清状态机（最多 2 轮）"
+    },
+    "E_CLARIFY_LIMIT": {
+      "numeric": 1005,
+      "http_status": 422,
+      "category": "gate_filter",
+      "message_zh": "问了两轮还是没听清，用数字键盘手动补吧。",
+      "deduct_quota": false,
+      "client_action": "切手动补录（数字键盘）"
+    },
+    "E_LLM_SCHEMA_INVALID": {
+      "numeric": 1101,
+      "http_status": 502,
+      "category": "parse_llm",
+      "message_zh": "解析结果格式不对，已重试一次仍失败，请重说。",
+      "deduct_quota": false,
+      "client_action": "降级到规则层/手动补录"
+    },
+    "E_LLM_TIMEOUT": {
+      "numeric": 1102,
+      "http_status": 504,
+      "category": "parse_llm",
+      "message_zh": "解析超时了，请再说一遍或用键盘补录。",
+      "deduct_quota": false,
+      "client_action": "降级到规则层/手动补录"
+    },
+    "E_QUOTA_EXCEEDED": {
+      "numeric": 1103,
+      "http_status": 200,
+      "category": "parse_llm",
+      "message_zh": "这个周期的语音额度用完了，已切到省额度模式，手打也能记。",
+      "deduct_quota": false,
+      "client_action": "展示降级态 L2~L4（降级不断服，不报错弹窗）"
+    },
+    "E_CARD_EXPIRED": {
+      "numeric": 1201,
+      "http_status": 409,
+      "category": "card_confirm",
+      "message_zh": "这张确认卡片超时了（30s），已收进待确认。",
+      "deduct_quota": false,
+      "client_action": "进待确认列表，复活时不重复扣次"
+    },
+    "E_PREVIEW_VERSION_CONFLICT": {
+      "numeric": 1202,
+      "http_status": 409,
+      "category": "card_confirm",
+      "message_zh": "库存刚被别人改过，卡片已过期，我重新算一遍。",
+      "deduct_quota": false,
+      "client_action": "强制重新只读预演，禁止按旧态落账"
+    },
+    "E_REVERSAL_WINDOW_CLOSED": {
+      "numeric": 1203,
+      "http_status": 409,
+      "category": "card_confirm",
+      "message_zh": "过了撤销时间（10 分钟），只能走更正单。",
+      "deduct_quota": false,
+      "client_action": "引导 sys.correct 更正流程"
+    },
+    "E_DOC_REFERENCED": {
+      "numeric": 1204,
+      "http_status": 409,
+      "category": "card_confirm",
+      "message_zh": "这张单已经被别的单引用了，不能直接撤。",
+      "deduct_quota": false,
+      "client_action": "展示引用链，引导更正单"
+    },
+    "E_R3_BLOCKED": {
+      "numeric": 1205,
+      "http_status": 403,
+      "category": "card_confirm",
+      "message_zh": "这个动作语音不能直接做，已生成待办，到电脑版微信大屏管理页确认。",
+      "deduct_quota": false,
+      "client_action": "生成 pending_task，跳大屏审批入口"
+    },
+    "E_R3_PC_REQUIRED": {
+      "numeric": 1206,
+      "http_status": 403,
+      "category": "card_confirm",
+      "message_zh": "该操作需在电脑版微信大屏管理页执行（同一账号登录，role=boss 并二次确认）。",
+      "comment": "v1.1 新增：等同「R3 需电脑版微信大屏管理页执行」；无独立网页端，禁止引导到外部浏览器或 H5",
+      "deduct_quota": false,
+      "client_action": "引导大屏管理页（resizable 双栏），不提供网页链接"
+    },
+    "E_TENANT_DENIED": {
+      "numeric": 1301,
+      "http_status": 403,
+      "category": "auth_tenant",
+      "message_zh": "没有这个商户的访问权限。",
+      "deduct_quota": false,
+      "client_action": "重新 wx.login 或提示切换账号"
+    },
+    "E_ROLE_DENIED": {
+      "numeric": 1302,
+      "http_status": 403,
+      "category": "auth_tenant",
+      "message_zh": "你的角色没有这个权限，请联系老板。",
+      "deduct_quota": false,
+      "client_action": "展示所需角色（如 role=boss）"
+    },
+    "E_AUTH_INVALID": {
+      "numeric": 1303,
+      "http_status": 401,
+      "category": "auth_tenant",
+      "message_zh": "登录状态失效了，请重新进入小程序。",
+      "deduct_quota": false,
+      "client_action": "重新 wx.login 换取 JWT"
+    },
+    "E_PAY_SIGN_INVALID": {
+      "numeric": 1401,
+      "http_status": 401,
+      "category": "payment_entitlement",
+      "message_zh": "支付回调验签失败，未发货。",
+      "comment": "v1.1 新增：发货推送验签失败，不落 deliver_event、不发额度",
+      "deduct_quota": false,
+      "client_action": "记录审计，等待支付平台重推或 query_order 兜底"
+    },
+    "E_DELIVER_DUPLICATE": {
+      "numeric": 1402,
+      "http_status": 200,
+      "category": "payment_entitlement",
+      "message_zh": "这次发货已经处理过了，不会重复发额度。",
+      "comment": "v1.1 新增：deliver_event 以 outTradeNo 幂等，重复推送不重复发额度",
+      "deduct_quota": false,
+      "client_action": "返回首次发货结果，幂等成功"
+    },
+    "E_ENTITLEMENT_EXPIRED": {
+      "numeric": 1403,
+      "http_status": 402,
+      "category": "payment_entitlement",
+      "message_zh": "权益已到期，额度回到免费档；已记的账随时可查可导出。",
+      "comment": "v1.1 新增：到期不自动扣费（auto_renew=false），靠自有推送提醒复购",
+      "deduct_quota": false,
+      "client_action": "展示道具直购入口（小程序虚拟支付），不得引导外部付款"
+    },
+    "E_AUDIO_TOO_LARGE": {
+      "numeric": 1404,
+      "http_status": 413,
+      "category": "payment_entitlement",
+      "message_zh": "录音文件太大了，请说短一点（音频不走私有链路，只传引用）。",
+      "comment": "v1.1 新增：callContainer 请求体 ≤100K，音频本体绝不进私有链路",
+      "deduct_quota": false,
+      "client_action": "端侧重录并压缩；确认走对象存储直传 + 仅传 audio_object_ref"
+    },
+    "E_DUPLICATE_REQUEST": {
+      "numeric": 1501,
+      "http_status": 409,
+      "category": "system",
+      "message_zh": "这个请求正在处理中，别重复点。",
+      "deduct_quota": false,
+      "client_action": "复用首次请求结果；稍后重试"
+    },
+    "E_VALIDATION": {
+      "numeric": 1502,
+      "http_status": 422,
+      "category": "system",
+      "message_zh": "请求参数不合法。",
+      "deduct_quota": false,
+      "client_action": "修正入参（前端表单校验兜底）"
+    },
+    "E_INTERNAL": {
+      "numeric": 1503,
+      "http_status": 500,
+      "category": "system",
+      "message_zh": "系统开小差了，请稍后再试。",
+      "deduct_quota": false,
+      "client_action": "上报 trace_id，不暴露内部细节"
+    },
+    "E_NOT_FOUND": {
+      "numeric": 1504,
+      "http_status": 404,
+      "category": "system",
+      "message_zh": "接口不存在，请检查版本或路径。",
+      "deduct_quota": false,
+      "client_action": "核对 API 路径与版本前缀（/api/v1）"
+    }
+  }
+}

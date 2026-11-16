@@ -1,0 +1,44 @@
+{
+  "$schema_note": "source 枚举单一真相源（严格 5 值）。用途：解释每个槽位值的来路，卡片角标与成本归因都依赖它。见 docs/01-PRD.md §3.2 / docs/02-架构设计.md §8.4。",
+  "version": "1.1.0",
+  "count": 5,
+  "closed": true,
+  "rule": "任何非 asr 的 source 必须在确认卡片带角标；computed 必须附 calc_trace；pending 不得静默填值。",
+  "sources": [
+    {
+      "code": "asr",
+      "name_zh": "语音直接识别",
+      "badge_zh": "无角标",
+      "badge_required": false,
+      "description": "值直接来自 ASR 文本或规则模板抽取，语义明确。"
+    },
+    {
+      "code": "default",
+      "name_zh": "缺省补全",
+      "badge_zh": "默认",
+      "badge_required": true,
+      "description": "用户未说，按 slots.json 的 default_rule 补全（如 D=今天、C=散客、PS=已结）。"
+    },
+    {
+      "code": "computed",
+      "name_zh": "计算/换算得到",
+      "badge_zh": "推算",
+      "badge_required": true,
+      "description": "由其他槽位推导或按换算系数折算（UP×Q=TA、2 箱=48 瓶），必须附 calc_trace。"
+    },
+    {
+      "code": "alias",
+      "name_zh": "命中个人/行业词表",
+      "badge_zh": "按你的习惯",
+      "badge_required": true,
+      "description": "命中别名本或教说法产生的个人词表。"
+    },
+    {
+      "code": "pending",
+      "name_zh": "待确认/待补",
+      "badge_zh": "待补",
+      "badge_required": true,
+      "description": "无法确定（如 S=待补、无换算系数），必须显式提示，禁止静默填值。"
+    }
+  ]
+}

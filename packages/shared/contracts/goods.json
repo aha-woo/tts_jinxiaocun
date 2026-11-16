@@ -1,0 +1,79 @@
+{
+  "$schema_note": "虚拟支付道具定义单一真相源（v1.1）。来源：docs/01-PRD.md §6.2 权益道具分层 + §6.3 一次性购买。价格/额度均为产品假设，需核实。",
+  "version": "1.1.0",
+  "count": 4,
+  "constraints": {
+    "auto_renew_always_false": true,
+    "auto_renew_note": "取消自动续费：一次性道具直购，到期不自动扣费，靠自有推送提醒复购",
+    "min_payment_fen": 100,
+    "min_payment_note": "iOS 虚拟支付最低支付 1 元（需核实）",
+    "payment_channel": "wx.requestVirtualPayment",
+    "forbidden_channels": ["wx.requestPayment", "外部付款链接", "客服转账开通"],
+    "channel_fee_note": "渠道抽成： Android 等 1% / iOS 12%，企业费率与 Windows 端口径需核实；iOS 占比 40% 为假设",
+    "deliver_note": "发货只以发货推送（云开发云函数主路径）为准，前端 success 不作发货依据；deliver_event 以 outTradeNo 幂等"
+  },
+  "plan_codes": ["free", "30day", "quota_pack"],
+  "goods": [
+    {
+      "goods_id": "entitlement_30d_basic",
+      "goods_type": "entitlement",
+      "name_zh": "30 天权益 · 基础",
+      "plan_code": "30day",
+      "price_fen": 1500,
+      "quota_amount": 800,
+      "validity_days": 30,
+      "auto_renew": false,
+      "status": "on_shelf",
+      "benefits_zh": "免费全部 + 别名本/常用商品本完整、欠款应收应付、连续录单、撤销窗口、二次语音确认",
+      "note": "价格 ¥9~19 / 800 次额度：产品侧假设，需核实"
+    },
+    {
+      "goods_id": "entitlement_30d_pro",
+      "goods_type": "entitlement",
+      "name_zh": "30 天权益 · 专业",
+      "plan_code": "30day",
+      "price_fen": 3900,
+      "quota_amount": 2500,
+      "validity_days": 30,
+      "auto_renew": false,
+      "status": "on_shelf",
+      "benefits_zh": "基础全部 + 多员工角色、全报表、批量导入、优先解析、导出增强",
+      "note": "价格 ¥29~49 / 2000~3000 次额度：产品侧假设，需核实"
+    },
+    {
+      "goods_id": "entitlement_30d_store",
+      "goods_type": "entitlement",
+      "name_zh": "30 天权益 · 门店版（多门店）",
+      "plan_code": "30day",
+      "price_fen": 9900,
+      "quota_amount": 4000,
+      "validity_days": 30,
+      "auto_renew": false,
+      "status": "off_shelf",
+      "benefits_zh": "专业全部 + 多门店、组织/角色权限、跨店汇总、门店对账、集中看板（调拨 P2）",
+      "note": "价格 ¥79~199 起按门店阶梯：产品侧假设，需核实；MVP 不上架"
+    },
+    {
+      "goods_id": "quota_pack_500",
+      "goods_type": "quota_pack",
+      "name_zh": "语音加油包（500 次）",
+      "plan_code": "quota_pack",
+      "price_fen": 500,
+      "quota_amount": 500,
+      "validity_days": 0,
+      "auto_renew": false,
+      "status": "on_shelf",
+      "benefits_zh": "只加语音额度，不改权益档位、不顺延权益有效期",
+      "note": "¥5 / 500 次为假设，需核实；发货即给 usage_quota 加额度"
+    }
+  ],
+  "free_plan": {
+    "plan_code": "free",
+    "price_fen": 0,
+    "quota_amount": 200,
+    "first_period_bonus": 100,
+    "validity_days": 30,
+    "auto_renew": false,
+    "limits_zh": "单商户、单主仓、1 人、基础进销存、核心报表、数据导出、个人词表最小版"
+  }
+}

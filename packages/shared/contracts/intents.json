@@ -1,0 +1,1345 @@
+{
+  "$schema_note": "Intent 单一真相源（38 个）。来源：docs/01-PRD.md §2.8 命令清单表 + §2.9 字段建议；落地约定见 docs/02-架构设计.md 附录 A3。端侧与服务端均只读本文件，禁止各自硬编码 risk_level/confirm_policy/side_effect/reversal。",
+  "version": "1.1.0",
+  "generated_from": "docs/01-PRD.md#2.8",
+  "owner": "software-architect",
+  "count": 38,
+  "field_spec": {
+    "intent_id": "string，全局唯一，枚举见附录 A2",
+    "seq": "int，PRD 2.8 表序号，便于对照",
+    "domain": "12 业务域之一，见 domains.json",
+    "risk_level": "R0 只读 / R1 常规写入 / R2 重点确认 / R3 白名单禁止语音直接执行",
+    "confirm_policy": "C0 无需确认 / C1 大按钮 / C2 按钮+二次语音 / C3 仅电脑版微信大屏管理页执行",
+    "required_slots": "槽位代号数组，全部为 slots.json 中的 code；空数组表示无必填",
+    "optional_slots": "可选槽位代号数组",
+    "dynamic_escalation": "运行时风险升级规则（如 PS=未结 时 sales.create 升 R2/C2），无则为 null",
+    "template_hit": "bool，true 表示规则层必须存在对应 TemplateRule（不得调 LLM）",
+    "whitelist_blocked": "bool，true 表示只允许生成 pending_task，任何路径不得直写业务表",
+    "sample_utterances": "真实口语句式，≥1（本文件 ≥2），来自 PRD §2.4 / §2.8",
+    "side_effect": "声明式副作用，ImpactPreviewService 唯一输入来源",
+    "reversal": "可撤销性与反做单规则",
+    "clarifier_templates": "slot_code -> 追问话术（静态内容，不调 AI）",
+    "milestone": "MVP / P0 / P1 / P2，来自 PRD §2.8 落地备注"
+  },
+  "enums": {
+    "risk_level": ["R0", "R1", "R2", "R3"],
+    "confirm_policy": ["C0", "C1", "C2", "C3"],
+    "inventory_delta": ["increase", "decrease", "snapshot", "adjust", "none"],
+    "ar_ap_delta": [
+      "none",
+      "receivable_increase",
+      "receivable_decrease",
+      "payable_increase",
+      "payable_decrease"
+    ],
+    "reversal_method": ["reversal_doc", "pending_task", "none"]
+  },
+  "intents": [
+    {
+      "seq": 1,
+      "intent_id": "purchase.create",
+      "name_zh": "采购入库（单商品）",
+      "domain": "purchase",
+      "risk_level": "R1",
+      "confirm_policy": "C1",
+      "required_slots": ["P", "Q"],
+      "optional_slots": ["U", "UP", "TA", "S", "D", "PS", "N", "W"],
+      "dynamic_escalation": "PS=未结 → 升 R2/C2（赊账采购）",
+      "template_hit": true,
+      "whitelist_blocked": false,
+      "sample_utterances": [
+        "今天进了两箱可乐，一件三十五",
+        "刚到了 20 件娃哈哈，先欠着老张家的钱",
+        "啤酒拉了五箱，一共两百三，已经微信付了"
+      ],
+      "side_effect": {
+        "writes_db": true,
+        "inventory_delta": "increase",
+        "ar_ap_delta": "payable_increase",
+        "affects_report": true,
+        "entities": ["inventory", "doc", "ar_ap"]
+      },
+      "reversal": {
+        "allowed": true,
+        "method": "reversal_doc",
+        "window_minutes": 10,
+        "block_if_referenced": true
+      },
+      "clarifier_templates": {
+        "Q": "进了多少？说个数量，比如「两箱」。",
+        "P": "是哪样货？再说一次名字。",
+        "U": "按箱还是按瓶？"
+      },
+      "milestone": "MVP"
+    },
+    {
+      "seq": 2,
+      "intent_id": "purchase.create_multi",
+      "name_zh": "采购入库（一句话多商品）",
+      "domain": "purchase",
+      "risk_level": "R1",
+      "confirm_policy": "C1",
+      "required_slots": ["P", "Q"],
+      "optional_slots": ["U", "UP", "TA", "S", "D", "PS", "W", "N"],
+      "dynamic_escalation": "PS=未结 → 升 R2/C2",
+      "template_hit": true,
+      "whitelist_blocked": false,
+      "sample_utterances": [
+        "进点货：红牛一件、和其正两件，都按老价",
+        "上王老板那拿了三箱矿泉水，每箱 24"
+      ],
+      "side_effect": {
+        "writes_db": true,
+        "inventory_delta": "increase",
+        "ar_ap_delta": "payable_increase",
+        "affects_report": true,
+        "entities": ["inventory", "doc", "ar_ap"]
+      },
+      "reversal": {
+        "allowed": true,
+        "method": "reversal_doc",
+        "window_minutes": 10,
+        "block_if_referenced": true
+      },
+      "clarifier_templates": {
+        "Q": "哪一样没听清数量？再说一次。",
+        "P": "这几样货分别是什么？"
+      },
+      "milestone": "P0"
+    },
+    {
+      "seq": 3,
+      "intent_id": "sales.create",
+      "name_zh": "销售出库（单商品）",
+      "domain": "sales",
+      "risk_level": "R1",
+      "confirm_policy": "C1",
+      "required_slots": ["P", "Q"],
+      "optional_slots": ["U", "UP", "TA", "C", "D", "PS", "N", "W"],
+      "dynamic_escalation": "PS=未结（赊账）→ 升 R2 且确认策略升 C2",
+      "template_hit": true,
+      "whitelist_blocked": false,
+      "sample_utterances": [
+        "李婶拿走两条烟，一共四百六，说下回给",
+        "卖了三瓶冰红茶，收了 12 块",
+        "出库：娃哈哈一箱给二中门口那个店"
+      ],
+      "side_effect": {
+        "writes_db": true,
+        "inventory_delta": "decrease",
+        "ar_ap_delta": "receivable_increase",
+        "affects_report": true,
+        "entities": ["inventory", "doc", "ar_ap"]
+      },
+      "reversal": {
+        "allowed": true,
+        "method": "reversal_doc",
+        "window_minutes": 10,
+        "block_if_referenced": true
+      },
+      "clarifier_templates": {
+        "Q": "卖了多少？说个数量。",
+        "P": "卖的是哪样货？",
+        "C": "卖给谁？不记得就说「散客」。"
+      },
+      "milestone": "MVP"
+    },
+    {
+      "seq": 4,
+      "intent_id": "sales.create_multi",
+      "name_zh": "销售出库（一句话多商品）",
+      "domain": "sales",
+      "risk_level": "R1",
+      "confirm_policy": "C1",
+      "required_slots": ["P", "Q"],
+      "optional_slots": ["U", "C", "D", "PS", "W", "UP", "TA"],
+      "dynamic_escalation": "PS=未结 → 升 R2/C2",
+      "template_hit": true,
+      "whitelist_blocked": false,
+      "sample_utterances": [
+        "今天卖了 5 斤苹果、3 斤香蕉，现金",
+        "那个……来福超市要十箱可乐，记账上"
+      ],
+      "side_effect": {
+        "writes_db": true,
+        "inventory_delta": "decrease",
+        "ar_ap_delta": "receivable_increase",
+        "affects_report": true,
+        "entities": ["inventory", "doc", "ar_ap"]
+      },
+      "reversal": {
+        "allowed": true,
+        "method": "reversal_doc",
+        "window_minutes": 10,
+        "block_if_referenced": true
+      },
+      "clarifier_templates": {
+        "Q": "哪一样没听清数量？",
+        "P": "这几样分别是什么？"
+      },
+      "milestone": "P0"
+    },
+    {
+      "seq": 5,
+      "intent_id": "sales_return.create",
+      "name_zh": "销售退货",
+      "domain": "return",
+      "risk_level": "R2",
+      "confirm_policy": "C2",
+      "required_slots": ["P", "Q"],
+      "optional_slots": ["U", "C", "DOC", "D", "AMT", "PS", "N"],
+      "dynamic_escalation": null,
+      "template_hit": false,
+      "whitelist_blocked": false,
+      "sample_utterances": [
+        "昨天那箱可乐退回来了，退他 35",
+        "客户退了两瓶，钱已经退给人家了",
+        "二中店把上次那两箱退回来了，先挂着"
+      ],
+      "side_effect": {
+        "writes_db": true,
+        "inventory_delta": "increase",
+        "ar_ap_delta": "receivable_decrease",
+        "affects_report": true,
+        "entities": ["inventory", "doc", "ar_ap"]
+      },
+      "reversal": {
+        "allowed": true,
+        "method": "reversal_doc",
+        "window_minutes": 10,
+        "block_if_referenced": true
+      },
+      "clarifier_templates": {
+        "Q": "退回来多少？",
+        "DOC": "是退哪一张单的货？说不清就选最近一单。"
+      },
+      "milestone": "MVP"
+    },
+    {
+      "seq": 6,
+      "intent_id": "purchase_return.create",
+      "name_zh": "采购退货",
+      "domain": "return",
+      "risk_level": "R2",
+      "confirm_policy": "C2",
+      "required_slots": ["P", "Q"],
+      "optional_slots": ["U", "S", "DOC", "D", "AMT", "PS", "N"],
+      "dynamic_escalation": null,
+      "template_hit": false,
+      "whitelist_blocked": false,
+      "sample_utterances": [
+        "进的货有问题，退给供货商三箱，还没退钱",
+        "退：王老板上次那条烟没拆，拿回来了"
+      ],
+      "side_effect": {
+        "writes_db": true,
+        "inventory_delta": "decrease",
+        "ar_ap_delta": "payable_decrease",
+        "affects_report": true,
+        "entities": ["inventory", "doc", "ar_ap"]
+      },
+      "reversal": {
+        "allowed": true,
+        "method": "reversal_doc",
+        "window_minutes": 10,
+        "block_if_referenced": true
+      },
+      "clarifier_templates": {
+        "Q": "退给供货商多少？",
+        "S": "退给哪个供货商？"
+      },
+      "milestone": "MVP"
+    },
+    {
+      "seq": 7,
+      "intent_id": "stock.take",
+      "name_zh": "盘点（快照设定）",
+      "domain": "stock",
+      "risk_level": "R2",
+      "confirm_policy": "C2",
+      "required_slots": ["P", "Q"],
+      "optional_slots": ["U", "W", "D", "N"],
+      "dynamic_escalation": null,
+      "template_hit": true,
+      "whitelist_blocked": false,
+      "sample_utterances": [
+        "盘点，仓库可乐还剩 8 箱",
+        "货架上数了下，矿泉水 15 瓶"
+      ],
+      "side_effect": {
+        "writes_db": true,
+        "inventory_delta": "snapshot",
+        "ar_ap_delta": "none",
+        "affects_report": true,
+        "entities": ["inventory", "doc"],
+        "note": "快照设定，非增量；产生盘盈/盘亏调整"
+      },
+      "reversal": {
+        "allowed": true,
+        "method": "reversal_doc",
+        "window_minutes": 10,
+        "block_if_referenced": false
+      },
+      "clarifier_templates": {
+        "Q": "实盘还剩多少？（可以是 0）",
+        "P": "盘的哪样货？"
+      },
+      "milestone": "MVP"
+    },
+    {
+      "seq": 8,
+      "intent_id": "stock.take_multi",
+      "name_zh": "盘点（多商品快照）",
+      "domain": "stock",
+      "risk_level": "R2",
+      "confirm_policy": "C2",
+      "required_slots": ["P", "Q"],
+      "optional_slots": ["U", "W", "D"],
+      "dynamic_escalation": null,
+      "template_hit": true,
+      "whitelist_blocked": false,
+      "sample_utterances": [
+        "盘点：娃哈哈 3 箱、可乐 2 箱、红牛 0",
+        "今儿盘了下：矿泉水 15 瓶，红牛 0"
+      ],
+      "side_effect": {
+        "writes_db": true,
+        "inventory_delta": "snapshot",
+        "ar_ap_delta": "none",
+        "affects_report": true,
+        "entities": ["inventory", "doc"]
+      },
+      "reversal": {
+        "allowed": true,
+        "method": "reversal_doc",
+        "window_minutes": 10,
+        "block_if_referenced": false
+      },
+      "clarifier_templates": {
+        "Q": "哪一样没听清实盘数量？",
+        "P": "还有哪样要盘？"
+      },
+      "milestone": "P0"
+    },
+    {
+      "seq": 9,
+      "intent_id": "stock.loss",
+      "name_zh": "损耗 / 报损",
+      "domain": "stock",
+      "risk_level": "R2",
+      "confirm_policy": "C1",
+      "required_slots": ["P", "Q"],
+      "optional_slots": ["U", "W", "D", "N"],
+      "dynamic_escalation": null,
+      "template_hit": true,
+      "whitelist_blocked": false,
+      "sample_utterances": [
+        "坏了三斤苹果，报损",
+        "少了两罐，记损耗",
+        "红牛对不上，少了两罐，记损耗"
+      ],
+      "side_effect": {
+        "writes_db": true,
+        "inventory_delta": "decrease",
+        "ar_ap_delta": "none",
+        "affects_report": true,
+        "entities": ["inventory", "doc"]
+      },
+      "reversal": {
+        "allowed": true,
+        "method": "reversal_doc",
+        "window_minutes": 10,
+        "block_if_referenced": false
+      },
+      "clarifier_templates": {
+        "Q": "坏了 / 少了多少？",
+        "P": "哪样货报损？"
+      },
+      "milestone": "MVP"
+    },
+    {
+      "seq": 10,
+      "intent_id": "price.update",
+      "name_zh": "调价",
+      "domain": "price",
+      "risk_level": "R2",
+      "confirm_policy": "C2",
+      "required_slots": ["P", "TF", "TV"],
+      "optional_slots": ["EF"],
+      "dynamic_escalation": null,
+      "template_hit": false,
+      "whitelist_blocked": false,
+      "sample_utterances": [
+        "可乐从明天起卖 3 块 5",
+        "娃哈哈进价改到一件 22",
+        "红牛零售价调到 6 块，批发价不动"
+      ],
+      "side_effect": {
+        "writes_db": true,
+        "inventory_delta": "none",
+        "ar_ap_delta": "none",
+        "affects_report": true,
+        "entities": ["product_price"],
+        "note": "禁改历史已发生单价；历史单据价格不回溯"
+      },
+      "reversal": {
+        "allowed": true,
+        "method": "reversal_doc",
+        "window_minutes": 10,
+        "block_if_referenced": false
+      },
+      "clarifier_templates": {
+        "TF": "改的是进价还是售价？",
+        "TV": "改成多少钱？"
+      },
+      "milestone": "P1"
+    },
+    {
+      "seq": 11,
+      "intent_id": "stock.query",
+      "name_zh": "库存查询",
+      "domain": "stock_query",
+      "risk_level": "R0",
+      "confirm_policy": "C0",
+      "required_slots": [],
+      "optional_slots": ["P", "Q", "U", "W", "D"],
+      "dynamic_escalation": null,
+      "template_hit": true,
+      "whitelist_blocked": false,
+      "sample_utterances": [
+        "可乐还剩多少",
+        "仓库里矿泉水够不够 10 箱",
+        "二号店娃哈哈还有几箱"
+      ],
+      "side_effect": {
+        "writes_db": false,
+        "inventory_delta": "none",
+        "ar_ap_delta": "none",
+        "affects_report": false,
+        "entities": ["inventory"]
+      },
+      "reversal": {
+        "allowed": false,
+        "method": "none",
+        "window_minutes": null,
+        "block_if_referenced": false
+      },
+      "clarifier_templates": {
+        "P": "查哪样货？"
+      },
+      "milestone": "MVP"
+    },
+    {
+      "seq": 12,
+      "intent_id": "stock.query_movement",
+      "name_zh": "库存流水查询",
+      "domain": "stock_query",
+      "risk_level": "R0",
+      "confirm_policy": "C0",
+      "required_slots": [],
+      "optional_slots": ["P", "D", "W"],
+      "dynamic_escalation": null,
+      "template_hit": false,
+      "whitelist_blocked": false,
+      "sample_utterances": [
+        "查一下红牛今天卖了几件",
+        "今天可乐进出多少"
+      ],
+      "side_effect": {
+        "writes_db": false,
+        "inventory_delta": "none",
+        "ar_ap_delta": "none",
+        "affects_report": false,
+        "entities": ["inventory", "doc"]
+      },
+      "reversal": {
+        "allowed": false,
+        "method": "none",
+        "window_minutes": null,
+        "block_if_referenced": false
+      },
+      "clarifier_templates": {},
+      "milestone": "P1"
+    },
+    {
+      "seq": 13,
+      "intent_id": "stock.query_low",
+      "name_zh": "低库存查询",
+      "domain": "stock_query",
+      "risk_level": "R0",
+      "confirm_policy": "C0",
+      "required_slots": [],
+      "optional_slots": ["Q", "U", "W"],
+      "dynamic_escalation": null,
+      "template_hit": false,
+      "whitelist_blocked": false,
+      "sample_utterances": [
+        "哪些货快没了",
+        "有什么该补货了"
+      ],
+      "side_effect": {
+        "writes_db": false,
+        "inventory_delta": "none",
+        "ar_ap_delta": "none",
+        "affects_report": false,
+        "entities": ["inventory"]
+      },
+      "reversal": {
+        "allowed": false,
+        "method": "none",
+        "window_minutes": null,
+        "block_if_referenced": false
+      },
+      "clarifier_templates": {},
+      "milestone": "P1"
+    },
+    {
+      "seq": 14,
+      "intent_id": "doc.query",
+      "name_zh": "单据查询",
+      "domain": "doc_query",
+      "risk_level": "R0",
+      "confirm_policy": "C0",
+      "required_slots": [],
+      "optional_slots": ["DOC", "D", "C", "S", "P"],
+      "dynamic_escalation": null,
+      "template_hit": true,
+      "whitelist_blocked": false,
+      "sample_utterances": [
+        "把昨天那张单子调出来",
+        "查 3 号卖给李婶的单",
+        "给我看上一单"
+      ],
+      "side_effect": {
+        "writes_db": false,
+        "inventory_delta": "none",
+        "ar_ap_delta": "none",
+        "affects_report": false,
+        "entities": ["doc"]
+      },
+      "reversal": {
+        "allowed": false,
+        "method": "none",
+        "window_minutes": null,
+        "block_if_referenced": false
+      },
+      "clarifier_templates": {
+        "DOC": "查哪一张单？说个日期或客户名。"
+      },
+      "milestone": "MVP"
+    },
+    {
+      "seq": 15,
+      "intent_id": "doc.query_summary",
+      "name_zh": "单据汇总查询",
+      "domain": "doc_query",
+      "risk_level": "R0",
+      "confirm_policy": "C0",
+      "required_slots": [],
+      "optional_slots": ["D", "P"],
+      "dynamic_escalation": null,
+      "template_hit": true,
+      "whitelist_blocked": false,
+      "sample_utterances": [
+        "今天一共进了多少货",
+        "今天一共卖了多少"
+      ],
+      "side_effect": {
+        "writes_db": false,
+        "inventory_delta": "none",
+        "ar_ap_delta": "none",
+        "affects_report": false,
+        "entities": ["doc"]
+      },
+      "reversal": {
+        "allowed": false,
+        "method": "none",
+        "window_minutes": null,
+        "block_if_referenced": false
+      },
+      "clarifier_templates": {},
+      "milestone": "P0"
+    },
+    {
+      "seq": 16,
+      "intent_id": "partner.create",
+      "name_zh": "新建客户 / 供应商",
+      "domain": "partner",
+      "risk_level": "R1",
+      "confirm_policy": "C1",
+      "required_slots": ["TF", "TV"],
+      "optional_slots": ["C", "S", "N", "ALIAS"],
+      "dynamic_escalation": null,
+      "template_hit": false,
+      "whitelist_blocked": false,
+      "sample_utterances": [
+        "新客户，兴旺超市，联系人刘姐",
+        "供应商加一个：南门批发，老赵"
+      ],
+      "side_effect": {
+        "writes_db": true,
+        "inventory_delta": "none",
+        "ar_ap_delta": "none",
+        "affects_report": false,
+        "entities": ["partner"]
+      },
+      "reversal": {
+        "allowed": true,
+        "method": "reversal_doc",
+        "window_minutes": 10,
+        "block_if_referenced": true
+      },
+      "clarifier_templates": {
+        "TF": "是客户还是供应商？名字叫什么？",
+        "TV": "名字再说一次？"
+      },
+      "milestone": "P1"
+    },
+    {
+      "seq": 17,
+      "intent_id": "partner.update",
+      "name_zh": "修改客户 / 供应商",
+      "domain": "partner",
+      "risk_level": "R1",
+      "confirm_policy": "C1",
+      "required_slots": ["TF", "TV"],
+      "optional_slots": ["C", "S", "N"],
+      "dynamic_escalation": null,
+      "template_hit": false,
+      "whitelist_blocked": false,
+      "sample_utterances": [
+        "把二中门口那家改叫'二中店'",
+        "给兴旺超市备注：每周三送货"
+      ],
+      "side_effect": {
+        "writes_db": true,
+        "inventory_delta": "none",
+        "ar_ap_delta": "none",
+        "affects_report": false,
+        "entities": ["partner"]
+      },
+      "reversal": {
+        "allowed": true,
+        "method": "reversal_doc",
+        "window_minutes": 10,
+        "block_if_referenced": false
+      },
+      "clarifier_templates": {
+        "TV": "改成什么？"
+      },
+      "milestone": "P1"
+    },
+    {
+      "seq": 18,
+      "intent_id": "partner.merge",
+      "name_zh": "合并客户 / 供应商（白名单）",
+      "domain": "partner",
+      "risk_level": "R3",
+      "confirm_policy": "C3",
+      "required_slots": ["DOC"],
+      "optional_slots": ["C", "S"],
+      "dynamic_escalation": null,
+      "template_hit": false,
+      "whitelist_blocked": true,
+      "sample_utterances": [
+        "李婶并到兴旺超市",
+        "李婶就是李桂花，以后都记一个本上"
+      ],
+      "side_effect": {
+        "writes_db": false,
+        "inventory_delta": "none",
+        "ar_ap_delta": "none",
+        "affects_report": false,
+        "entities": ["partner", "pending_task"],
+        "note": "R3：语音仅生成 pending_task，实际合并只在电脑版微信大屏管理页执行"
+      },
+      "reversal": {
+        "allowed": false,
+        "method": "pending_task",
+        "window_minutes": null,
+        "block_if_referenced": false
+      },
+      "clarifier_templates": {
+        "DOC": "把谁并到谁？两个名字都要说清。"
+      },
+      "milestone": "P2"
+    },
+    {
+      "seq": 19,
+      "intent_id": "debt.query",
+      "name_zh": "欠款查询",
+      "domain": "receivable",
+      "risk_level": "R0",
+      "confirm_policy": "C0",
+      "required_slots": [],
+      "optional_slots": ["C", "S", "D"],
+      "dynamic_escalation": null,
+      "template_hit": true,
+      "whitelist_blocked": false,
+      "sample_utterances": [
+        "查一下谁还欠我钱，一共多少",
+        "李婶还欠多少"
+      ],
+      "side_effect": {
+        "writes_db": false,
+        "inventory_delta": "none",
+        "ar_ap_delta": "none",
+        "affects_report": false,
+        "entities": ["ar_ap"]
+      },
+      "reversal": {
+        "allowed": false,
+        "method": "none",
+        "window_minutes": null,
+        "block_if_referenced": false
+      },
+      "clarifier_templates": {},
+      "milestone": "MVP"
+    },
+    {
+      "seq": 20,
+      "intent_id": "payment.receive",
+      "name_zh": "收款（客户还款）",
+      "domain": "receivable",
+      "risk_level": "R2",
+      "confirm_policy": "C2",
+      "required_slots": ["C", "AMT"],
+      "optional_slots": ["PS", "D", "DOC", "N"],
+      "dynamic_escalation": null,
+      "template_hit": false,
+      "whitelist_blocked": false,
+      "sample_utterances": [
+        "李婶还了 200，还欠 260",
+        "兴旺超市今天微信转了 500"
+      ],
+      "side_effect": {
+        "writes_db": true,
+        "inventory_delta": "none",
+        "ar_ap_delta": "receivable_decrease",
+        "affects_report": true,
+        "entities": ["ar_ap", "payment"]
+      },
+      "reversal": {
+        "allowed": true,
+        "method": "reversal_doc",
+        "window_minutes": 10,
+        "block_if_referenced": true
+      },
+      "clarifier_templates": {
+        "C": "谁还的钱？",
+        "AMT": "还了多少？说个金额。"
+      },
+      "milestone": "MVP"
+    },
+    {
+      "seq": 21,
+      "intent_id": "payment.pay",
+      "name_zh": "付款（付供应商货款）",
+      "domain": "receivable",
+      "risk_level": "R2",
+      "confirm_policy": "C2",
+      "required_slots": ["S", "AMT"],
+      "optional_slots": ["PS", "D", "DOC", "N"],
+      "dynamic_escalation": null,
+      "template_hit": false,
+      "whitelist_blocked": false,
+      "sample_utterances": [
+        "把上月老张家的货款结了，给现金 1200",
+        "付给南门批发 800"
+      ],
+      "side_effect": {
+        "writes_db": true,
+        "inventory_delta": "none",
+        "ar_ap_delta": "payable_decrease",
+        "affects_report": true,
+        "entities": ["ar_ap", "payment"]
+      },
+      "reversal": {
+        "allowed": true,
+        "method": "reversal_doc",
+        "window_minutes": 10,
+        "block_if_referenced": true
+      },
+      "clarifier_templates": {
+        "S": "付给哪个供货商？",
+        "AMT": "付了多少钱？"
+      },
+      "milestone": "P1"
+    },
+    {
+      "seq": 22,
+      "intent_id": "debt.writeoff",
+      "name_zh": "抹零 / 坏账核销",
+      "domain": "receivable",
+      "risk_level": "R2",
+      "confirm_policy": "C2",
+      "required_slots": ["AMT"],
+      "optional_slots": ["C", "S", "DOC", "N"],
+      "dynamic_escalation": "核销金额超阈值（配置项）→ 升 R3 且 confirm_policy 升 C3（仅电脑版微信大屏管理页执行）",
+      "template_hit": false,
+      "whitelist_blocked": false,
+      "sample_utterances": [
+        "老王那笔抹个零，收 1180 就行",
+        "李婶那 20 块不要了"
+      ],
+      "side_effect": {
+        "writes_db": true,
+        "inventory_delta": "none",
+        "ar_ap_delta": "receivable_decrease",
+        "affects_report": true,
+        "entities": ["ar_ap"]
+      },
+      "reversal": {
+        "allowed": true,
+        "method": "reversal_doc",
+        "window_minutes": 10,
+        "block_if_referenced": true
+      },
+      "clarifier_templates": {
+        "AMT": "收多少？还是全不要了？"
+      },
+      "milestone": "P1"
+    },
+    {
+      "seq": 23,
+      "intent_id": "product.create",
+      "name_zh": "新建商品档案",
+      "domain": "product",
+      "risk_level": "R1",
+      "confirm_policy": "C1",
+      "required_slots": ["P"],
+      "optional_slots": ["UP", "TA", "U", "RATIO", "ALIAS"],
+      "dynamic_escalation": null,
+      "template_hit": true,
+      "whitelist_blocked": false,
+      "sample_utterances": [
+        "加个新品：元气森林白桃，进价 3 块 5，卖 5 块",
+        "加个新品：元气森林白桃，进价 3 块 5，卖 5 块，一箱 15 瓶"
+      ],
+      "side_effect": {
+        "writes_db": true,
+        "inventory_delta": "none",
+        "ar_ap_delta": "none",
+        "affects_report": false,
+        "entities": ["product"]
+      },
+      "reversal": {
+        "allowed": true,
+        "method": "reversal_doc",
+        "window_minutes": 10,
+        "block_if_referenced": true
+      },
+      "clarifier_templates": {
+        "P": "新品叫什么？",
+        "UP": "进价多少？不知道可以跳过。"
+      },
+      "milestone": "MVP"
+    },
+    {
+      "seq": 24,
+      "intent_id": "product.update",
+      "name_zh": "修改商品档案（非改价）",
+      "domain": "product",
+      "risk_level": "R1",
+      "confirm_policy": "C1",
+      "required_slots": ["P", "TV"],
+      "optional_slots": ["TF", "N"],
+      "dynamic_escalation": null,
+      "template_hit": false,
+      "whitelist_blocked": false,
+      "sample_utterances": [
+        "给可乐备注：放阴凉处",
+        "可乐的货号改成 A102"
+      ],
+      "side_effect": {
+        "writes_db": true,
+        "inventory_delta": "none",
+        "ar_ap_delta": "none",
+        "affects_report": false,
+        "entities": ["product"]
+      },
+      "reversal": {
+        "allowed": true,
+        "method": "reversal_doc",
+        "window_minutes": 10,
+        "block_if_referenced": false
+      },
+      "clarifier_templates": {
+        "TF": "改哪个字段？",
+        "TV": "改成什么？"
+      },
+      "milestone": "P1"
+    },
+    {
+      "seq": 25,
+      "intent_id": "product.alias.add",
+      "name_zh": "新增商品别名（教说法）",
+      "domain": "product",
+      "risk_level": "R1",
+      "confirm_policy": "C1",
+      "required_slots": ["P", "ALIAS"],
+      "optional_slots": [],
+      "dynamic_escalation": null,
+      "template_hit": true,
+      "whitelist_blocked": false,
+      "sample_utterances": [
+        "可乐别名叫'快乐水'",
+        "以后'大瓶可乐'就指 2 升那种"
+      ],
+      "side_effect": {
+        "writes_db": true,
+        "inventory_delta": "none",
+        "ar_ap_delta": "none",
+        "affects_report": false,
+        "entities": ["alias"]
+      },
+      "reversal": {
+        "allowed": true,
+        "method": "reversal_doc",
+        "window_minutes": 10,
+        "block_if_referenced": false
+      },
+      "clarifier_templates": {
+        "ALIAS": "叫什么别名？",
+        "P": "是哪个商品的别名？"
+      },
+      "milestone": "MVP"
+    },
+    {
+      "seq": 26,
+      "intent_id": "product.unit.set",
+      "name_zh": "设置单位换算（白名单）",
+      "domain": "product",
+      "risk_level": "R3",
+      "confirm_policy": "C3",
+      "required_slots": ["P", "RATIO"],
+      "optional_slots": ["U"],
+      "dynamic_escalation": null,
+      "template_hit": false,
+      "whitelist_blocked": true,
+      "sample_utterances": [
+        "娃哈哈一箱等于 24 瓶",
+        "可乐一件 24 瓶"
+      ],
+      "side_effect": {
+        "writes_db": false,
+        "inventory_delta": "none",
+        "ar_ap_delta": "none",
+        "affects_report": true,
+        "entities": ["unit_conversion", "pending_task"],
+        "note": "连锁重算历史数量，R3：语音仅生成 pending_task"
+      },
+      "reversal": {
+        "allowed": false,
+        "method": "pending_task",
+        "window_minutes": null,
+        "block_if_referenced": false
+      },
+      "clarifier_templates": {
+        "RATIO": "一箱等于多少瓶？这个数字必须说清。"
+      },
+      "milestone": "P1"
+    },
+    {
+      "seq": 27,
+      "intent_id": "product.disable",
+      "name_zh": "停用商品（下架）",
+      "domain": "product",
+      "risk_level": "R2",
+      "confirm_policy": "C2",
+      "required_slots": ["P"],
+      "optional_slots": ["N"],
+      "dynamic_escalation": null,
+      "template_hit": false,
+      "whitelist_blocked": false,
+      "sample_utterances": [
+        "这个商品不卖了，下架",
+        "可乐以后别卖了"
+      ],
+      "side_effect": {
+        "writes_db": true,
+        "inventory_delta": "none",
+        "ar_ap_delta": "none",
+        "affects_report": false,
+        "entities": ["product"],
+        "note": "停用非删除，历史单据保留"
+      },
+      "reversal": {
+        "allowed": true,
+        "method": "reversal_doc",
+        "window_minutes": 10,
+        "block_if_referenced": false
+      },
+      "clarifier_templates": {
+        "P": "下架哪个商品？"
+      },
+      "milestone": "P1"
+    },
+    {
+      "seq": 28,
+      "intent_id": "report.today",
+      "name_zh": "今日报表",
+      "domain": "report",
+      "risk_level": "R0",
+      "confirm_policy": "C0",
+      "required_slots": [],
+      "optional_slots": ["D", "W"],
+      "dynamic_escalation": null,
+      "template_hit": true,
+      "whitelist_blocked": false,
+      "sample_utterances": [
+        "今天赚了多少",
+        "今天卖了多少"
+      ],
+      "side_effect": {
+        "writes_db": false,
+        "inventory_delta": "none",
+        "ar_ap_delta": "none",
+        "affects_report": false,
+        "entities": ["report"]
+      },
+      "reversal": {
+        "allowed": false,
+        "method": "none",
+        "window_minutes": null,
+        "block_if_referenced": false
+      },
+      "clarifier_templates": {},
+      "milestone": "MVP"
+    },
+    {
+      "seq": 29,
+      "intent_id": "report.period",
+      "name_zh": "区间报表",
+      "domain": "report",
+      "risk_level": "R0",
+      "confirm_policy": "C0",
+      "required_slots": [],
+      "optional_slots": ["D", "W", "P"],
+      "dynamic_escalation": null,
+      "template_hit": false,
+      "whitelist_blocked": false,
+      "sample_utterances": [
+        "给我看本月的进销存",
+        "这个月卖了多少钱"
+      ],
+      "side_effect": {
+        "writes_db": false,
+        "inventory_delta": "none",
+        "ar_ap_delta": "none",
+        "affects_report": false,
+        "entities": ["report"]
+      },
+      "reversal": {
+        "allowed": false,
+        "method": "none",
+        "window_minutes": null,
+        "block_if_referenced": false
+      },
+      "clarifier_templates": {},
+      "milestone": "P1"
+    },
+    {
+      "seq": 30,
+      "intent_id": "report.top",
+      "name_zh": "畅销榜报表",
+      "domain": "report",
+      "risk_level": "R0",
+      "confirm_policy": "C0",
+      "required_slots": [],
+      "optional_slots": ["D", "W", "Q"],
+      "dynamic_escalation": null,
+      "template_hit": false,
+      "whitelist_blocked": false,
+      "sample_utterances": [
+        "哪样货卖得最好",
+        "卖得最多的前三个是啥"
+      ],
+      "side_effect": {
+        "writes_db": false,
+        "inventory_delta": "none",
+        "ar_ap_delta": "none",
+        "affects_report": false,
+        "entities": ["report"]
+      },
+      "reversal": {
+        "allowed": false,
+        "method": "none",
+        "window_minutes": null,
+        "block_if_referenced": false
+      },
+      "clarifier_templates": {},
+      "milestone": "P1"
+    },
+    {
+      "seq": 31,
+      "intent_id": "report.export",
+      "name_zh": "导出报表（白名单）",
+      "domain": "report",
+      "risk_level": "R3",
+      "confirm_policy": "C3",
+      "required_slots": [],
+      "optional_slots": ["D", "W"],
+      "dynamic_escalation": null,
+      "template_hit": false,
+      "whitelist_blocked": true,
+      "sample_utterances": [
+        "导出这个月的账",
+        "把上个月的单子导出"
+      ],
+      "side_effect": {
+        "writes_db": false,
+        "inventory_delta": "none",
+        "ar_ap_delta": "none",
+        "affects_report": false,
+        "entities": ["export_job", "pending_task"],
+        "note": "R3：语音仅生成待办；实际导出只在电脑版微信大屏管理页执行，文件经微信转发/保存/预览，不做网页下载"
+      },
+      "reversal": {
+        "allowed": false,
+        "method": "pending_task",
+        "window_minutes": null,
+        "block_if_referenced": false
+      },
+      "clarifier_templates": {
+        "D": "导出哪个时间段？"
+      },
+      "milestone": "P1"
+    },
+    {
+      "seq": 32,
+      "intent_id": "sys.undo",
+      "name_zh": "撤销（反做单）",
+      "domain": "sys",
+      "risk_level": "R2",
+      "confirm_policy": "C2",
+      "required_slots": ["DOC"],
+      "optional_slots": [],
+      "dynamic_escalation": "超出撤销窗口（10 分钟）→ 拒绝并引导 sys.correct 更正流程",
+      "template_hit": false,
+      "whitelist_blocked": false,
+      "sample_utterances": [
+        "撤销",
+        "撤回刚才那一条"
+      ],
+      "side_effect": {
+        "writes_db": true,
+        "inventory_delta": "adjust",
+        "ar_ap_delta": "none",
+        "affects_report": true,
+        "entities": ["doc", "reversal_doc"],
+        "note": "反做单：原单保留，不物理删除"
+      },
+      "reversal": {
+        "allowed": false,
+        "method": "reversal_doc",
+        "window_minutes": 10,
+        "block_if_referenced": true,
+        "note": "撤销本身即反做单，不可再撤销"
+      },
+      "clarifier_templates": {
+        "DOC": "撤哪一条？就是刚才那张单吗？"
+      },
+      "milestone": "MVP"
+    },
+    {
+      "seq": 33,
+      "intent_id": "sys.cancel",
+      "name_zh": "取消 / 重来",
+      "domain": "sys",
+      "risk_level": "R0",
+      "confirm_policy": "C0",
+      "required_slots": [],
+      "optional_slots": [],
+      "dynamic_escalation": null,
+      "template_hit": true,
+      "whitelist_blocked": false,
+      "sample_utterances": [
+        "别记了",
+        "取消",
+        "重来"
+      ],
+      "side_effect": {
+        "writes_db": false,
+        "inventory_delta": "none",
+        "ar_ap_delta": "none",
+        "affects_report": false,
+        "entities": []
+      },
+      "reversal": {
+        "allowed": false,
+        "method": "none",
+        "window_minutes": null,
+        "block_if_referenced": false
+      },
+      "clarifier_templates": {},
+      "milestone": "MVP"
+    },
+    {
+      "seq": 34,
+      "intent_id": "sys.continue",
+      "name_zh": "连续录单态",
+      "domain": "sys",
+      "risk_level": "R0",
+      "confirm_policy": "C0",
+      "required_slots": [],
+      "optional_slots": [],
+      "dynamic_escalation": null,
+      "template_hit": true,
+      "whitelist_blocked": false,
+      "sample_utterances": [
+        "接着录",
+        "录完了"
+      ],
+      "side_effect": {
+        "writes_db": false,
+        "inventory_delta": "none",
+        "ar_ap_delta": "none",
+        "affects_report": false,
+        "entities": [],
+        "note": "进入/退出连续录单态：继承上单 C/S/D/PS/W（内部标记 CTX，非用户槽位，见 slots.json internal_markers）"
+      },
+      "reversal": {
+        "allowed": false,
+        "method": "none",
+        "window_minutes": null,
+        "block_if_referenced": false
+      },
+      "clarifier_templates": {},
+      "milestone": "MVP"
+    },
+    {
+      "seq": 35,
+      "intent_id": "sys.correct",
+      "name_zh": "更正上一条（反做 + 重记）",
+      "domain": "sys",
+      "risk_level": "R2",
+      "confirm_policy": "C2",
+      "required_slots": ["DOC", "TV"],
+      "optional_slots": ["P", "Q", "TF"],
+      "dynamic_escalation": null,
+      "template_hit": false,
+      "whitelist_blocked": false,
+      "sample_utterances": [
+        "上一条改一下，可乐是三箱不是两箱",
+        "刚才那张单数量记错了"
+      ],
+      "side_effect": {
+        "writes_db": true,
+        "inventory_delta": "adjust",
+        "ar_ap_delta": "none",
+        "affects_report": true,
+        "entities": ["doc", "reversal_doc"],
+        "note": "反做原单 + 生成更正单，原单保留"
+      },
+      "reversal": {
+        "allowed": true,
+        "method": "reversal_doc",
+        "window_minutes": 10,
+        "block_if_referenced": true
+      },
+      "clarifier_templates": {
+        "TV": "改成什么？"
+      },
+      "milestone": "P0"
+    },
+    {
+      "seq": 36,
+      "intent_id": "sys.help",
+      "name_zh": "帮助（静态）",
+      "domain": "sys",
+      "risk_level": "R0",
+      "confirm_policy": "C0",
+      "required_slots": [],
+      "optional_slots": [],
+      "dynamic_escalation": null,
+      "template_hit": true,
+      "whitelist_blocked": false,
+      "sample_utterances": [
+        "帮助",
+        "你能听懂啥"
+      ],
+      "side_effect": {
+        "writes_db": false,
+        "inventory_delta": "none",
+        "ar_ap_delta": "none",
+        "affects_report": false,
+        "entities": []
+      },
+      "reversal": {
+        "allowed": false,
+        "method": "none",
+        "window_minutes": null,
+        "block_if_referenced": false
+      },
+      "clarifier_templates": {},
+      "milestone": "MVP"
+    },
+    {
+      "seq": 37,
+      "intent_id": "sys.example",
+      "name_zh": "举例（静态）",
+      "domain": "sys",
+      "risk_level": "R0",
+      "confirm_policy": "C0",
+      "required_slots": [],
+      "optional_slots": [],
+      "dynamic_escalation": null,
+      "template_hit": true,
+      "whitelist_blocked": false,
+      "sample_utterances": [
+        "举个例子",
+        "说一句我听听"
+      ],
+      "side_effect": {
+        "writes_db": false,
+        "inventory_delta": "none",
+        "ar_ap_delta": "none",
+        "affects_report": false,
+        "entities": []
+      },
+      "reversal": {
+        "allowed": false,
+        "method": "none",
+        "window_minutes": null,
+        "block_if_referenced": false
+      },
+      "clarifier_templates": {},
+      "milestone": "MVP"
+    },
+    {
+      "seq": 38,
+      "intent_id": "sys.teach",
+      "name_zh": "教说法（回流个人词表）",
+      "domain": "sys",
+      "risk_level": "R1",
+      "confirm_policy": "C1",
+      "required_slots": ["ALIAS"],
+      "optional_slots": [],
+      "dynamic_escalation": null,
+      "template_hit": false,
+      "whitelist_blocked": false,
+      "sample_utterances": [
+        "以后我说'拿一条'就是卖一条烟",
+        "以后我说'大瓶'就是 2 升可乐"
+      ],
+      "side_effect": {
+        "writes_db": true,
+        "inventory_delta": "none",
+        "ar_ap_delta": "none",
+        "affects_report": false,
+        "entities": ["dict_personal"]
+      },
+      "reversal": {
+        "allowed": true,
+        "method": "reversal_doc",
+        "window_minutes": 10,
+        "block_if_referenced": false
+      },
+      "clarifier_templates": {
+        "ALIAS": "以后你说哪句话？它指什么？"
+      },
+      "milestone": "MVP"
+    }
+  ]
+}

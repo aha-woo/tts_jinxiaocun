@@ -1,0 +1,105 @@
+{
+  "$schema_note": "12 个业务域单一真相源。来源：docs/01-PRD.md §2.4 按业务域分类的口语句式 + §2.8 命令清单表。intents.json 的 domain 字段只能取本文件 code。",
+  "version": "1.1.0",
+  "count": 12,
+  "domains": [
+    {
+      "code": "purchase",
+      "name_zh": "采购 / 入库",
+      "prd_section": "§2.4 域 1",
+      "description": "进货、到货、拿货，判为库存增量；「按老价」取该供应商该商品最近一次进价并显示来源日期。",
+      "intents": ["purchase.create", "purchase.create_multi"]
+    },
+    {
+      "code": "sales",
+      "name_zh": "销售 / 出库",
+      "prd_section": "§2.4 域 2",
+      "description": "拿走、发走、要、出库、卖了；「记账上 / 下回给」= 未结应收。",
+      "intents": ["sales.create", "sales.create_multi"]
+    },
+    {
+      "code": "return",
+      "name_zh": "退货（销退 + 采购退）",
+      "prd_section": "§2.4 域 3",
+      "description": "必须判出方向（退给客户 / 退给供货商），并尝试关联原单；退款状态独立于货款结清。",
+      "intents": ["sales_return.create", "purchase_return.create"]
+    },
+    {
+      "code": "stock",
+      "name_zh": "盘点与损耗",
+      "prd_section": "§2.4 域 4",
+      "description": "「还剩 / 实盘 / 数了下」= 快照设定库存；「坏了 / 少了 / 报损」= 损耗核减。二者与增量语义必须区分。",
+      "intents": ["stock.take", "stock.take_multi", "stock.loss"]
+    },
+    {
+      "code": "price",
+      "name_zh": "调价",
+      "prd_section": "§2.4 域 5",
+      "description": "影响后续开单与历史报表口径，R2；改历史已发生单价禁止语音（走更正单）。",
+      "intents": ["price.update"]
+    },
+    {
+      "code": "stock_query",
+      "name_zh": "库存查询（只读）",
+      "prd_section": "§2.4 域 6",
+      "description": "能查就查，查不出给候选；R0，直接返回，不写库、不占确认卡片。",
+      "intents": ["stock.query", "stock.query_movement", "stock.query_low"]
+    },
+    {
+      "code": "doc_query",
+      "name_zh": "单据查询（只读）",
+      "prd_section": "§2.4 域 7",
+      "description": "模糊时间「上次 / 那笔」须绑定最近一单并展示具体日期；跨月要提示。",
+      "intents": ["doc.query", "doc.query_summary"]
+    },
+    {
+      "code": "partner",
+      "name_zh": "客户 / 供应商",
+      "prd_section": "§2.4 域 8",
+      "description": "合并 / 删除客户供应商 = R3，禁止语音直接执行（影响历史往来账）。",
+      "intents": ["partner.create", "partner.update", "partner.merge"]
+    },
+    {
+      "code": "receivable",
+      "name_zh": "应收应付与欠款收付",
+      "prd_section": "§2.4 域 9",
+      "description": "收款 / 付款 R2 强制确认 + 建议二次语音；抹零超阈值升 R3；欠款查询 R0。",
+      "intents": ["debt.query", "payment.receive", "payment.pay", "debt.writeoff"]
+    },
+    {
+      "code": "product",
+      "name_zh": "商品档案维护",
+      "prd_section": "§2.4 域 10",
+      "description": "「下架 / 不卖了」= 停用非删除；设置换算系数 R3（连锁重算历史）；别名新增属于教系统。",
+      "intents": [
+        "product.create",
+        "product.update",
+        "product.alias.add",
+        "product.unit.set",
+        "product.disable"
+      ]
+    },
+    {
+      "code": "report",
+      "name_zh": "报表查询（只读 + 导出）",
+      "prd_section": "§2.4 域 11",
+      "description": "报表结果 R0 直接返回；导出动作 R3，语音仅生成待办，只在电脑版微信大屏管理页执行并经微信转发。",
+      "intents": ["report.today", "report.period", "report.top", "report.export"]
+    },
+    {
+      "code": "sys",
+      "name_zh": "系统 / 辅助",
+      "prd_section": "§2.4 域 12",
+      "description": "撤销走反做单；cancel 不写库；continue 进入连续录单态；help/example 纯静态不调 AI。",
+      "intents": [
+        "sys.undo",
+        "sys.cancel",
+        "sys.continue",
+        "sys.correct",
+        "sys.help",
+        "sys.example",
+        "sys.teach"
+      ]
+    }
+  ]
+}

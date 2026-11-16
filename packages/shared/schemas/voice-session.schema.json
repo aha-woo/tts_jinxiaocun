@@ -1,0 +1,55 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://voice-inventory-lite.local/schemas/voice-session.schema.json",
+  "title": "VoiceSession",
+  "description": "语音会话状态机契约（v1.1）。状态与失败分支来源：docs/02-架构设计.md §5.3。注意：权益态（entitlement/virtual_order/deliver_event）与本状态机相互独立，不共用状态。",
+  "type": "object",
+  "required": ["session_id", "status", "created_at", "audio_object_ref"],
+  "additionalProperties": false,
+  "properties": {
+    "session_id": { "type": "string" },
+    "status": {
+      "type": "string",
+      "enum": [
+        "RECORDING",
+        "FILTERING",
+        "PARSING",
+        "CLARIFYING",
+        "MANUAL_ENTRY",
+        "AWAIT_CONFIRM",
+        "AWAIT_2ND",
+        "PENDING_LIST",
+        "PENDING_TASK",
+        "CONFIRMED",
+        "REVERSED",
+        "EXPIRED",
+        "CANCELLED",
+        "REJECTED",
+        "FAILED",
+        "CLOSED_READ"
+      ]
+    },
+    "created_at": { "type": "string", "format": "date-time" },
+    "audio_object_ref": {
+      "type": ["string", "null"],
+      "description": "音频引用（临时 fileID/URL），绝非音频本体；callContainer 请求体 ≤100K，音频默认不留存"
+    },
+    "audio_duration_ms": { "type": "integer", "minimum": 0 },
+    "audio_deleted_at": { "type": ["string", "null"], "format": "date-time" },
+    "asr_text": { "type": ["string", "null"], "description": "voice_log 只存文本，不存音频" },
+    "asr_confidence": { "type": ["number", "null"], "minimum": 0, "maximum": 1 },
+    "intent_id": { "type": ["string", "null"] },
+    "card_id": { "type": ["string", "null"] },
+    "clarify_round": { "type": "integer", "minimum": 0, "maximum": 2 },
+    "error_code": { "type": ["string", "null"], "description": "E_* 字符串错误码，如 E_NON_COMMAND" },
+    "parse_channel": { "type": ["string", "null"], "enum": ["template", "llm", "filtered", null] },
+    "quota_deducted": { "type": "boolean", "description": "仅卡片生成成功才扣次（usage_ledger 幂等）" },
+    "source_tags": {
+      "type": "object",
+      "description": "槽位 code -> source 枚举（5 值）",
+      "additionalProperties": { "enum": ["asr", "default", "computed", "alias", "pending"] }
+    },
+    "degrade_level": { "type": "string", "enum": ["L0", "L1", "L2", "L3", "L4"] },
+    "tenant_id": { "type": "string", "description": "只由服务端 TenantContext 注入，业务入参禁止传" }
+  }
+}

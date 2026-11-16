@@ -1,0 +1,79 @@
+# 仅用于**本地容器构建与联调**；生产由微信云托管托管，不自建服务器（架构 D1）。
+# 云托管内不部署有状态服务（D7/§4.5）：生产 PG/Redis 必须外挂托管，这里只为本地跑通链路。
+version: "3.9"
+
+services:
+  api:
+    build:
+      # 构建上下文是仓库根（Dockerfile 需要复制 packages/shared 契约）
+      context: ..
+      dockerfile: server/Dockerfile
+    image: voice-inventory-lite:local
+    container_name: vil-api
+    ports:
+      - "8000:80"
+    environment:
+      APP_ENV: local
+      LOG_LEVEL: INFO
+      CONTRACTS_DIR: /app/packages/shared
+      # 本地才有 Redis；云托管环境若不配 REDIS_URL 会自动降级内存 LRU
+      REDIS_URL: redis://redis:6379/0
+      IDEMPOTENCY_TTL_SECONDS: "60"
+      # 方案 A 口径：连下面这个本地 PG 替身；容器启动前先 `alembic upgrade head`
+      DATABASE_URL: postgresql+psycopg://vil:vil_local_only@postgres:5432/vil
+      # 仅本地；生产必须由密钥管理注入，且长度 >= 32 字节
+      JWT_SECRET: local-dev-only-change-me-but-long-enough-32
+      # fake = 不联网的本地 provider（生产必须 real + WX_APPID/WX_APP_SECRET）
+      WX_PROVIDER: fake
+    depends_on:
+      redis:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:80/healthz', timeout=2).status==200 else 1)"
+      interval: 15s
+      timeout: 3s
+      retries: 5
+      start_period: 10s
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    container_name: vil-redis
+    command: ["redis-server", "--appendonly", "no", "--maxmemory", "256mb", "--maxmemory-policy", "allkeys-lru"]
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    restart: unless-stopped
+
+  # 外挂托管 PostgreSQL 的本地替身：T02 建表 + RLS 用；T01 不建表，仅提供实例
+  postgres:
+    image: postgres:16-alpine
+    container_name: vil-postgres
+    environment:
+      POSTGRES_USER: vil
+      POSTGRES_PASSWORD: vil_local_only
+      POSTGRES_DB: vil
+      # 生产请用强密码 + 私网 + 白名单；此处口令仅本地
+    ports:
+      - "5432:5432"
+    volumes:
+      - vil-pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U vil -d vil"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    restart: unless-stopped
+
+volumes:
+  vil-pgdata:

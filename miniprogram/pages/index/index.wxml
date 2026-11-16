@@ -1,0 +1,91 @@
+<!--
+  首页（T01 自检页）：后端健康状态 + 契约计数 + 云托管初始化引导。
+  电脑版微信大屏与手机端共用本页：宽屏时 .wide-layout 生效为双栏（resizable）。
+-->
+<view class="container">
+  <view class="card">
+    <view class="card__title">语音记账 · 系统自检</view>
+    <view class="muted">
+      同一 AppID：手机端 + 电脑版微信大屏（resizable 双栏），没有独立网页端；后端走微信云托管
+      callContainer 私有链路。
+    </view>
+  </view>
+
+  <view class="card">
+    <view class="card__title">后端状态</view>
+    <view class="card__row">
+      <text>连接</text>
+      <text class="card__value {{statusClass}}">{{statusText}}</text>
+    </view>
+    <view class="card__row">
+      <text>版本</text>
+      <text class="card__value">{{version}}</text>
+    </view>
+    <view class="card__row">
+      <text>检查时间</text>
+      <text class="card__value">{{checkedAt}}</text>
+    </view>
+    <view class="card__row">
+      <text>幂等存储</text>
+      <text class="card__value">{{backend}}</text>
+    </view>
+    <view wx:if="{{errorText}}" class="muted text-danger">
+      {{errorText}}
+      <text wx:if="{{lastErrorCode}}">（{{lastErrorCode}}）</text>
+    </view>
+  </view>
+
+  <view class="card">
+    <view class="card__title">端服契约（必须与设计文档一致）</view>
+    <view class="card__row">
+      <text>语音意图 intent</text>
+      <text class="card__value">{{counts.intents}} / 38</text>
+    </view>
+    <view class="card__row">
+      <text>槽位 slot</text>
+      <text class="card__value">{{counts.slots}} / 18</text>
+    </view>
+    <view class="card__row">
+      <text>来源枚举 source</text>
+      <text class="card__value">{{counts.sources}} / 5</text>
+    </view>
+    <view class="card__row">
+      <text>业务域 domain</text>
+      <text class="card__value">{{counts.domains}} / 12</text>
+    </view>
+    <view class="card__row">
+      <text>错误码 error code</text>
+      <text class="card__value">{{counts.errorCodes}}</text>
+    </view>
+    <view wx:if="{{!reachable}}" class="muted">
+      数字为 0 表示还没连上后端；先确认云托管已部署，再点下面的按钮。
+    </view>
+  </view>
+
+  <view class="card">
+    <view class="card__title">云托管环境</view>
+    <view class="card__row">
+      <text>CLOUD_ENV</text>
+      <text class="card__value">{{cloudEnv}}</text>
+    </view>
+    <view class="card__row">
+      <text>服务名</text>
+      <text class="card__value">{{cloudService}}</text>
+    </view>
+    <view wx:if="{{!envConfigured}}" class="muted text-warn">
+      还没替换 CLOUD_ENV：请在 miniprogram/services/api.ts 填入真实云开发环境 id
+      （占位值无法调用 callContainer）。
+    </view>
+    <button class="btn-primary" bindtap="onInitCloudTap" hover-class="none">初始化云托管</button>
+    <button class="btn-ghost" bindtap="onCheckHealthTap" hover-class="none">重新检查后端</button>
+    <button class="btn-ghost" bindtap="onCopyEnvTap" hover-class="none">复制环境信息</button>
+  </view>
+
+  <view class="card">
+    <view class="card__title">下一步（本阶段边界）</view>
+    <view class="muted">
+      T01 只交付基础设施与共享契约：首页仅用于自检。语音录入（T03）、确认卡片与写账（T04）、
+      双端 UI（T05）随后接入。
+    </view>
+  </view>
+</view>

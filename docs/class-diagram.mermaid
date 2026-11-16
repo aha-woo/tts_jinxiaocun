@@ -1,0 +1,362 @@
+classDiagram
+  direction LR
+
+  class TenantContext {
+    +UUID tenant_id
+    +UUID store_id
+    +UUID member_id
+    +str role_code
+    +int tenant_version
+    +from_jwt(token) TenantContext
+    +bind() void
+    +require_store(store_id) void
+    +cache_key(biz, id) str
+  }
+  class VoiceSession {
+    +UUID session_id
+    +UUID tenant_id
+    +UUID store_id
+    +str state
+    +int clarify_round
+    +datetime expires_at
+    +str idempotency_key
+    +create(req) VoiceSession
+    +transition(to, reason) void
+    +is_expired() bool
+  }
+  class AsrResult {
+    +str text
+    +float overall_conf
+    +list~TokenConf~ tokens
+    +slot_conf(slot_code) float
+    +calibrate(table) AsrResult
+  }
+  class ParseResult {
+    +str intent_id
+    +dict slots
+    +dict source
+    +float confidence
+    +ClarifyRequest clarify
+    +str channel
+    +list~CalcTrace~ calc_traces
+    +validate(schema) bool
+  }
+  class ConfirmCard {
+    +UUID card_id
+    +UUID session_id
+    +str asr_text
+    +str intent_label_zh
+    +list~SlotView~ slot_views
+    +list~CalcTrace~ calc_traces
+    +list~ImpactItem~ impact_preview
+    +RiskBanner risk_banner
+    +str primary_label
+    +int preview_version
+    +datetime created_at
+    +build(p, preview) ConfirmCard
+    +edit(slot_deltas) ConfirmCard
+    +is_expired() bool
+  }
+  class IntentDef {
+    +str intent_id
+    +str domain
+    +str risk_level
+    +str confirm_policy
+    +list~SlotDef~ slots
+    +dict side_effect
+    +dict reversal
+    +bool template_hit
+    +bool whitelist_blocked
+    +dict clarifier_templates
+    +list~str~ sample_utterances
+  }
+  class TemplateRule {
+    +str template_id
+    +int version
+    +str intent_id
+    +str pattern
+    +int priority
+    +dict slot_extractors
+    +dict default_rules
+    +dict conflict_rules
+    +bool enabled
+    +str review_status
+    +match(text, ctx) ParseResult
+  }
+  class DocHeader {
+    +UUID doc_id
+    +UUID tenant_id
+    +UUID store_id
+    +str doc_no
+    +str intent_id
+    +str doc_type
+    +date biz_date
+    +str payment_status
+    +int total_amount_fen
+    +str status
+    +UUID reversed_by
+    +create(...) DocHeader
+    +reverse(reason) DocHeader
+  }
+  class DocLine {
+    +UUID line_id
+    +UUID doc_id
+    +UUID product_id
+    +Decimal qty
+    +str unit
+    +int unit_price_fen
+    +int amount_fen
+    +dict source_map
+  }
+  class Inventory {
+    +UUID inventory_id
+    +UUID tenant_id
+    +UUID store_id
+    +UUID product_id
+    +Decimal qty_base
+    +int version
+  }
+  class PersonalDictEntry {
+    +UUID dict_id
+    +UUID tenant_id
+    +UUID member_id
+    +str layer
+    +str raw_text
+    +str mapped_type
+    +UUID mapped_id
+    +int version
+  }
+  class Reversal {
+    +UUID reversal_id
+    +UUID original_doc_id
+    +UUID reversal_doc_id
+    +UUID member_id
+    +str reason
+    +datetime created_at
+  }
+  class UsageLedger {
+    +UUID ledger_id
+    +UUID tenant_id
+    +UUID session_id
+    +str event_type
+    +int cost_estimate_fen
+    +record_card_created(session_id) bool
+  }
+  class Entitlement {
+    +UUID entitlement_id
+    +UUID tenant_id
+    +str plan_code
+    +datetime valid_from
+    +datetime valid_until
+    +int quota_granted
+    +str status
+    +is_active() bool
+    +extend(days) Entitlement
+  }
+  class VirtualOrder {
+    +UUID order_id
+    +UUID tenant_id
+    +str out_trade_no
+    +str goods_id
+    +str pay_status
+    +str env
+    +create_order(goods_id) VirtualOrder
+  }
+  class DeliverEvent {
+    +UUID event_id
+    +UUID tenant_id
+    +str out_trade_no
+    +str event_type
+    +str sign_status
+    +str deliver_status
+    +is_duplicate() bool
+  }
+
+  class AsrProvider {
+    <<interface>>
+    +transcribe(audio_ref, hotwords) AsrResult
+    +supports_word_confidence() bool
+    +supports_hotwords() bool
+  }
+  class VoiceGateService {
+    +check(req) GateResult
+    +vad_stop(audio) datetime
+    +dedupe(fingerprint) bool
+  }
+  class NonCommandFilter {
+    +filter(asr_text, ctx) FilterResult
+    +is_static_intent(text) bool
+    +is_duplicate(hash) bool
+    +route_static(code) dict
+  }
+  class TemplateEngine {
+    +match(text, ctx) ParseResult
+    +resolve_conflict(text) ConflictVerdict
+    +register(rule) void
+  }
+  class SlotFiller {
+    +fill(raw_slots, intent) dict
+    +apply_defaults(slots) dict
+    +mark_source(slots) dict
+    +validate_required(slots) ClarifyRequest
+  }
+  class ChineseNumberParser {
+    +parse(text, context) NumberResult
+    +amount_or_unit_price(text) MoneyResult
+    +candidates(text) list
+  }
+  class AliasResolver {
+    +resolve(text, ctx) list~Candidate~
+    +score(c1, c2) float
+    +need_disambiguation(top2) bool
+  }
+  class UnitConverter {
+    +convert(qty, from_u, to_u, product) ConvertResult
+    +has_ratio(product, unit) bool
+  }
+  class ConfidenceCalibrator {
+    +calibrate(raw, band) float
+    +proxy_confidence(text, parsed) float
+    +grade(conf) str
+  }
+  class LlmFallbackParser {
+    +parse(text, ctx, hint) ParseResult
+    +build_prompt(ctx, hint) Prompt
+    +validate_json(raw) ParseResult
+    +retry_once(err) ParseResult
+  }
+  class IntentRegistry {
+    +get(intent_id) IntentDef
+    +all() list~IntentDef~
+    +by_risk(level) list~IntentDef~
+    +is_whitelisted(intent_id) bool
+  }
+  class ClarifyStateMachine {
+    +next(state, answer) ClarifyTransition
+    +max_rounds() int
+    +render_question(slot, band) ClarifyQuestion
+    +to_manual_entry() ManualEntry
+  }
+  class CorrectionFeedbackService {
+    +record(event) void
+    +write_hot_cache(event) void
+    +spawn_candidates(event) void
+  }
+  class ImpactPreviewService {
+    +simulate(current, delta) Projected
+    +preview(parse, ctx) list~ImpactItem~
+    +assert_readonly(conn) void
+  }
+  class ConfirmCardBuilder {
+    +build(parse, preview) ConfirmCard
+    +render_7_blocks(card) dict
+    +primary_label(parse) str
+  }
+  class LedgerService {
+    +confirm(card_id, ctx) DocHeader
+    +cas_check(version) bool
+    +apply_side_effect(delta, tx) void
+    +write_audit(tx, action) void
+  }
+  class ReversalService {
+    +reverse(doc_id, reason, ctx) Reversal
+    +within_window(doc) bool
+    +is_referenced(doc) bool
+  }
+  class QuotaService {
+    +check(tenant_id) QuotaState
+    +consume(tenant_id) bool
+    +degrade_level(tenant_id) str
+    +circuit_break(tenant_id) void
+  }
+  class UsageMeter {
+    +on_card_created(session_id, tx) UsageLedger
+    +estimate_cost(voice_log) int
+    +monthly_usage(tenant_id) dict
+  }
+  class TenantRepository {
+    <<interface>>
+    +scoped_query(model) Query
+    +insert(entity) void
+  }
+  class ExportService {
+    +enqueue(scope, ctx) UUID
+    +execute(job_id) str
+    +forward_to_wechat(job_id) str
+  }
+  class AsrService {
+    +transcribe(audio_ref, hotwords) AsrResult
+    +with_calibration(table) AsrResult
+  }
+  class VirtualPaymentService {
+    +create_order(goods_id, ctx) dict
+    +build_pay_params(order) dict
+    +query_order(out_trade_no) dict
+    +goods() list
+  }
+  class EntitlementService {
+    +current(tenant_id) Entitlement
+    +grant_quota(tenant_id, amount) void
+    +extend_validity(tenant_id, days) void
+  }
+  class DeliverCallbackHandler {
+    +handle(payload) str
+    +verify_sign(payload) bool
+    +dedupe(out_trade_no) bool
+    +apply_delivery(event) void
+  }
+  class UploadTicketService {
+    +issue(session_id, content_type) dict
+    +assert_100k(req) void
+    +resolve(ref) str
+    +revoke(ref) void
+  }
+
+  VoiceSession "1" --> "0..1" ConfirmCard : 生成
+  VoiceSession "1" --> "1" AsrResult : 转录
+  AsrResult "1" --> "0..1" ParseResult : 解析
+  ParseResult "1" --> "0..1" ConfirmCard : 构建
+  ConfirmCard "1" --> "0..1" DocHeader : 确认落账
+  DocHeader "1" *-- "1..*" DocLine : 明细
+  DocHeader "1" --> "0..1" Reversal : 反做(不删原单)
+  DocHeader ..> Inventory : 影响(库存)
+  VoiceSession "1" --> "0..1" UsageLedger : 幂等计费
+  TenantContext ..> TenantRepository : 注入 tenant_id
+  IntentRegistry "1" o-- "38" IntentDef : 注册
+  TemplateRule ..> IntentDef : 映射 intent_id
+  TemplateEngine "1" o-- "*" TemplateRule : 优先级链
+  TemplateEngine ..> SlotFiller : 填充
+  TemplateEngine ..> ChineseNumberParser : 归一
+  TemplateEngine ..> AliasResolver : 实体
+  TemplateEngine ..> UnitConverter : 换算
+  LlmFallbackParser ..> IntentRegistry : 读 schema
+  LlmFallbackParser ..> PersonalDictEntry : 注入预算
+  VoiceGateService ..> NonCommandFilter : 前置
+  NonCommandFilter ..> TemplateEngine : 放行
+  NonCommandFilter ..> LlmFallbackParser : 静态意图短路
+  TemplateEngine ..> LlmFallbackParser : 未命中升级
+  LlmFallbackParser ..> ClarifyStateMachine : 低置信
+  ClarifyStateMachine ..> ConfirmCardBuilder : 通过
+  ConfirmCardBuilder ..> ImpactPreviewService : 只读预演
+  ImpactPreviewService ..> Inventory : 只读当前态
+  LedgerService ..> ConfirmCard : CAS 校验
+  LedgerService ..> ReversalService : 撤销委托
+  CorrectionFeedbackService ..> PersonalDictEntry : 即时生效
+  CorrectionFeedbackService ..> TemplateRule : 候选模板(审核后)
+  QuotaService ..> UsageMeter : 配额/成本
+  AsrProvider <|.. AsrService : 实现
+  AsrService ..> AsrResult : 产出置信度
+  VoiceGateService ..> AsrService : 调用转录
+  ConfidenceCalibrator ..> AsrResult : 校准
+  ExportService ..> TenantContext : 强制租户
+  ExportService ..> LedgerService : 大屏管理页导出(仅老板+二次确认)
+  VirtualPaymentService ..> VirtualOrder : 下单(生成 outTradeNo)
+  VirtualPaymentService ..> Entitlement : 读当前权益
+  VirtualOrder "1" --> "0..1" DeliverEvent : 发货推送(幂等)
+  DeliverCallbackHandler ..> DeliverEvent : 验签+去重
+  DeliverCallbackHandler ..> EntitlementService : 委托发放
+  EntitlementService ..> Entitlement : 延长 valid_until
+  EntitlementService ..> UsageLedger : 只发额度不写扣次(分离)
+  UploadTicketService ..> VoiceSession : 签发临时引用
+  UploadTicketService ..> AsrProvider : 凭 audio_object_ref 取音频
+  VirtualPaymentService ..> DeliverCallbackHandler : query_order 兜底补发货

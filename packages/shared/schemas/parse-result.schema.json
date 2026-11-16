@@ -1,0 +1,96 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://voice-inventory-lite.local/schemas/parse-result.schema.json",
+  "title": "ParseResult",
+  "description": "解析结果契约（规则层 G3 与 LLM 兜底 G4 共用同一 Schema，H4）。来源：docs/02-架构设计.md 附录 A2。LLM 必须输出紧凑 JSON，禁止解释文字。",
+  "type": "object",
+  "required": ["intent", "slots", "source", "confidence", "clarify"],
+  "additionalProperties": false,
+  "properties": {
+    "intent": {
+      "type": "string",
+      "description": "38 个 intent_id 之一；见 contracts/intents.json",
+      "enum": [
+        "purchase.create",
+        "purchase.create_multi",
+        "sales.create",
+        "sales.create_multi",
+        "sales_return.create",
+        "purchase_return.create",
+        "stock.take",
+        "stock.take_multi",
+        "stock.loss",
+        "price.update",
+        "stock.query",
+        "stock.query_movement",
+        "stock.query_low",
+        "doc.query",
+        "doc.query_summary",
+        "partner.create",
+        "partner.update",
+        "partner.merge",
+        "debt.query",
+        "payment.receive",
+        "payment.pay",
+        "debt.writeoff",
+        "product.create",
+        "product.update",
+        "product.alias.add",
+        "product.unit.set",
+        "product.disable",
+        "report.today",
+        "report.period",
+        "report.top",
+        "report.export",
+        "sys.undo",
+        "sys.cancel",
+        "sys.continue",
+        "sys.correct",
+        "sys.help",
+        "sys.example",
+        "sys.teach"
+      ]
+    },
+    "slots": {
+      "type": "object",
+      "description": "槽位 code（18 个之一）-> 值；金额类一律整数分（*_fen 语义）",
+      "additionalProperties": true
+    },
+    "source": {
+      "type": "object",
+      "description": "槽位 code -> 来源枚举（5 值，见 source-enum.json）",
+      "additionalProperties": { "enum": ["asr", "default", "computed", "alias", "pending"] }
+    },
+    "confidence": { "type": "number", "minimum": 0, "maximum": 1 },
+    "clarify": {
+      "oneOf": [
+        { "type": "null" },
+        {
+          "type": "object",
+          "required": ["slot", "question", "options"],
+          "additionalProperties": false,
+          "properties": {
+            "slot": { "type": "string" },
+            "question": { "type": "string" },
+            "options": { "type": "array", "minItems": 2, "maxItems": 3, "items": { "type": "string" } }
+          }
+        }
+      ]
+    },
+    "calc_traces": {
+      "type": "array",
+      "description": "computed 值的计算式，如 '2 箱 × ¥35.00 = ¥70.00'",
+      "items": { "type": "string" }
+    },
+    "channel": {
+      "type": "string",
+      "description": "解析通道：template=规则层命中（不调 LLM），llm=兜底",
+      "enum": ["template", "llm"]
+    },
+    "unknown_spans": {
+      "type": "array",
+      "description": "未识别的原文片段（用于回显与纠错回流）",
+      "items": { "type": "string" }
+    }
+  }
+}

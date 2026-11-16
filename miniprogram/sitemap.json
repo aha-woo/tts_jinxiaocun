@@ -1,0 +1,9 @@
+{
+  "desc": "见 sitemap 配置说明：本小程序不对外索引",
+  "rules": [
+    {
+      "action": "disallow",
+      "page": "*"
+    }
+  ]
+}

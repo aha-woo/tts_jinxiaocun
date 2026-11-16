@@ -1,0 +1,99 @@
+sequenceDiagram
+  autonumber
+  actor U as 王姐(小程序)
+  participant MP as 端侧门禁 G0/G1
+  participant GW as 云托管网关+TenantContext(callContainer)
+  participant R as Redis(配额/去重/卡片TTL)
+  participant OBJ as 对象存储/云开发文件(临时音频)
+  participant ASR as ASR 服务【ASR 计费】
+  participant G2 as 非命令过滤器 G2【0 成本】
+  participant G3 as 规则模板层 G3【0 LLM】
+  participant REG as IntentRegistry
+  participant DICT as 词表/归一/换算
+  participant PRV as ImpactPreview(只读连接)
+  participant CARD as ConfirmCardBuilder
+  participant DB as 主库(方案A外挂PG-RLS/方案B云开发)
+  participant LED as LedgerService(写事务)
+  participant Q as 异步回流
+
+  U->>MP: 按下大按钮「今天进了两箱可乐，一件三十五」
+  MP->>MP: 误触去重 / 0.8s≤T≤15s / VAD 700~900ms 判停 / 端点前留 300ms
+  MP->>GW: POST /voice/sessions (Idempotency-Key=VS001)
+  GW->>R: Lua 令牌桶 30/min + 1000/day 原子扣减；读 degrade_level + 100KiB 断言
+  alt 配额超限
+    R-->>GW: REJECT_QUOTA
+    GW-->>MP: 降级态 L3：仅规则层 + 数字键盘手动补录（历史可查可导出）
+  else 通过
+    GW-->>MP: session_id=VS001 + upload_ticket + audio_object_ref 占位（临时上传凭证）
+    MP->>OBJ: wx.cloud.uploadFile 直传音频到对象存储/云开发文件（不经 callContainer）
+    MP->>GW: POST /voice/sessions/VS001/parse 仅传 audio_object_ref（引用，非音频本体）
+    GW->>OBJ: 凭引用取临时音频（短 TTL + t/{tenant_id}/ 前缀 + 二次鉴权）
+    OBJ-->>GW: 临时音频流；用后限期删除（默认不留存）
+    GW->>ASR: 送 ASR 转录【ASR 计费】（音频本体不进 callContainer 请求体）
+    ASR-->>G2: asr_text + 词级 confidence=0.93
+    G2->>R: SETNX t:T1:text_hash 60s 去重
+    alt 命中去重
+      R-->>G2: 复用上次 ParseResult（不扣次）
+    else 新文本
+      G2->>G2: 无有效汉字 / 闲聊关键词 / sys.help|example 静态路由
+      alt 非命令或静态意图
+        G2-->>MP: 友好提示 + 3 个示例按钮【不调 LLM · 不扣次】
+      else 命中业务动词「进了」→ 放行 G3
+        G2->>G3: asr_text + 租户上下文 + 最近 3 条上下文
+        G3->>DICT: 数字归一「两」=2；别名「可乐」→ P001(常用商品本)
+        G3->>DICT: 单位「箱」→ unit_conversion 1箱=24瓶（不臆造）
+        G3->>G3: 金额判定「一件三十五」→ UP=35；calc_trace 2箱×35=70
+        G3->>G3: 冲突检测：无「还剩/盘点」→ 增量入库（非快照设定）
+        G3->>REG: purchase.create → risk=R1, confirm=C1, template_hit=true, side_effect
+        G3->>G3: 缺省填充 D=今天(显示具体日期), PS=已结, W=主仓, S=待补
+        Note over G3: template_hit=true ⇒ 未调用 LLM，C_llm=0 ★最大省钱点
+        alt 模板未命中 / 冲突 / 低置信 / 多商品拆分
+          G3->>G3: 升级 G4 LLM 兜底（固定 prompt + 注入预算 + 紧凑 JSON + Schema 校验 + 1 次重试）
+          Note over G3: 【LLM 计费】仅此分支
+        end
+        G3-->>CARD: ParseResult{intent, slots, source, confidence, clarify, calc_traces}
+        alt 置信低于 0.6 或 缺必填槽位 且 轮数不足 2
+          CARD-->>MP: 1 问 + 2~3 可点选项（静态话术，不调 AI）
+          MP-->>G3: 用户点选/补说（本地修补，不重调 AI）
+        else 2 轮仍不足
+          CARD-->>MP: 转数字键盘手动补录
+        end
+        G3->>CARD: 结构化结果（CTX 继承值显式标注）
+        CARD->>PRV: 请求只读预演 delta（可乐 +2箱；已结故应付 0）
+        PRV->>DB: 【只读连接】SELECT qty_base, version FROM inventory WHERE tenant_id=T1 AND store_id=S1
+        DB-->>PRV: qty=8箱, version=7
+        PRV->>PRV: simulate(current, delta) 纯函数 → 8箱→10箱（无写事务 / 无 INSERT-UPDATE）
+        PRV-->>CARD: impact_preview + preview_version=7
+        alt R0 只读
+          CARD-->>MP: 直接返回结果（不占卡片 · 不写库）
+        else R3 白名单
+          CARD->>DB: 写 pending_task（待办，电脑版微信大屏管理页执行）
+          CARD-->>MP: 已生成待办，请到电脑版微信大屏管理页确认
+        else R1/R2
+          CARD->>R: 卡片 TTL 30s
+          CARD->>DB: 【同一事务】写 confirm_card + usage_ledger(CARD_CREATED) 幂等扣 1 次
+          CARD-->>MP: 7 区块卡片（原文/意图/槽位+source/计算式/影响预览/风险条/大按钮）
+          alt 30s 未确认
+            CARD->>DB: 收进待确认列表【不落账 · 不重复扣次】
+          else 人确认（C1 大按钮 / C2 二次语音+按钮兜底）
+            U->>CARD: 点「确认入库 2 箱可乐 ¥70」
+            CARD->>LED: POST /voice/cards/C01/confirm (Idempotency-Key=C01)
+            LED->>DB: BEGIN + SET LOCAL app.tenant_id（方案A RLS；方案B 强制 scope）
+            LED->>DB: CAS UPDATE inventory SET qty=10,version=8 WHERE tenant_id=T1 AND store_id=S1 AND product_id=P001 AND version=7
+            alt 版本一致
+              LED->>DB: INSERT doc_header + doc_line + audit_log + voice_log(parse_channel=template)
+              LED->>DB: COMMIT
+              LED-->>MP: 已记：进 2 箱可乐 ¥70 + 库存 8→10 箱 + 「撤」入口（10 分钟）
+              LED->>Q: 异步：常用商品 Top20 频次 +1 / 纠错回流 / 模板候选
+            else 版本已变（并发录单）
+              DB-->>LED: 0 rows
+              LED-->>MP: E_PREVIEW_VERSION_CONFLICT → 重新只读预演并重新确认
+            end
+          end
+        end
+      end
+    end
+  end
+
+  Note over U,Q: 撤销分支：10 分钟内 → ReversalService 生成反做单（原单保留、不物理删）；超窗或被引用 → sys.correct / 电脑版微信大屏管理页
+  Note over GW,OBJ: 音频本体不进 callContainer(文本上限 100KiB；二进制 20MiB 口径与超时 15s/60s 待核实)；临时对象短 TTL + 用后限期删除；音频默认不留存(D8/D11)

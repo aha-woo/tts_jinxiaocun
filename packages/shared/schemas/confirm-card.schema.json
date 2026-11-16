@@ -1,0 +1,76 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://voice-inventory-lite.local/schemas/confirm-card.schema.json",
+  "title": "ConfirmCard",
+  "description": "7 区块确认卡片契约（H10）。来源：docs/02-架构设计.md 附录 A2 + docs/01-PRD.md §3.2。任何写操作必经确认卡片，禁止绕过。",
+  "type": "object",
+  "required": [
+    "card_id",
+    "session_id",
+    "asr_text",
+    "intent_label_zh",
+    "slot_views",
+    "calc_traces",
+    "impact_preview",
+    "risk_banner",
+    "primary_label",
+    "preview_version"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "card_id": { "type": "string" },
+    "session_id": { "type": "string" },
+    "asr_text": { "type": "string", "description": "原文，必须与结构化结果并列展示" },
+    "asr_confidence": { "type": "number", "minimum": 0, "maximum": 1 },
+    "intent_label_zh": { "type": "string" },
+    "intent_id": { "type": "string" },
+    "domain": { "type": "string" },
+    "slot_views": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["code", "value", "source", "editable"],
+        "additionalProperties": false,
+        "properties": {
+          "code": { "type": "string" },
+          "value": {},
+          "display": { "type": "string" },
+          "source": { "enum": ["asr", "default", "computed", "alias", "pending"] },
+          "editable": { "type": "boolean" },
+          "calc_trace": { "type": "string" }
+        }
+      }
+    },
+    "calc_traces": { "type": "array", "items": { "type": "string" } },
+    "impact_preview": {
+      "type": "array",
+      "description": "只读预演结果（不写库）；落账时以 preview_version 做 CAS",
+      "items": {
+        "type": "object",
+        "required": ["entity", "before", "delta", "after"],
+        "additionalProperties": false,
+        "properties": {
+          "entity": { "type": "string" },
+          "before": { "type": "string" },
+          "delta": { "type": "string" },
+          "after": { "type": "string" },
+          "version": { "type": "integer" }
+        }
+      }
+    },
+    "risk_banner": {
+      "type": "object",
+      "required": ["level"],
+      "additionalProperties": false,
+      "properties": {
+        "level": { "enum": ["R0", "R1", "R2", "R3"] },
+        "reason_zh": { "type": "string" }
+      }
+    },
+    "primary_label": { "type": "string", "description": "大按钮文案，必须带关键值，如「确认收入库 2 箱可乐 ¥70」" },
+    "confirm_policy": { "enum": ["C0", "C1", "C2", "C3"] },
+    "preview_version": { "type": "integer" },
+    "expires_at": { "type": "string", "format": "date-time" },
+    "pending_task_id": { "type": ["string", "null"], "description": "R3 时生成的待办 id" }
+  }
+}

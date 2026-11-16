@@ -1,0 +1,77 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://voice-inventory-lite.local/schemas/entitlement.schema.json",
+  "title": "Entitlement",
+  "description": "权益与额度契约（v1.1 新增）。来源：docs/02-架构设计.md 附录 A2 + §5.4。auto_renew 恒为 false（取消自动续费）；权益发放与语音扣次分离（发货不写 usage_ledger）。",
+  "type": "object",
+  "required": [
+    "tenant_id",
+    "plan_code",
+    "valid_from",
+    "valid_until",
+    "status",
+    "quota_granted",
+    "auto_renew"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "tenant_id": { "type": "string" },
+    "plan_code": { "type": "string", "enum": ["free", "30day", "quota_pack"] },
+    "valid_from": { "type": "string", "format": "date-time" },
+    "valid_until": { "type": "string", "format": "date-time" },
+    "status": { "type": "string", "enum": ["active", "expired"] },
+    "quota_granted": { "type": "integer", "minimum": 0 },
+    "remaining": { "type": "integer", "minimum": 0 },
+    "degrade_level": { "type": "string", "enum": ["L0", "L1", "L2", "L3", "L4"] },
+    "auto_renew": { "type": "boolean", "const": false },
+    "goods": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["goods_id", "goods_type"],
+        "additionalProperties": false,
+        "properties": {
+          "goods_id": { "type": "string" },
+          "goods_type": { "type": "string", "enum": ["entitlement", "quota_pack"] },
+          "price_fen": { "type": "integer", "minimum": 0 },
+          "quota_amount": { "type": "integer", "minimum": 0 },
+          "validity_days": { "type": "integer", "minimum": 0 }
+        }
+      }
+    }
+  },
+  "$defs": {
+    "VirtualOrder": {
+      "type": "object",
+      "description": "下单记录：服务端生成唯一 outTradeNo，作为发货幂等键",
+      "required": ["out_trade_no", "tenant_id", "goods_id", "price_fen", "status", "created_at"],
+      "additionalProperties": false,
+      "properties": {
+        "out_trade_no": { "type": "string" },
+        "tenant_id": { "type": "string" },
+        "goods_id": { "type": "string" },
+        "price_fen": { "type": "integer", "minimum": 0 },
+        "status": { "type": "string", "enum": ["pending", "paid", "delivered", "closed"] },
+        "created_at": { "type": "string", "format": "date-time" },
+        "paid_at": { "type": ["string", "null"], "format": "date-time" }
+      }
+    },
+    "DeliverEvent": {
+      "type": "object",
+      "description": "发货事件：UNIQUE(tenant_id, out_trade_no) 去重，重复推送不重复发额度",
+      "required": ["tenant_id", "out_trade_no", "source", "sign_status", "received_at"],
+      "additionalProperties": false,
+      "properties": {
+        "tenant_id": { "type": "string" },
+        "out_trade_no": { "type": "string" },
+        "source": { "type": "string", "enum": ["xpay_goods_deliver_notify", "query_order_fallback"] },
+        "sign_status": { "type": "string", "enum": ["verified", "invalid"] },
+        "received_at": { "type": "string", "format": "date-time" },
+        "delivered": { "type": "boolean" },
+        "grant_quota": { "type": "integer", "minimum": 0 },
+        "extend_days": { "type": "integer", "minimum": 0 },
+        "error_code": { "type": ["string", "null"], "description": "E_PAY_SIGN_INVALID / E_DELIVER_DUPLICATE" }
+      }
+    }
+  }
+}

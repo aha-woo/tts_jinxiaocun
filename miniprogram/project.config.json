@@ -1,0 +1,40 @@
+{
+  "appid": "wx0000000000000000",
+  "projectname": "voice-inventory-lite",
+  "description": "语音录入版轻量化进销存 · 同一 AppID：手机端 + 电脑版微信大屏（resizable + 双栏适配，无独立网页端 / 无 H5 / 无账号密码）",
+  "compileType": "miniprogram",
+  "miniprogramRoot": "./",
+  "libVersion": "3.0.0",
+  "setting": {
+    "urlCheck": true,
+    "es6": true,
+    "enhance": true,
+    "postcss": true,
+    "minified": true,
+    "coverView": true,
+    "nodeModules": false,
+    "autoAudits": false,
+    "showShadowRootInWxmlPanel": true,
+    "scopeDataCheck": false,
+    "useCompilerPlugins": [
+      "typescript"
+    ],
+    "babelSetting": {
+      "ignore": [],
+      "disablePlugins": [],
+      "outputPath": ""
+    }
+  },
+  "condition": {
+    "miniprogram": {
+      "list": [
+        {
+          "name": "首页 · 后端健康检查",
+          "pathName": "pages/index/index",
+          "query": "",
+          "scene": null
+        }
+      ]
+    }
+  }
+}

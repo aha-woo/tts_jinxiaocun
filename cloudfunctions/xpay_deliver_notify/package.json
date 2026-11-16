@@ -1,0 +1,10 @@
+{
+  "name": "xpay_deliver_notify",
+  "version": "0.1.0",
+  "private": true,
+  "description": "小程序虚拟支付发货推送云函数（主路径）：验签 + outTradeNo 幂等 + 发额度/延期（T01 仅骨架）",
+  "main": "index.js",
+  "dependencies": {
+    "wx-server-sdk": "~2.6.3"
+  }
+}

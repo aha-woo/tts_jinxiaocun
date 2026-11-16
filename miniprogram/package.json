@@ -1,0 +1,13 @@
+{
+  "name": "voice-inventory-lite-miniprogram",
+  "version": "0.1.0",
+  "private": true,
+  "description": "语音录入版轻量化进销存 · 微信小程序（同一 AppID：手机端 + 电脑版微信大屏）",
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "devDependencies": {
+    "typescript": "^5.4.5",
+    "miniprogram-api-typings": "^3.12.2"
+  }
+}

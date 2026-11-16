@@ -1,0 +1,77 @@
+{
+  "$schema_note": "双端一致用例表（语言中立）。server/tests/test_utils_parity.py 与端侧 TS 单测共用此表，任何一侧改动导致不一致即测试失败。金额单位：分。日期：YYYY-MM-DD。",
+  "version": "1.1.0",
+  "money": {
+    "note": "yuan_to_fen 使用 ROUND_HALF_UP（远离零），禁止浮点乘 100。",
+    "cases": [
+      { "fn": "yuan_to_fen", "input": "12.34", "expect": 1234 },
+      { "fn": "yuan_to_fen", "input": "12.345", "expect": 1235 },
+      { "fn": "yuan_to_fen", "input": "12.3449", "expect": 1234 },
+      { "fn": "yuan_to_fen", "input": "0.005", "expect": 1 },
+      { "fn": "yuan_to_fen", "input": "0.004", "expect": 0 },
+      { "fn": "yuan_to_fen", "input": "35", "expect": 3500 },
+      { "fn": "yuan_to_fen", "input": "0", "expect": 0 },
+      { "fn": "yuan_to_fen", "input": "-1.005", "expect": -101 },
+      { "fn": "yuan_to_fen", "input": "12.9995", "expect": 1300 },
+      { "fn": "fen_to_yuan_str", "input": 1234, "expect": "12.34" },
+      { "fn": "fen_to_yuan_str", "input": 0, "expect": "0.00" },
+      { "fn": "fen_to_yuan_str", "input": 5, "expect": "0.05" },
+      { "fn": "fen_to_yuan_str", "input": 1000, "expect": "10.00" },
+      { "fn": "fen_to_yuan_str", "input": -100, "expect": "-1.00" },
+      { "fn": "format_fen", "input": 1234, "expect": "¥12.34" },
+      { "fn": "format_fen", "input": 3500, "expect": "¥35.00" },
+      { "fn": "format_fen", "input": -100, "expect": "-¥1.00" },
+      { "fn": "parse_cny_text", "input": "3块5", "expect": 350 },
+      { "fn": "parse_cny_text", "input": "3块5毛", "expect": 350 },
+      { "fn": "parse_cny_text", "input": "12.5元", "expect": 1250 },
+      { "fn": "parse_cny_text", "input": "35", "expect": 3500 },
+      { "fn": "parse_cny_text", "input": "两百三", "expect": null }
+    ]
+  },
+  "date": {
+    "note": "today 固定为 2025-11-15；跨月/跨年边界必须 needs_confirm=true；「上次」未绑定必须返回 null。",
+    "today": "2025-11-15",
+    "cases": [
+      { "text": "今天", "expect": "2025-11-15", "needs_confirm": false },
+      { "text": "昨天", "expect": "2025-11-14", "needs_confirm": false },
+      { "text": "前天", "expect": "2025-11-13", "needs_confirm": false },
+      { "text": "明天", "expect": "2025-11-16", "needs_confirm": false },
+      { "text": "上月", "expect": "2025-10-15", "needs_confirm": true },
+      { "text": "本月", "expect": "2025-11-01", "needs_confirm": false },
+      { "text": "3号", "expect": "2025-11-03", "needs_confirm": false },
+      { "text": "20号", "expect": "2025-10-20", "needs_confirm": true },
+      { "text": "上次", "expect": null, "needs_confirm": true },
+      { "text": "上次", "last_date": "2025-11-01", "expect": "2025-11-01", "needs_confirm": true },
+      { "text": "胡说八道", "expect": null, "needs_confirm": true }
+    ],
+    "month_boundary_cases": [
+      { "today": "2025-03-31", "text": "上月", "expect": "2025-02-28", "needs_confirm": true },
+      { "today": "2025-01-15", "text": "上月", "expect": "2024-12-15", "needs_confirm": true },
+      { "today": "2025-01-01", "text": "昨天", "expect": "2024-12-31", "needs_confirm": false }
+    ]
+  },
+  "unit": {
+    "note": "归一仅处理拼写变体；换算系数只能来自 unit_conversion，缺失返回 needs_teaching=true 且 quantity=null。",
+    "normalize_cases": [
+      { "input": "箱", "expect": "箱" },
+      { "input": " 箱 ", "expect": "箱" },
+      { "input": "整箱", "expect": "箱" },
+      { "input": "箱装", "expect": "箱" },
+      { "input": "件儿", "expect": "件" },
+      { "input": "瓶", "expect": "瓶" },
+      { "input": "斤", "expect": "斤" },
+      { "input": "条", "expect": "条" },
+      { "input": "罐", "expect": "罐" },
+      { "input": "公斤", "expect": null },
+      { "input": "吨", "expect": null },
+      { "input": "", "expect": null }
+    ],
+    "convert_cases": [
+      { "quantity": 2, "from": "箱", "to": "瓶", "conversions": { "箱": { "瓶": 24 } }, "expect": 48, "needs_teaching": false },
+      { "quantity": 48, "from": "瓶", "to": "箱", "conversions": { "箱": { "瓶": 24 } }, "expect": 2, "needs_teaching": false },
+      { "quantity": 5, "from": "斤", "to": "斤", "conversions": {}, "expect": 5, "needs_teaching": false },
+      { "quantity": 2, "from": "箱", "to": "斤", "conversions": { "箱": { "瓶": 24 } }, "expect": null, "needs_teaching": true },
+      { "quantity": 2, "from": "箱", "to": "瓶", "conversions": {}, "expect": null, "needs_teaching": true }
+    ]
+  }
+}
