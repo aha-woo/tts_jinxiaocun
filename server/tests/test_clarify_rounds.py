@@ -74,8 +74,16 @@ def test_missing_required_slot_produces_clarify_instead_of_card() -> None:
     assert counter.calls == 0, "澄清不得调用模型"
 
 
-def test_two_round_limit_then_pending_task() -> None:
-    """追问**最多 2 轮**；第 3 轮不再问，转待办并给 ``E_CLARIFY_LIMIT``。"""
+def test_two_round_limit_then_manual_not_pending_task() -> None:
+    """追问**最多 2 轮**；第 3 轮不再问，**路由到 MANUAL（数字键盘）**并给 ``E_CLARIFY_LIMIT``。
+
+    为什么不是 ``pending_task``（team-lead 复核时判定的错误，此处为回归护栏）
+    ------------------------------------------------------------------
+    1. 架构 ``docs/02-架构设计.md:476-477`` 写的是 ``CLARIFY_R2 --> MANUAL``；
+    2. ``pending_task`` 是 **R3 高风险动作**专属队列，必须 ``role=boss`` 在电脑版微信
+       大屏二次确认——把「没听清」塞进去会污染老板的审批箱，R3 审批直接失效；
+    3. ``error-codes.json`` 里本码 ``client_action`` 写的就是「切手动补录（数字键盘）」。
+    """
     fsm = ClarifyFSM()
     base = _parse_result_intent("purchase.create")
 
@@ -96,6 +104,12 @@ def test_two_round_limit_then_pending_task() -> None:
     assert state.error_code == "E_CLARIFY_LIMIT"
     assert state.finished is True
     assert CLARIFY_LIMIT_MESSAGE in state.transcript
+
+    # 终点必须是 MANUAL，绝不能是 pending_task
+    result = fsm.to_parse_result(state)
+    assert result.route == "manual", "澄清用尽必须切手动补录态"
+    assert result.route != "pending_task", "pending_task 是 R3 审批队列，不得混入澄清失败"
+    assert "键盘" in CLARIFY_LIMIT_MESSAGE, "话术必须明确引导到数字键盘"
 
 
 def test_answering_all_required_slots_finishes_before_limit() -> None:
@@ -134,7 +148,7 @@ def test_clarify_answer_is_local_and_never_calls_llm() -> None:
 
 
 def test_clarify_limit_surfaces_error_code_via_pipeline() -> None:
-    """状态机到上限时，流水线返回 ``E_CLARIFY_LIMIT`` 供端上提示。"""
+    """状态机到上限时，流水线返回 ``E_CLARIFY_LIMIT`` 且路由为 ``manual`` 供端上切键盘。"""
     pipeline, counter = build_pipeline()
     result = pipeline.run(
         "今天进了两箱，一件三十五",
@@ -150,7 +164,23 @@ def test_clarify_limit_surfaces_error_code_via_pipeline() -> None:
     final = pipeline.answer_clarify(state, "", slot="Q", base=result.parse)
     assert final.error_code == "E_CLARIFY_LIMIT"
     assert final.reason == "clarify_limit"
+    assert final.route == "manual", "澄清用尽＝路由到手动补录，不是待办"
     assert counter.calls == 0
+
+
+def test_clarify_limit_error_code_is_not_a_4xx() -> None:
+    """``E_CLARIFY_LIMIT`` 走「降级不断服」，HTTP 200；与 R3 的待办队列彻底切割。
+
+    契约层断言（不是只改代码）：错误码真相源里 ``http_status`` 必须为 200，
+    否则监控看板会把每次澄清失败都算成 4xx 错误率。
+    """
+    from app.config import get_contracts
+
+    spec = get_contracts().error_codes["E_CLARIFY_LIMIT"]
+    assert spec.http_status == 200, "澄清用尽不是用户错误，不得报 4xx"
+    assert spec.deduct_quota is False
+    assert "键盘" in spec.client_action
+    assert spec.comment and "pending_task" in spec.comment, "契约里必须写明为何不写待办"
 
 
 def test_interpret_answer_rejects_illegal_enum_values() -> None:

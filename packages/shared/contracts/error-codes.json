@@ -47,11 +47,12 @@
     },
     "E_CLARIFY_LIMIT": {
       "numeric": 1005,
-      "http_status": 422,
+      "http_status": 200,
       "category": "gate_filter",
-      "message_zh": "问了两轮还是没听清，用数字键盘手动补吧。",
+      "message_zh": "没太听清，切到键盘补一下，点两下就好。",
       "deduct_quota": false,
-      "client_action": "切手动补录（数字键盘）"
+      "client_action": "路由到 MANUAL 态（数字键盘补录），非报错弹窗",
+      "comment": "澄清用尽＝路由到手动补录（架构状态机 CLARIFY_R2 --> MANUAL），不是用户错误；对齐 E_NON_COMMAND / E_QUOTA_EXCEEDED 的「降级不断服、不报 4xx」原则。不写 pending_task —— 那是 R3 高风险待办、须 role=boss 在大屏二次确认的专属队列。"
     },
     "E_LLM_SCHEMA_INVALID": {
       "numeric": 1101,

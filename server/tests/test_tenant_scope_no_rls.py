@@ -390,5 +390,10 @@ def test_tenant_guard_scan_is_clean_and_covers_models() -> None:
     assert report["findings"] == []
     # 证明覆盖到模型层：14 个模型文件必须都被扫到
     assert report["coverage"]["server/app/models"] >= 14
+    # T04 起：新增的 app/api 与 app/pay（按 id 批量读 / 无用户上下文的发货回调）
+    # 也必须在覆盖率里**被点名**——「位于 server/app 下所以应该扫到了」不算证据
+    assert report["coverage"]["server/app/api"] >= 10
+    assert report["coverage"]["server/app/pay"] >= 3
+    assert report["coverage"]["server/app/domain"] >= 5
     # f-string 拼出来的 RLS DDL 现在可见了，且被逐条结构豁免（不是「看不见所以没命中」）
     assert report["exemptions"] >= 5

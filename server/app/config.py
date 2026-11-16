@@ -124,6 +124,25 @@ class Settings:
     #: 上传票据 TTL（秒）：临时对象短 TTL + 限期删除（需核实合规）
     upload_ticket_ttl_seconds: int = int(os.getenv("UPLOAD_TICKET_TTL_SECONDS", "600"))
 
+    # ---- 卡片 / 撤销（T04）----
+    #: 卡片 TTL：30s 超时不落账进待确认（PRD 3.5【假设】）
+    card_ttl_seconds: int = int(os.getenv("CARD_TTL_SECONDS", "30"))
+    #: 撤销窗口（分钟）【假设】
+    reversal_window_minutes: int = int(os.getenv("REVERSAL_WINDOW_MINUTES", "10"))
+    #: 导出文件签名 URL TTL（秒）【假设】
+    export_signed_url_ttl_seconds: int = int(os.getenv("EXPORT_SIGNED_URL_TTL_SECONDS", "300"))
+
+    # ---- 虚拟支付验签（T04）----
+    #: 验签器实现：``platform_cert``（生产）/ ``fake``（本地与测试）。
+    #: **生产必须配平台证书**；不存在「默认 HMAC 也能跑」的路径（见 app/pay/sign.py）。
+    pay_verifier: str = os.getenv("PAY_VERIFIER", "")
+    #: 微信支付平台证书 PEM 路径（生产必填）
+    wx_platform_cert_path: str = os.getenv("WX_PLATFORM_CERT_PATH", "")
+    #: 平台证书序列号（生产必填）
+    wx_platform_cert_serial: str = os.getenv("WX_PLATFORM_CERT_SERIAL", "")
+    #: 支付环境：0 现网 / 1 沙箱（沙箱 AppKey 不得用于生产）
+    virtual_pay_env: int = int(os.getenv("VIRTUAL_PAY_ENV", "0"))
+
     def jwt_secret_is_default(self) -> bool:
         """是否仍在用本地默认密钥（`/readyz` 会提示，生产必须替换）。"""
         return self.jwt_secret == "local-dev-only-change-me"

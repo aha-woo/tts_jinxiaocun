@@ -84,12 +84,19 @@ STRUCTURAL_EXEMPTIONS: tuple[tuple[re.Pattern[str], str], ...] = (
 #: 默认扫描根目录（相对仓库根）：业务代码 + 迁移脚本（迁移里的裸 SQL 同样能越权）
 DEFAULT_TARGETS = ("server/app", "server/migrations")
 
-#: 汇总里要单独点名的目录（证明「模型层也被扫到了」）
+#: 汇总里要单独点名的目录（证明「最容易写裸 SQL 的几层」也被扫到了）
+#:
+#: T04 起把 ``app/api`` 与 ``app/pay`` 也点名：这两层是新增的
+#: 「按 id 批量查 + 发货回调无用户上下文」的高风险代码，
+#: 光靠「它们位于 server/app 下、默认目录已经扫到」不够——
+#: 覆盖率要能在输出里一眼看到，否则「以为扫了」和「真的扫了」分不清。
 SPOTLIGHT_DIRS = (
     "server/app/models",
     "server/app/voice",
     "server/app/services",
     "server/app/domain",
+    "server/app/api",
+    "server/app/pay",
 )
 
 REPO_ROOT = Path(__file__).resolve().parents[2]

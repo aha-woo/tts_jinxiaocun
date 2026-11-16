@@ -75,9 +75,13 @@ class ParseResult(BaseModel):
     calc_traces: list[str] = Field(default_factory=list)
     channel: Literal["template", "llm"] | None = None
     unknown_spans: list[str] = Field(default_factory=list)
-    route: Literal["card", "answer", "pending_task", "clarify", "static"] | None = Field(
+    route: Literal["card", "answer", "pending_task", "clarify", "manual", "static"] | None = Field(
         default=None,
-        description="服务端路由结论（非 LLM 输出字段，T04 据此决定卡片/只读/待办）",
+        description=(
+            "服务端路由结论（非 LLM 输出字段，T04 据此决定卡片/只读/待办/手动补录）。"
+            "``manual`` = 澄清 2 轮用尽后平滑切数字键盘补录（架构 CLARIFY_R2 --> MANUAL），"
+            "**不是** pending_task —— 后者是 R3 高风险动作专属、须 role=boss 在大屏二次确认。"
+        ),
     )
 
     @field_validator("slots", mode="after")
@@ -175,7 +179,7 @@ def semantic_issues(model: ParseResult, *, registry: IntentRegistry | None = Non
     spec = reg.get(model.intent)
     if spec is not None and spec.whitelist_blocked:
         # R3 只允许生成待办（PRD 2.7）——不在这里报错，但必须显式路由
-        if model.route not in (None, "pending_task", "clarify"):
+        if model.route not in (None, "pending_task", "clarify", "manual"):
             issues.append(f"intent: {model.intent} 是 R3 白名单动作，只能生成待办，不得直写")
     return issues
 

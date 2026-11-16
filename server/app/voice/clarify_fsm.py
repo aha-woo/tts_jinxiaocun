@@ -2,8 +2,12 @@
 
 三条铁律（PRD 4.3 / 架构 §4 ⑤）
 ------------------------------
-1. **2 轮封顶**：第 3 轮不再追问，直接判 ``E_CLARIFY_LIMIT``(1005)，把话术改成
-   「我先把这条记成待办，你回头点一下」——比无限追问更省更不烦人；
+1. **2 轮封顶**：第 3 轮不再追问，直接判 ``E_CLARIFY_LIMIT``(1005)，并**平滑路由到
+   ``MANUAL`` 态**（数字键盘补录，架构 ``CLARIFY_R2 --> MANUAL``）——比无限追问更省更不烦人。
+   **绝不写 ``pending_task``**：那是 R3 高风险动作专属队列，必须由 ``role=boss`` 在
+   电脑版微信大屏二次确认；把「没听清」塞进去会污染老板的审批箱，R3 审批直接失效。
+   该错误码 ``http_status`` 也已对齐为 200（降级不断服，与 ``E_NON_COMMAND`` /
+   ``E_QUOTA_EXCEEDED`` 同口径），不出 4xx 污染错误率看板；
 2. **一次只问 1 个槽位**：``ClarifyPrompt.slot`` 是单值，选项 2~3 个；
 3. **点选后不重调 AI**：用户点「按盘点覆盖」就是一次**本地结构化赋值**，
    绝不重新走 G4。这条最容易被实现成「重新解析一遍」，那样澄清就变成了成本放大器。
@@ -38,7 +42,8 @@ __all__ = [
 MAX_CLARIFY_ROUNDS = 2
 
 #: 追问超限时的用户可见话术（静态，不调 AI）
-CLARIFY_LIMIT_MESSAGE = "我先帮你记成待办，回头点一下就能补全。"
+#: 走向是「平滑切手动补录」而不是报错，所以话术必须是安抚式而不是失败式。
+CLARIFY_LIMIT_MESSAGE = "没太听清，切到键盘补一下，点两下就好。"
 
 #: 各槽位的可接受裸值转换（点选回填时用，**不做语义猜测**）
 _ENUM_SLOTS: Mapping[str, frozenset[str]] = {
@@ -195,7 +200,7 @@ class ClarifyFSM:
             "route": (
                 "clarify"
                 if state.prompt is not None
-                else ("pending_task" if state.exhausted else None)
+                else ("manual" if state.exhausted else None)
             ),
         }
         if payload["route"] is None:

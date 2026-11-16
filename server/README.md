@@ -242,7 +242,94 @@ PRD 假设目标 ≥45%，实测 50.0%。**规则表按 intent 语义人工编�
 `tests/test_auth_bootstrap_guard.py`：用 `ast` 扫全仓，断言 `set_auth_bootstrap`
 的**调用点只在 `app/services/auth.py`**（定义处 `app/tenant/rls.py` 与测试文件豁免），
 防止「随手关掉租户隔离」这类不报错的数据泄漏。
-`infra/ci/tenant-guard-scan.py` 覆盖目录已扩到 `app/{models,voice,services,domain}`，命中 0。
+`infra/ci/tenant-guard-scan.py` 覆盖目录已扩到
+`app/{models,voice,services,domain,api,pay}`（T04 起把 API 层与支付层也**点名**进覆盖率），
+命中 0、扫描 114 个 Python 文件。
+
+## 写账与确认卡片（T04）
+
+三条铁律落在代码里的位置（破一条整套账就不可信）：
+
+| 铁律 | 落地 | 证据测试 |
+|---|---|---|
+| **影响预演必须真只读** | `voice/impact_preview.py`：PG `SET TRANSACTION READ ONLY` / SQLite `PRAGMA query_only`；`simulate()` 是无副作用纯函数 | `test_impact_preview_readonly.py`（A/B 全表快照相等 + 同一句 INSERT 普通会话成功、只读窗口必失败） |
+| **落账必须 CAS** | `domain/inventory_service.py`、`domain/ar_ap_service.py`：`UPDATE ... WHERE version = :expected`，rowcount 0 → `E_PREVIEW_VERSION_CONFLICT`(1202) | `test_preview_version_conflict.py`（预演 v1 → 别人改成 v2 → 落账返 1202 且库存保持别人的新值） |
+| **任何写操作必经确认卡片** | 写账入口只有 `services/ledger.py`（确认落账）与 `services/reversal.py`（反做单）；`app/api` 里没有任何模块能直接构造单据/库存/应收 | `test_route_matrix.py`（38 个 intent 逐个断言路由 + 行为）、`test_api_surface.py`（写账路径只有两条） |
+
+### 38 个 intent 的路由分布（实测）
+
+| 路由 | 数量 | 写库 | 扣次 | 说明 |
+|---|---|---|---|---|
+| `static` | 2 | 否 | 否 | `sys.help` / `sys.example`，本地话术 |
+| `answer` | 11 | 否 | 否 | R0 只读，查完就返回，**不建卡** |
+| `pending_task` | 3 | 只写待办 | 否 | R3：`partner.merge` / `product.unit.set` / `report.export` |
+| `card` | 22 | 是 | 是 | R1(10) + R2(12)，唯一写库入口 |
+
+判定只写一处：`app/voice/routing.py::route_of_spec`（顺序 `static > pending_task > answer > card`）。
+API 与测试**都调它**，`test_route_matrix.py` 再把「判定结论」与「真实行为」双向对齐
+（判 card 就必须真能构造 7 区块卡片；判 answer/static/pending_task 就必须构造器抛错 + 落账报对应错误码）。
+
+### 卡片与超时
+
+- 卡片 7 区块键固定：`original / intent / slots / calc / impact / risk / actions`
+  （`BLOCK_KEYS` + `ConfirmCardView.assert_complete()` 双重卡口，手机端与电脑版大屏**同一份**）；
+- `source` 4 值一律带角标：`default`（缺省补全）/ `computed`（换算得到，**必须**附 `calc_trace`）/
+  `alias`（按你的习惯）/ `pending`（**待确认，绝不静默填值**）；存在待确认项时第一个按钮是「先确认黄色项」；
+- 主按钮文案动态带值：「确认入库 2箱 可乐 500ml ¥70.00」；
+- **30s TTL**：超时 → `E_CARD_EXPIRED`(1201)，不落账、进待确认、**不重复扣次**；
+  复活复用同一 `session_id`（`UNIQUE(tenant_id, session_id)` 兜底），并**重写卡片截止时刻**
+  （只改状态会让复活后的卡片「一确认又过期」）；
+- **禁止超时自动执行**：C2 必须二次语音**或**点按钮兜底，两者都没有就不执行。
+
+### 撤销 = 反做单
+
+`services/reversal.py`：原单保留、生成 `原单号-R` 的反向单据、`reversal` 表记关联、库存/应收反向再记一次。
+超 10 分钟窗口 → `E_REVERSAL_WINDOW_CLOSED`(1203)（引导 `sys.correct`）；被引用
+（应收应付已核销 / 已有反做单 / 有收付款流水）→ `E_DOC_REFERENCED`(1204) 并**展示引用链**。
+盘点快照（`stock.take`）没有留档前值，**不能反做**（拒绝而不是猜一个数）。
+
+### 编辑不重调 AI
+
+`voice/correction_edit.py::apply_slot_updates` 是纯函数：改数量/单价就机械重算金额，0 次模型调用。
+`tests/test_correction_no_llm.py` 用 `CountingLlmProvider.calls` 钉住「编辑前后相等」，
+并断言回流三件套：`correction_event` + `personal_dict` + `template_candidate(status=pending)`，
+`dict_version` 递增以击穿词表缓存；候选模板**必须人工审核**才生效（一次误改不能污染所有人）。
+
+### 虚拟支付：生产必须换微信支付平台证书
+
+⚠️ **`PAY_VERIFIER` 在生产必须是 `platform_cert` 且注入真实平台证书**：
+
+```bash
+PAY_VERIFIER=platform_cert
+WX_PLATFORM_CERT_PATH=/run/secrets/wechatpay_platform_cert.pem  # 微信支付平台证书（PEM）
+WX_PLATFORM_CERT_SERIAL=<证书序列号>
+```
+
+- `app/pay/sign.py::build_verifier` 在 `env=prod` 下**缺证书直接抛 `VerifierConfigError`**，
+  **不存在 HMAC 兜底路径**；`FakePlatformCertVerifier(is_production=True)` 构造即抛；
+- `RealPlatformCertVerifier` 构造期校验「路径存在 + 是 PEM」，验签时 `Wechatpay-Serial`
+  必须命中已知证书且未过期，缺 `cryptography` 或解析失败一律 **fail-closed**；
+- 本地/测试默认 fake（显式、可发现），沙箱 HMAC（`HmacSignatureVerifier`）只用于 T03 的历史测试。
+
+虚拟支付的另外三条：**发货只以推送为准**（前端 `success` 明确不发货，额度一点不动）、
+`out_trade_no` 由幂等键 `sha256(tenant|key)` 派生（同一键必算出同一单号）、
+`query_order` 兜底复用同一个 `deliver_once`（不存在第二条发货代码路径）。
+价格一律读 `packages/shared/contracts/goods.json`，代码里没有 `price_fen = 数字`。
+
+### 两套口径分开存
+
+| 口径 | 落库 | 展示 | 不得互相推导 |
+|---|---|---|---|
+| 自然月 | `usage_quota.period = YYYY-MM` | `/usage`（`caliber="自然月 …"`） | 1 号买的 30 天权益会横跨两个自然月 |
+| 30 天滚动 | `entitlement.valid_from / valid_until` | `/entitlement`（`caliber="30 天滚动窗口 …"`） | 同上 |
+
+发货**只写额度/权益**，`usage_ledger` 行数必须保持 0（`tests/test_entitlement_separation.py` 直接断言）。
+
+### 导出（R3）
+
+`export_job` 异步任务 + 强制 `tenant_id`（子查询/JOIN 同样要带）+ 对象存储路径 `t/{tenant_id}/`
++ 5 分钟短 TTL 签名 URL；**不做网页下载**——文件经微信转发/保存/预览交付。
+导出内容不含音频、不含跨租户（`ExportService.sanitize` 直接拒），每次导出写 `audit_log`。
 
 ## 容器
 
@@ -256,10 +343,14 @@ docker run --rm -p 8000:80 voice-inventory-lite:local
 云托管内不部署有状态服务，PG/Redis 必须外挂托管（D7/§4.5）。默认公网域名仅供接口测试，
 **不能用于生产**。小程序备案（AppID 备案）与域名备案无关，是上线与开支付的前置。
 
-## 待办（T04+）
+## 待办（T05+）
 
-- T04：卡片/预演与入账（`confirm_card` 与 `usage_meter.bill_card` 同事务）、
-  `/voice/*` 与 `/upload/ticket` 路由、全量业务 API、`app/services/{ledger,reversal,entitlement}.py`
+- T05：小程序双形态 UI（手机端 + 电脑版微信大屏 `resizable` 双栏）与端到端联调
 - T03 遗留：接真实 LLM/ASR 后需复验「模板意图仍 0 调用」「Schema 修正重试次数」
+- T04 遗留（必须接真实证书/真实环境才能复验）：
+  - 微信支付平台证书轮换（`RotatingVerifier` 已就位，缺真实证书与 `Wechatpay-Serial` 推送）；
+  - `query_order` 真实查单接口（当前接受注入的 `paid` 结论）；
+  - 对象存储真实签名 URL（当前 `local-signed://` 占位，TTL 逻辑已就位）；
+  - PG 上的只读预演（`SET TRANSACTION READ ONLY`）与真并发 CAS 冲突（需 `PG_TEST_URL`）。
 - 运维：把 PG 的**应用账号**建成非 `BYPASSRLS`、非表 owner（`FORCE` 之外的第二重保证），
   并用 `tests/test_rls_cross_tenant.py` 在真库上复核一次

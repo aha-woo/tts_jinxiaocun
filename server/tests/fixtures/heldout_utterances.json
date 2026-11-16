@@ -1,0 +1,305 @@
+{
+  "$note": "G3 规则层 held-out 集：真实小店老板会说的话，故意带口语杂质、错别字与同音字。纪律（team-lead 定）：这批句子先写、先跑，跑完只记录结果，绝不回头改规则表去适配这批句子——否则又变成自洽验证。",
+  "version": "1.0.0",
+  "frozen_at": "2025-11-15",
+  "frozen_rule": "本文件在 test_g3_heldout.py 首次跑通后即冻结；任何修改都必须在 PR 描述里声明「这批句子改过」，并把改动前后的命中率一起贴出来。",
+  "scenarios": [
+    "purchase（进货）",
+    "sales（卖货）",
+    "stock_query（查库存）",
+    "debt_query（查欠款）",
+    "return（退货）",
+    "stock_take（盘点）"
+  ],
+  "slot_check_policy": "只校验「商户语义上无歧义」的槽位。凡句子里没明说、或商户自己也说不清的（如只说「记账上」没说结没结），一律不校验——避免用模糊期望伪造低命中率。",
+  "utterances": [
+    {
+      "id": "H01",
+      "scenario": "purchase",
+      "text": "哎那个可乐给我进两箱",
+      "expect_intent": "purchase.create",
+      "expect_slots": {"P": "可乐", "Q": 2},
+      "note": "开头「哎那个」是典型口语起手拖音"
+    },
+    {
+      "id": "H02",
+      "scenario": "purchase",
+      "text": "跟老张拿货，红牛一箱",
+      "expect_intent": "purchase.create",
+      "expect_slots": {"P": "红牛", "Q": 1},
+      "note": "「拿货」不是「进」；量词在商品后面"
+    },
+    {
+      "id": "H03",
+      "scenario": "purchase",
+      "text": "矿泉水要十件，就是那个五百五十毫升的",
+      "expect_intent": "purchase.create",
+      "expect_slots": {"P": "矿泉水", "Q": 10},
+      "note": "后半句是自我补充的口语修饰，不该被当成第二个商品"
+    },
+    {
+      "id": "H04",
+      "scenario": "purchase",
+      "text": "进点哇哈哈吧，三箱",
+      "expect_intent": "purchase.create",
+      "expect_slots": {"P": "娃哈哈", "Q": 3},
+      "note": "同音错字「哇哈哈」；句尾才给数量"
+    },
+    {
+      "id": "H05",
+      "scenario": "purchase",
+      "text": "刚才进货了啊，可乐两箱红牛一箱",
+      "expect_intent": "purchase.create_multi",
+      "expect_slots": {},
+      "note": "两个商品；multi 意图不校验槽位（逐项展开在卡片层）"
+    },
+    {
+      "id": "H06",
+      "scenario": "purchase",
+      "text": "和老张说好进二十瓶可乐，一瓶一块八",
+      "expect_intent": "purchase.create",
+      "expect_slots": {"P": "可乐", "Q": 20},
+      "note": "「一块八」是口语金额读法"
+    },
+    {
+      "id": "H07",
+      "scenario": "purchase",
+      "text": "把这个也记上，进货：娃哈哈五箱",
+      "expect_intent": "purchase.create",
+      "expect_slots": {"P": "娃哈哈", "Q": 5},
+      "note": "「把这个也记上」是口头追加语，不属于商品"
+    },
+    {
+      "id": "H08",
+      "scenario": "sales",
+      "text": "老王刚拿了两箱宏牛走，钱先欠着",
+      "expect_intent": "sales.create",
+      "expect_slots": {"P": "红牛", "Q": 2, "PS": "未结"},
+      "note": "同音错字「宏牛」→红牛；「钱先欠着」= 未结"
+    },
+    {
+      "id": "H09",
+      "scenario": "sales",
+      "text": "卖出去三瓶可乐，收的现金",
+      "expect_intent": "sales.create",
+      "expect_slots": {"P": "可乐", "Q": 3, "PS": "已结"},
+      "note": "「收的现金」= 已结"
+    },
+    {
+      "id": "H10",
+      "scenario": "sales",
+      "text": "今天零售，娃哈哈一箱，一百五",
+      "expect_intent": "sales.create",
+      "expect_slots": {"P": "娃哈哈", "Q": 1},
+      "note": "「零售」「一百五」都是口语"
+    },
+    {
+      "id": "H11",
+      "scenario": "sales",
+      "text": "李婶拿了两箱矿泉水，给了一百",
+      "expect_intent": "sales.create",
+      "expect_slots": {"P": "矿泉水", "Q": 2},
+      "note": "「拿」=买；付款金额 100 元但没说清不清晰，不校验 PS"
+    },
+    {
+      "id": "H12",
+      "scenario": "sales",
+      "text": "可乐卖给二中店一瓶三块五，记账上",
+      "expect_intent": "sales.create",
+      "expect_slots": {"P": "可乐", "Q": 1},
+      "note": "「记账上」语义模糊（可能指记进系统），不校验 PS"
+    },
+    {
+      "id": "H13",
+      "scenario": "sales",
+      "text": "出去四瓶红牛",
+      "expect_intent": "sales.create",
+      "expect_slots": {"P": "红牛", "Q": 4},
+      "note": "「出去」是方言式出货说法，不含「卖」字"
+    },
+    {
+      "id": "H14",
+      "scenario": "sales",
+      "text": "和其正卖了两件",
+      "expect_intent": "sales.create",
+      "expect_slots": {"Q": 2},
+      "note": "「和其正」不在演示词表里：不校验 P（词表外的真实商品名很常见）"
+    },
+    {
+      "id": "H15",
+      "scenario": "stock_query",
+      "text": "可乐还剩多少瓶",
+      "expect_intent": "stock.query",
+      "expect_slots": {"P": "可乐"},
+      "note": "标准疑问句"
+    },
+    {
+      "id": "H16",
+      "scenario": "stock_query",
+      "text": "查一下红牛还有几箱",
+      "expect_intent": "stock.query",
+      "expect_slots": {"P": "红牛"},
+      "note": "「查一下」口令式"
+    },
+    {
+      "id": "H17",
+      "scenario": "stock_query",
+      "text": "娃哈哈库存多少",
+      "expect_intent": "stock.query",
+      "expect_slots": {"P": "娃哈哈"},
+      "note": "「库存多少」无动词"
+    },
+    {
+      "id": "H18",
+      "scenario": "stock_query",
+      "text": "矿泉水还有吗",
+      "expect_intent": "stock.query",
+      "expect_slots": {"P": "矿泉水"},
+      "note": "最简疑问，没有任何「查/库存」关键词"
+    },
+    {
+      "id": "H19",
+      "scenario": "stock_query",
+      "text": "库房里红牛还有几箱，可乐呢",
+      "expect_intent": "stock.query",
+      "expect_slots": {"P": "红牛"},
+      "note": "一句问两个商品：只校验第一个"
+    },
+    {
+      "id": "H20",
+      "scenario": "stock_query",
+      "text": "现在库存怎么样",
+      "expect_intent": "stock.query",
+      "expect_slots": {},
+      "note": "泛问，无商品槽位"
+    },
+    {
+      "id": "H21",
+      "scenario": "debt_query",
+      "text": "上回老王那笔账还欠着多少",
+      "expect_intent": "debt.query",
+      "expect_slots": {},
+      "note": "「上回那笔账」是口语指代，无明确往来单位名"
+    },
+    {
+      "id": "H22",
+      "scenario": "debt_query",
+      "text": "兴旺超市还欠我多少",
+      "expect_intent": "debt.query",
+      "expect_slots": {},
+      "note": "明确客户名"
+    },
+    {
+      "id": "H23",
+      "scenario": "debt_query",
+      "text": "李婶欠的钱结了吗",
+      "expect_intent": "debt.query",
+      "expect_slots": {},
+      "note": "是非问句形式"
+    },
+    {
+      "id": "H24",
+      "scenario": "debt_query",
+      "text": "查欠款",
+      "expect_intent": "debt.query",
+      "expect_slots": {},
+      "note": "两个字的极简口令，最考验 G2 会不会误杀"
+    },
+    {
+      "id": "H25",
+      "scenario": "debt_query",
+      "text": "和二中的账对一下，还差多少",
+      "expect_intent": "debt.query",
+      "expect_slots": {},
+      "note": "「二中」是「二中店」的截断简称"
+    },
+    {
+      "id": "H26",
+      "scenario": "debt_query",
+      "text": "这周一共欠出去多少钱",
+      "expect_intent": "debt.query",
+      "expect_slots": {},
+      "note": "带时间范围的口语问法"
+    },
+    {
+      "id": "H27",
+      "scenario": "return",
+      "text": "红牛退给南门批发两箱",
+      "expect_intent": "purchase_return.create",
+      "expect_slots": {"P": "红牛", "Q": 2},
+      "note": "退给供应商 = 采购退货"
+    },
+    {
+      "id": "H28",
+      "scenario": "return",
+      "text": "客户把可乐退回来了，两箱",
+      "expect_intent": "sales_return.create",
+      "expect_slots": {"P": "可乐", "Q": 2},
+      "note": "客户退回 = 销售退货；数量在后半句"
+    },
+    {
+      "id": "H29",
+      "scenario": "return",
+      "text": "娃哈哈退了两箱回来",
+      "expect_intent": "sales_return.create",
+      "expect_slots": {"P": "娃哈哈", "Q": 2},
+      "note": "「退回来」口语，未说谁退"
+    },
+    {
+      "id": "H30",
+      "scenario": "return",
+      "text": "退给老张一箱红牛",
+      "expect_intent": "purchase_return.create",
+      "expect_slots": {"P": "红牛", "Q": 1},
+      "note": "「退给+供应商」语序，商品在后"
+    },
+    {
+      "id": "H31",
+      "scenario": "return",
+      "text": "昨天卖的红牛退了，一箱",
+      "expect_intent": "sales_return.create",
+      "expect_slots": {"P": "红牛", "Q": 1},
+      "note": "带「昨天」的时间修饰，退的是卖出去的那笔"
+    },
+    {
+      "id": "H32",
+      "scenario": "stock_take",
+      "text": "盘一下库，可乐还剩八箱",
+      "expect_intent": "stock.take",
+      "expect_slots": {"P": "可乐", "Q": 8},
+      "note": "「盘一下库」是盘点口令；「还剩」是快照不是增量"
+    },
+    {
+      "id": "H33",
+      "scenario": "stock_take",
+      "text": "货架上数了下，红牛十二箱",
+      "expect_intent": "stock.take",
+      "expect_slots": {"P": "红牛", "Q": 12},
+      "note": "没有任何「盘点」字眼，靠「数了下」表达快照"
+    },
+    {
+      "id": "H34",
+      "scenario": "stock_take",
+      "text": "清点库存：矿泉水三十瓶",
+      "expect_intent": "stock.take",
+      "expect_slots": {"P": "矿泉水", "Q": 30},
+      "note": "「清点」口令 + 冒号分隔"
+    },
+    {
+      "id": "H35",
+      "scenario": "stock_take",
+      "text": "刚才盘点了，娃哈哈还有五箱",
+      "expect_intent": "stock.take",
+      "expect_slots": {"P": "娃哈哈", "Q": 5},
+      "note": "「刚才盘点了」是事后追述，仍是快照"
+    },
+    {
+      "id": "H36",
+      "scenario": "stock_take",
+      "text": "盘点，可乐八箱红牛十箱",
+      "expect_intent": "stock.take_multi",
+      "expect_slots": {},
+      "note": "两个商品的盘点快照；multi 意图不校验槽位"
+    }
+  ]
+}

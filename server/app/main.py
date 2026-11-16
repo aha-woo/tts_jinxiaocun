@@ -22,7 +22,23 @@ from fastapi import FastAPI, Request, Response
 from fastapi.responses import JSONResponse
 from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoint
 
-from app.api.v1 import auth, health
+from app.api.v1 import (
+    account,
+    auth,
+    cards,
+    clarify,
+    confirm,
+    dict as dict_api,
+    entitlement,
+    exports,
+    health,
+    query,
+    reversal,
+    tasks,
+    upload,
+    usage,
+    voice,
+)
 from app.common.envelope import failure, ok
 from app.common.errors import register_exception_handlers
 from app.common.idempotency import IdempotencyMiddleware, build_store
@@ -154,6 +170,23 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(health.router)
     app.include_router(health.router, prefix="/api/v1")
     app.include_router(auth.router, prefix="/api/v1")
+    # ---- T04：语音记账链（写操作唯一入口是 confirm）
+    app.include_router(voice.router, prefix="/api/v1")
+    app.include_router(clarify.router, prefix="/api/v1")
+    app.include_router(cards.router, prefix="/api/v1")
+    app.include_router(confirm.router, prefix="/api/v1")
+    app.include_router(reversal.router, prefix="/api/v1")
+    # ---- 只读查询与用量
+    app.include_router(query.router, prefix="/api/v1")
+    app.include_router(usage.router, prefix="/api/v1")
+    # ---- 词表 / 导出 / 待办 / 账号
+    app.include_router(dict_api.router, prefix="/api/v1")
+    app.include_router(exports.router, prefix="/api/v1")
+    app.include_router(tasks.router, prefix="/api/v1")
+    app.include_router(account.router, prefix="/api/v1")
+    # ---- 虚拟支付与权益（与 voice_session 状态机相互独立）
+    app.include_router(entitlement.router, prefix="/api/v1")
+    app.include_router(upload.router, prefix="/api/v1")
 
     @app.get("/", include_in_schema=False)
     async def root() -> JSONResponse:
