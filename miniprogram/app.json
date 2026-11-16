@@ -1,6 +1,12 @@
 {
   "pages": [
-    "pages/index/index"
+    "pages/index/index",
+    "pages/card/index",
+    "pages/manual/index",
+    "pages/pending/index",
+    "pages/query/index",
+    "pages/pay/index",
+    "pages/admin/index"
   ],
   "window": {
     "navigationBarTitleText": "语音记账",

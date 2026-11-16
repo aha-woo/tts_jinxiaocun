@@ -1,0 +1,27 @@
+<!-- 手动记账：一次语音都不用，也能完成完整一单（选商品→数量→单价→方向→生成卡片） -->
+<view class="page">
+  <view class="hint">
+    不想说话就点着记：下面这套流程和语音走的是**同一条**解析与落账链路，
+    生成卡片后仍要确认才会记账。
+  </view>
+
+  <num-keyboard
+    quantity="{{quantity}}"
+    price="{{price}}"
+    products="{{products}}"
+    product="{{product}}"
+    direction="{{direction}}"
+    bind:product="onProduct"
+    bind:direction="onDirection"
+    bind:input="onInput"
+    bind:submit="onSubmit"
+  />
+
+  <view class="panel">
+    <view class="panel__title">会记成这句话</view>
+    <view class="preview">{{preview}}</view>
+  </view>
+
+  <view class="error" wx:if="{{errorText}}">{{errorText}}</view>
+  <view class="submitting" wx:if="{{submitting}}">生成卡片中…</view>
+</view>

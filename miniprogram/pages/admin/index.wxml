@@ -1,0 +1,102 @@
+<!--
+  管理台：电脑版微信大屏双栏（左导航 + 右内容）；窗口变窄自动回落单栏。
+  八个面板：档案 / 单据与更正 / 报表×3 / 用量套餐 / 权限 / 导出 / R3 待办审批 / 说法训练审核
+-->
+<view class="console {{narrow ? 'console--narrow' : ''}}">
+  <side-nav
+    items="{{nav}}"
+    active="{{active}}"
+    isBoss="{{isBoss}}"
+    narrow="{{narrow}}"
+    bind:select="onSelect"
+  />
+
+  <view class="content">
+    <view class="content__head">
+      <text class="content__title">管理台</text>
+      <text class="content__role">{{roleCode === '' ? '未登录' : roleCode}}</text>
+    </view>
+
+    <!-- 档案 -->
+    <view class="panel" wx:if="{{active === 'profile'}}">
+      <view class="panel__title">商品与库存档案</view>
+      <view wx:for="{{rows}}" wx:key="text" class="row">{{item.text}}</view>
+    </view>
+
+    <!-- 单据与更正 -->
+    <view class="panel" wx:if="{{active === 'docs'}}">
+      <view class="panel__title">单据列表（撤回＝反做单，原单保留）</view>
+      <view wx:for="{{rows}}" wx:key="text" class="row">{{item.text}}</view>
+    </view>
+
+    <!-- 报表 ×3 -->
+    <view class="panel" wx:if="{{active === 'report'}}">
+      <view class="panel__title">三张报表（今日 / 本月 / 毛利）</view>
+      <view wx:for="{{rows}}" wx:key="text" class="row">{{item.text}}</view>
+    </view>
+
+    <!-- 用量与套餐（两个口径分开） -->
+    <view class="panel" wx:if="{{active === 'usage'}}">
+      <view class="panel__title">用量（自然月）</view>
+      <view class="row" wx:if="{{usageView}}">
+        {{usageView.period}}：已用 {{usageView.used}} / 额度 {{usageView.quota}}（{{usageView.caliber}}）
+      </view>
+      <view class="panel__title">套餐（30 天滚动窗口）</view>
+      <view class="row" wx:if="{{entitlementView}}">
+        {{entitlementView.plan_name}}：剩 {{entitlementView.remaining_quota}} 次 / {{entitlementView.days_left}} 天（{{entitlementView.caliber}}）
+      </view>
+      <view class="row">{{usageNote}}</view>
+      <view class="row">两个口径分别展示，不拼成一个进度条，也不互相推导。</view>
+    </view>
+
+    <!-- 权限 -->
+    <view class="panel" wx:if="{{active === 'permission'}}">
+      <view class="panel__title">权限</view>
+      <view wx:for="{{rows}}" wx:key="text" class="row">{{item.text}}</view>
+    </view>
+
+    <!-- 导出 -->
+    <view class="panel" wx:if="{{active === 'export'}}">
+      <view class="panel__title">导出（异步，不提供网页下载）</view>
+      <view class="row" wx:for="{{rows}}" wx:key="text">{{item.text}}</view>
+      <view class="actions">
+        <button class="btn" data-scope="stock" bindtap="onExport">导出库存</button>
+        <button class="btn" data-scope="debt" bindtap="onExport">导出欠款</button>
+        <button class="btn" data-scope="docs" bindtap="onExport">导出单据</button>
+      </view>
+      <view class="row" wx:for="{{exports}}" wx:key="jobId">{{item.scope}} · {{item.status}} · {{item.jobId}}</view>
+      <view class="muted">已支持的交付方式：{{deliverModes}}</view>
+    </view>
+
+    <!-- R3 待办审批 -->
+    <view class="panel" wx:if="{{active === 'tasks'}}">
+      <view class="panel__title">R3 高风险待办（大屏 + 老板 + 二次确认）</view>
+      <view wx:if="{{tasks.length === 0}}" class="row">没有待办</view>
+      <view wx:for="{{tasks}}" wx:key="taskId" class="task">
+        <view class="task__main">
+          <text class="task__title">{{item.intentId}}</text>
+          <text class="task__meta">{{item.createdAt}} · {{item.status}} · {{item.requiredRole}}</text>
+          <text class="task__meta">{{item.hint}}</text>
+        </view>
+        <view class="task__actions">
+          <button class="btn btn--primary" data-task="{{item.taskId}}" data-action="approve" bindtap="onApprove">执行</button>
+          <button class="btn" data-task="{{item.taskId}}" data-action="reject" bindtap="onApprove">驳回</button>
+        </view>
+      </view>
+      <view class="muted" wx:if="{{!isBoss}}">当前角色不是老板：只能看，不能审批。</view>
+    </view>
+
+    <!-- 说法训练审核 -->
+    <view class="panel" wx:if="{{active === 'dict'}}">
+      <view class="panel__title">说法训练（个人词表 / 模板候选）</view>
+      <view wx:if="{{dicts.length === 0}}" class="row">还没有待审核的说法</view>
+      <view wx:for="{{dicts}}" wx:key="dictId" class="row">
+        [{{item.mappedType}}] {{item.rawText}} · {{item.layer}} / v{{item.version}}
+      </view>
+    </view>
+
+    <view class="loading" wx:if="{{loading}}">加载中…</view>
+    <view class="message" wx:if="{{message}}">{{message}}</view>
+    <view class="error" wx:if="{{errorText}}">{{errorText}}</view>
+  </view>
+</view>

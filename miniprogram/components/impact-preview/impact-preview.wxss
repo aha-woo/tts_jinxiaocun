@@ -1,0 +1,85 @@
+.impact {
+  background: #fff;
+  border-radius: 16rpx;
+  padding: 20rpx 24rpx;
+}
+
+.impact__head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  padding-bottom: 12rpx;
+  border-bottom: 1rpx solid #eef1f4;
+}
+
+.impact__title {
+  font-size: 28rpx;
+  font-weight: 600;
+  color: #1f2328;
+}
+
+.impact__version {
+  font-size: 22rpx;
+  color: #1f6feb;
+}
+
+.impact__row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14rpx 0;
+  border-bottom: 1rpx solid #f4f6f8;
+}
+
+.impact__row--warn {
+  background: #fff5f5;
+  border-radius: 12rpx;
+  padding-left: 12rpx;
+  padding-right: 12rpx;
+}
+
+.impact__label {
+  font-size: 26rpx;
+  color: #4b5563;
+  flex: 1;
+}
+
+.impact__delta {
+  display: flex;
+  align-items: center;
+}
+
+.impact__before {
+  font-size: 26rpx;
+  color: #6b7280;
+  font-variant-numeric: tabular-nums;
+}
+
+.impact__arrow {
+  margin: 0 12rpx;
+  color: #9aa4ae;
+}
+
+.impact__after {
+  font-size: 30rpx;
+  font-weight: 700;
+  color: #0f7b6c;
+  font-variant-numeric: tabular-nums;
+}
+
+.impact__after--warn {
+  color: #b42318;
+}
+
+.impact__note {
+  margin-top: 12rpx;
+  font-size: 22rpx;
+  color: #6b7280;
+}
+
+.impact__empty {
+  padding: 24rpx 0;
+  font-size: 26rpx;
+  color: #9aa4ae;
+  text-align: center;
+}

@@ -1,4 +1,6 @@
 {
-  "navigationBarTitleText": "系统自检",
-  "usingComponents": {}
+  "navigationBarTitleText": "语音记账",
+  "usingComponents": {
+    "big-button": "/components/big-button/big-button"
+  }
 }

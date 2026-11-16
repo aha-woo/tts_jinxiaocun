@@ -1,11 +1,181 @@
-.container {
-  padding-bottom: 64rpx;
+.page {
+  min-height: 100vh;
+  background: #f4f6f8;
+  padding: 20rpx;
+  box-sizing: border-box;
 }
 
-button + button {
-  margin-top: 20rpx;
+/* 宽屏（电脑版微信 resizable）→ 左录入 / 右动态 双栏 */
+.page--wide .main {
+  display: flex;
+  align-items: flex-start;
 }
 
-.btn-ghost {
-  margin-top: 20rpx;
+.page--wide .panel {
+  flex: 0 0 520rpx;
+  margin-right: 24rpx;
+}
+
+.page--wide .side {
+  flex: 1;
+  min-width: 0;
+}
+
+.banner {
+  border-radius: 16rpx;
+  padding: 20rpx 24rpx;
+  margin-bottom: 20rpx;
+}
+
+.banner--ok {
+  background: #e6f6ee;
+  color: #0f7b4c;
+}
+
+.banner--warn {
+  background: #fff4e5;
+  color: #8a5300;
+}
+
+.banner--danger {
+  background: #fde8e8;
+  color: #b42318;
+}
+
+.banner__title {
+  display: flex;
+  align-items: center;
+  font-size: 28rpx;
+  font-weight: 700;
+}
+
+.banner__level {
+  margin-left: 12rpx;
+  font-size: 20rpx;
+  border: 1rpx solid currentColor;
+  border-radius: 999rpx;
+  padding: 2rpx 12rpx;
+}
+
+.banner__flag {
+  margin-left: 12rpx;
+  font-size: 20rpx;
+  background: rgba(255, 255, 255, 0.7);
+  border-radius: 999rpx;
+  padding: 2rpx 12rpx;
+}
+
+.banner__hint {
+  margin-top: 8rpx;
+  font-size: 24rpx;
+  opacity: 0.9;
+}
+
+.panel {
+  background: #fff;
+  border-radius: 16rpx;
+  padding: 24rpx;
+  margin-bottom: 20rpx;
+}
+
+.panel__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.panel__title {
+  font-size: 28rpx;
+  font-weight: 600;
+  color: #1f2328;
+}
+
+.panel__more {
+  font-size: 22rpx;
+  color: #1f6feb;
+}
+
+.talking {
+  text-align: center;
+  font-size: 26rpx;
+  color: #1f6feb;
+  margin-bottom: 12rpx;
+}
+
+.error {
+  margin: 8rpx 0 16rpx;
+  padding: 16rpx 20rpx;
+  background: #fff5f5;
+  color: #b42318;
+  border-radius: 12rpx;
+  font-size: 24rpx;
+}
+
+.shortcuts {
+  display: flex;
+  margin-top: 16rpx;
+}
+
+.shortcut {
+  flex: 1;
+  background: #f7f8fa;
+  border-radius: 12rpx;
+  padding: 20rpx;
+  margin-right: 16rpx;
+  min-height: 88rpx;
+}
+
+.shortcut:last-child {
+  margin-right: 0;
+}
+
+.shortcut--wide {
+  margin-right: 0;
+  margin-top: 16rpx;
+}
+
+.shortcut__title {
+  display: block;
+  font-size: 28rpx;
+  font-weight: 600;
+  color: #1f2328;
+}
+
+.shortcut__desc {
+  display: block;
+  margin-top: 6rpx;
+  font-size: 22rpx;
+  color: #6b7280;
+}
+
+.recent__item {
+  padding: 14rpx 0;
+  border-bottom: 1rpx solid #f4f6f8;
+}
+
+.recent__text {
+  font-size: 26rpx;
+  color: #1f2328;
+}
+
+.recent__meta {
+  display: block;
+  margin-top: 4rpx;
+  font-size: 22rpx;
+  color: #9aa4ae;
+}
+
+.recent__empty {
+  padding: 20rpx 0;
+  font-size: 24rpx;
+  color: #9aa4ae;
+}
+
+.kv {
+  display: flex;
+  justify-content: space-between;
+  font-size: 24rpx;
+  color: #4b5563;
+  padding: 10rpx 0;
+  border-bottom: 1rpx solid #f4f6f8;
 }

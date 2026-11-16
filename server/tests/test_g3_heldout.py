@@ -45,8 +45,9 @@ import pytest
 from voice_demo import (
     TODAY,
     build_pipeline,
-    demo_partners_resolver,
+    demo_customers_resolver,
     demo_resolver,
+    demo_suppliers_resolver,
 )
 
 #: held-out 集规模（句子写死在 JSON 里，改句子必须同步改这个数并在 PR 里说明）
@@ -60,15 +61,30 @@ EXPECTED_SCENARIOS = frozenset(
 #: `sample_utterances` 回归集的实测命中率（设计覆盖度检验，别和 held-out 混为一谈）
 SAMPLE_UTTERANCE_HIT_RATE = 0.50
 
-#: **首次 held-out 实测基线**（2025-11-15 本仓库跑出的真实数字）。
+#: 整改**前**基线（方案 d 之前跑出来的，留档对照，不用于断言）。
 #:
-#: 这两个数字是「量出来的」，不是「想要的」：
-#: 36 条真实口语 → 命中 17、未命中 12、误判 7。
-#: 断言只钉「不能再变差」，**不钉 45%**：45% 是 PRD 对 `sample_utterances` 的假设值，
-#: 套到 held-out 上等于逼后来的人放宽规则去凑数（那就把 held-out 变成了训练集）。
-#: 想把这几个数字提上去，改的是**规则表策略**（team-lead 决策），不是改这里的断言。
-BASELINE_HITS = 17
-BASELINE_MISJUDGES = 7
+#: 用**同一套严格口径**（``route == "clarify"`` 不算命中）重新量过一遍老代码：
+#: 命中 10 / 强制澄清 11 / 未命中 12 / **误判 3**（H02/H32/H36）。
+#: 注意：T03 当时报的「17 命中 / 7 误判」用的是**宽松口径**（意图+槽位对就算命中，
+#: 不管是不是反问了一句），两个口径不能混着比——这里统一成严格口径再对照。
+BEFORE_DIRECTION_FIX = {"hits": 10, "clarify": 11, "misses": 12, "misjudges": 3}
+
+#: 整改**后**的回归基线（**只许往下调的只有误判**，其余钉住不回退）。
+#:
+#: 这批 36 条已经被看过结果、也据此改过代码，**它是 regression set，不是 held-out 了**。
+#: 新的独立验证集见 ``tests/fixtures/holdout_independent.json`` + ``test_g3_independent.py``，
+#: 那批句子才是「方案 d 之后」的数字来源。
+#:
+#: 2026-02 变更记录（**逐条说明，不许静默改**）：
+#: - 命中 14 → 19。原因不是「放宽断言凑数」，而是修掉两个**真缺陷**：
+#:   ① 可选槽位 ``pending``（没说供应商 → ``S=待补``）被按必填扣 0.25 置信度，
+#:      使「进了两箱可乐，一件三十五」这类最常见的话**永远出不了卡**；
+#:   ② 单商品意图也带 1 个「只有文本没有数量」的 item，被 ``lines_of_result``
+#:      当成多商品走 item 分支，落成数量 0 / 金额 0 的空单据。
+#:   修完之后命中升到 19、误判仍是 0，所以把下限**往上**钉（防回退）。
+#: - 误判 0 → 仍为 0（这是唯一允许往下调的指标）。
+BASELINE_HITS = 19
+BASELINE_MISJUDGES = 0
 
 _FIXTURE = Path(__file__).resolve().parent / "fixtures" / "heldout_utterances.json"
 
@@ -136,8 +152,8 @@ def _run_all() -> list[dict[str, Any]]:
             row["text"],
             today_iso=TODAY,
             resolver=demo_resolver(),
-            customers=demo_partners_resolver(),
-            suppliers=demo_partners_resolver(),
+            customers=demo_customers_resolver(),
+            suppliers=demo_suppliers_resolver(),
             session_key=f"heldout-{row['id']}",
         )
         rule_layer = bool(result.rule_hit) or result.stage == "G2"
@@ -148,8 +164,13 @@ def _run_all() -> list[dict[str, Any]]:
         )
         intent_ok = result.intent_id == row["expect_intent"]
 
+        route = result.parse.route if result.parse is not None else None
         if not rule_layer:
             verdict = "miss"
+        elif route == "clarify":
+            # 规则层**没给结论**（反问一句），0 次模型钱、也**没有记错账**：
+            # 这是「合格的保守」而不是「误判」。方向判据不足时的强制澄清走这一桶。
+            verdict = "clarify"
         elif intent_ok and slot_ok:
             verdict = "hit"
         else:
@@ -164,6 +185,12 @@ def _run_all() -> list[dict[str, Any]]:
                 "got": result.intent_id,
                 "stage": result.stage,
                 "reason": result.reason,
+                "route": result.parse.route if result.parse is not None else None,
+                "clarify_slot": (
+                    result.parse.clarify.slot
+                    if result.parse is not None and result.parse.clarify is not None
+                    else None
+                ),
                 "slots": slots,
                 "expect_slots": row["expect_slots"],
                 "intent_ok": intent_ok,
@@ -176,33 +203,62 @@ def _run_all() -> list[dict[str, Any]]:
 
 
 def test_heldout_hit_rate_and_misjudge_rate(capsys: pytest.CaptureFixture[str]) -> None:
-    """**把两个数字打出来**：held-out 命中率 + 误判率（并打印全部未命中明细）。"""
+    """把**三个数字**打出来：命中率 / 误判率 / 强制澄清率（并打印全部明细）。"""
     outcomes = _run_all()
     llm_calls = int(outcomes[-1]["llm_calls"])
     rows = [row for row in outcomes if "verdict" in row]
 
     hits = [row for row in rows if row["verdict"] == "hit"]
     misses = [row for row in rows if row["verdict"] == "miss"]
+    clarifies = [row for row in rows if row["verdict"] == "clarify"]
     misjudges = [row for row in rows if row["verdict"] == "misjudge"]
 
     total = len(rows)
     hit_rate = len(hits) / total
     miss_rate = len(misses) / total
+    clarify_rate = len(clarifies) / total
     misjudge_rate = len(misjudges) / total
 
     lines = [
         "",
-        "[held-out 实测] 真实口语集 %d 条（6 个高频场景，含同音错字/拖音/口头追加语）"
+        "[held-out 回归集实测] 真实口语集 %d 条（6 个高频场景，含同音错字/拖音/口头追加语）"
         % total,
-        "  命中（规则层直接给对意图且槽位对）: %d 条 = %.1f%%"
+        "  整改前基线（方案 d 之前）: 命中 %d / 未命中 %d / 误判 %d"
+        % (
+            BEFORE_DIRECTION_FIX["hits"],
+            BEFORE_DIRECTION_FIX["misses"],
+            BEFORE_DIRECTION_FIX["misjudges"],
+        ),
+        "  命中（规则层直接给对意图且槽位对，0 次模型钱）: %d 条 = %.1f%%"
         % (len(hits), hit_rate * 100),
+        "  强制澄清（规则层判不出 → 反问一句，0 次模型钱、未记错账）: %d 条 = %.1f%%"
+        % (len(clarifies), clarify_rate * 100),
         "  未命中（升级到 G4 花钱）: %d 条 = %.1f%%" % (len(misses), miss_rate * 100),
-        "  误判（规则层给错意图或错槽位，0 次模型钱但记错账）: %d 条 = %.1f%%"
+        "  误判（**给了落账结论**但意图或槽位错 → 记错账）: %d 条 = %.1f%%"
         % (len(misjudges), misjudge_rate * 100),
         "  对照：sample_utterances 设计覆盖度检验命中率 = %.1f%%（**不是**生产估计）"
         % (SAMPLE_UTTERANCE_HIT_RATE * 100),
         "  本次 held-out 跑的模型调用次数 = %d（G4 兜底消耗）" % llm_calls,
     ]
+    direction_clarifies = [row for row in clarifies if row["clarify_slot"] == "DIR"]
+    other_clarifies = [row for row in clarifies if row["clarify_slot"] != "DIR"]
+    lines.append(
+        "    其中：方向澄清 %d 条（方案 d 新增的「判不出方向就问一句」）／"
+        "低置信澄清 %d 条（T03 就有的 confidence<0.6 路径，非本轮引入）"
+        % (len(direction_clarifies), len(other_clarifies))
+    )
+    for row in clarifies:
+        lines.append(
+            "  [强制澄清] %s %s「%s」-> 问 %s（原判意图 %s，期望 %s）"
+            % (
+                row["id"],
+                row["scenario"],
+                row["text"],
+                "方向 DIR" if row["clarify_slot"] == "DIR" else f"槽位 {row['clarify_slot']}（低置信）",
+                row["got"],
+                row["expect"],
+            )
+        )
     for row in misses:
         lines.append(
             "  [未命中] %s %s「%s」-> %s/%s（期望 %s）"
@@ -233,10 +289,11 @@ def test_heldout_hit_rate_and_misjudge_rate(capsys: pytest.CaptureFixture[str]) 
         "必须收紧规则表（而不是放宽断言）\n"
         + "\n".join(line for line in lines if "[误判]" in line)
     )
-    # 命中数兜底：掉回 12 条以下说明规则表对真实口语基本无效，G3 这一层就白建了
-    assert len(hits) >= 12, (
-        f"held-out 命中 {len(hits)} 条低于底线 12 条（{hit_rate:.1%}）："
-        "规则表对真实口语几乎失效"
+    # 命中数兜底：低于 ``BASELINE_HITS`` 说明规则层在真实口语上回退了。
+    # 数值见文件顶部常量旁的变更记录——每次调这个数都必须写清「为什么可以调」。
+    assert len(hits) >= BASELINE_HITS, (
+        f"held-out 命中 {len(hits)} 条低于基线 {BASELINE_HITS} 条（{hit_rate:.1%}）："
+        "规则层对真实口语出现回退"
     )
 
 

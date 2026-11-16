@@ -1,0 +1,6 @@
+{
+  "navigationBarTitleText": "管理台",
+  "usingComponents": {
+    "side-nav": "/components/large-screen/side-nav"
+  }
+}

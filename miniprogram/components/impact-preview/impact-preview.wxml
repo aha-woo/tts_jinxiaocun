@@ -1,0 +1,19 @@
+<!-- 影响预览：只读预演结果，before → after，异常行高亮 -->
+<view class="impact">
+  <view class="impact__head">
+    <text class="impact__title">这笔记账的影响（还没写进去）</text>
+    <text class="impact__version" bindtap="onRefresh">数据版本 v{{previewVersion}} · 重新预演</text>
+  </view>
+
+  <view wx:for="{{rows}}" wx:key="label" class="impact__row {{item.warnings.length > 0 ? 'impact__row--warn' : ''}}">
+    <text class="impact__label">{{item.label}}</text>
+    <view class="impact__delta">
+      <text class="impact__before">{{item.before}}</text>
+      <text class="impact__arrow">→</text>
+      <text class="impact__after {{item.warnings.length > 0 ? 'impact__after--warn' : ''}}">{{item.after}}</text>
+    </view>
+  </view>
+
+  <view class="impact__note" wx:if="{{note}}">{{note}}</view>
+  <view class="impact__empty" wx:if="{{rows.length === 0}}">这笔不改动库存与欠款</view>
+</view>

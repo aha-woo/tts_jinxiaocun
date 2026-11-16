@@ -204,7 +204,10 @@ def parse_quantity(text: str) -> NumberParse:
     if kind == "cn_yuan_jiao":
         match = _YUAN_JIAO_PATTERN.match(token)
         assert match is not None
-        yuan = parse_integer_text(match.group("yuan"))
+        # 「一部分」可能是阿拉伯数字（「500块」「25块」），而 parse_integer_text 只认中文
+        # ——这是「25件，一共500块」判不出金额的根因，别再把阿拉伯数字送回中文解析。
+        raw_yuan = match.group("yuan")
+        yuan = int(raw_yuan) if raw_yuan.isdigit() else parse_integer_text(raw_yuan)
         if yuan is None:
             return NumberParse(None, token, False, False, (), "", 0.0)
         jiao = match.group("jiao")

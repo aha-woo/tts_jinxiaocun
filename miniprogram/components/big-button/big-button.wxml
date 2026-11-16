@@ -1,0 +1,31 @@
+<!-- 语音大按钮：热区 ≥88×88px，拇指可直接按 -->
+<view class="wrap">
+  <view
+    class="button {{recording ? 'button--recording' : ''}} {{disabled ? 'button--disabled' : ''}}"
+    bindtouchstart="onTouchStart"
+    bindtouchend="onTouchEnd"
+    bindtouchcancel="onTouchEnd"
+    bindtap="onTap"
+  >
+    <view class="button__icon">{{recording ? '■' : '🎤'}}</view>
+    <view class="button__text">{{recording ? '松手结束' : '按着说'}}</view>
+  </view>
+
+  <!-- 录音中的实时反馈：时长 + 能量柱（让用户知道系统真的在听） -->
+  <view class="meter" wx:if="{{recording}}">
+    <view class="meter__time {{softLimit ? 'meter__time--warn' : ''}}">{{durationText}}</view>
+    <view class="meter__bars">
+      <view
+        wx:for="{{bars}}"
+        wx:key="index"
+        class="meter__bar"
+        style="height: {{item}}%;"
+      ></view>
+    </view>
+    <view class="meter__hint" wx:if="{{softLimit}}">快到 15 秒了，说完这句就够</view>
+  </view>
+
+  <view class="mode" bindtap="onSwitchMode">
+    模式：{{mode === 'hold' ? '按住说' : '点一下说'}}（点这里切换）
+  </view>
+</view>

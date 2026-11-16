@@ -28,6 +28,7 @@ from app.voice.clarifier_templates import (
     default_catalog,
     pick_slot_to_ask,
 )
+from app.voice.direction import DIRECTION_SLOT, PURCHASE, SALES, switch_trade_intent
 from app.voice.output_schema import ClarifyPrompt, ParseResult, validate_parse_result
 from app.utils.unit import normalize_unit
 
@@ -68,6 +69,9 @@ class ClarifyState:
     finished: bool = False
     exhausted: bool = False
     error_code: str | None = None
+    #: 方向判定的回答（``purchase`` / ``sales``）；回答 ``DIR`` 时写入，
+    #: 同时把 ``intent_id`` 换到对侧（「进货 ↔ 卖货」）。
+    direction: str | None = None
     #: 已回答的历史 ``[(slot, value)]``
     answers: list[tuple[str, Any]] = field(default_factory=list)
     #: 每轮话术快照（审计/调试用）
@@ -153,7 +157,17 @@ class ClarifyFSM:
 
         spec = self._registry.get(state.intent_id)
         parsed, ok = interpret_answer(target, value, spec=spec)
-        if ok:
+        if ok and target == DIRECTION_SLOT:
+            # 方向追问：**不写槽位**，只把意图换到对侧（保留 ``_multi`` 后缀）。
+            # 「进货」/「卖货」不是 18 槽位里的任何一个，它是 G5 的伪槽位。
+            state.direction = str(parsed)
+            switched = switch_trade_intent(state.intent_id, state.direction)
+            if switched is not None:
+                state.transcript.append(f"方向补充：{state.intent_id} → {switched}")
+                state.intent_id = switched
+                spec = self._registry.get(state.intent_id)
+            state.answers.append((target, parsed))
+        elif ok:
             state.slots[target] = parsed
             state.source[target] = "asr"
             state.answers.append((target, parsed))
@@ -246,6 +260,17 @@ def interpret_answer(
     del spec  # 保留参数：将来按 intent 做更细的值域校验
     if value is None:
         return None, False
+    if slot == DIRECTION_SLOT:
+        text = str(value).strip()
+        mapping = {
+            "进货": PURCHASE,
+            "采购": PURCHASE,
+            "上货": PURCHASE,
+            "卖货": SALES,
+            "销售": SALES,
+            "零售": SALES,
+        }
+        return (mapping[text], True) if text in mapping else (None, False)
     if slot in _ENUM_SLOTS:
         text = str(value).strip()
         return (text, True) if text in _ENUM_SLOTS[slot] else (None, False)

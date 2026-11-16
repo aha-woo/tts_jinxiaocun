@@ -1,0 +1,70 @@
+<!-- 数字键盘 + 常用商品点选：全程可脱离语音完成一次记账 -->
+<view class="kb">
+  <!-- ① 方向：一句话没说也要能选，方向错了账就错了 -->
+  <view class="kb__section">
+    <view class="kb__label">这是</view>
+    <view class="kb__dirs">
+      <view
+        class="dir {{direction === 'in' ? 'dir--active' : ''}}"
+        data-direction="in"
+        bindtap="onPickDirection"
+      >进货（入库）</view>
+      <view
+        class="dir {{direction === 'out' ? 'dir--active' : ''}}"
+        data-direction="out"
+        bindtap="onPickDirection"
+      >卖货（出库）</view>
+    </view>
+  </view>
+
+  <!-- ② 常用商品点选 -->
+  <view class="kb__section">
+    <view class="kb__label">商品</view>
+    <view class="chips">
+      <view
+        wx:for="{{products}}"
+        wx:key="*this"
+        class="chip {{product === item ? 'chip--active' : ''}}"
+        data-name="{{item}}"
+        bindtap="onPickProduct"
+      >{{item}}</view>
+      <view class="chip chip--empty" wx:if="{{products.length === 0}}">档案里还没有商品</view>
+    </view>
+  </view>
+
+  <!-- ③ 数量 / 单价 输入（点哪栏，键盘就往哪栏写） -->
+  <view class="kb__section">
+    <view class="inputs">
+      <view
+        class="input {{focus === 'quantity' ? 'input--active' : ''}}"
+        data-focus="quantity"
+        bindtap="onFocus"
+      >
+        <text class="input__label">数量</text>
+        <text class="input__value">{{quantity === '' ? '0' : quantity}}</text>
+      </view>
+      <view
+        class="input {{focus === 'price' ? 'input--active' : ''}}"
+        data-focus="price"
+        bindtap="onFocus"
+      >
+        <text class="input__label">单价（元）</text>
+        <text class="input__value">{{price === '' ? '0' : price}}</text>
+      </view>
+    </view>
+  </view>
+
+  <!-- ④ 数字键盘 -->
+  <view class="keys">
+    <view
+      wx:for="{{keys}}"
+      wx:key="*this"
+      class="key {{item === '⌫' || item === '×' ? 'key--fn' : ''}}"
+      data-key="{{item}}"
+      bindtap="onKey"
+    >{{item}}</view>
+  </view>
+
+  <button class="submit" bindtap="onSubmit">生成确认卡片</button>
+  <view class="tip">全程不用说话也能记完一单；提交后仍要确认卡片才会落账。</view>
+</view>

@@ -72,6 +72,20 @@ _MONEY_FRAGMENT = re.compile(
     r"|\d+(?:\.\d+)?"
 )
 
+#: 「线索词 + 中文数字」（口语里「一件三十五」**不会**带「块/元」）
+#:
+#: 为什么单独一条正则：``_MONEY_FRAGMENT`` 要求中文数字后面必须跟「块/元」，
+#: 而真实口语里最常见的单价说法恰恰省略了货币单位。漏掉它会让「进了两箱可乐，
+#: 一件三十五」整句判不出金额，进而把整句话打成「未落槽片段」→ 置信度掉到澄清线以下。
+#:
+#: 末尾的否定前瞻排除「一箱二十四瓶」这类**换算系数**：
+#: 数字后面既不能紧跟量词，也不能还有数字（否则正则回溯会把「二十四」截成「二十」）。
+_HINT_THEN_CHINESE_MONEY = re.compile(
+    r"(?:一件|一箱|一瓶|一斤|一个|一条|每件|每箱|每瓶|每斤|每个|单价)"
+    r"\s*([零〇一幺二两俩三仨四五六七八九勾拐十百千万]+(?:[点\.][零〇一幺二两俩三仨四五六七八九勾拐]+)?)"
+    r"(?![箱瓶件个条斤支包袋筒零〇一幺二两俩三仨四五六七八九勾拐十百千万点\.])"
+)
+
 
 @dataclass(frozen=True)
 class AmountOutcome:
@@ -111,7 +125,13 @@ def find_money_text(text: str) -> str:
                 continue
         best = (match.start(), token)
         break
-    return best[1]
+    if best[1] != "":
+        return best[1]
+    # 兜底：口语里省略货币单位的「一件三十五」——线索词后直接跟中文数字
+    hinted = _HINT_THEN_CHINESE_MONEY.search(text)
+    if hinted is not None:
+        return hinted.group(1)
+    return ""
 
 
 def _yuan_text_to_fen(number_text: str) -> int | None:

@@ -1,0 +1,238 @@
+.page {
+  min-height: 100vh;
+  background: #f4f6f8;
+  padding: 16rpx 20rpx 40rpx;
+  box-sizing: border-box;
+}
+
+/* 宽屏：左侧看明细、右侧看影响与来源 */
+.page--wide {
+  display: block;
+}
+
+.actionbar {
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  display: flex;
+  align-items: center;
+  background: #fff;
+  border-radius: 16rpx;
+  padding: 16rpx 20rpx;
+  margin-bottom: 16rpx;
+  box-shadow: 0 4rpx 16rpx rgba(15, 23, 42, 0.06);
+}
+
+/* 首屏金额：数字用等宽字形，避免倒计时刷新时整行抖动 */
+.actionbar__amount {
+  margin-left: 16rpx;
+  flex: 1;
+  font-size: 36rpx;
+  font-weight: 800;
+  color: #1f2328;
+  font-variant-numeric: tabular-nums;
+}
+
+.actionbar__dir {
+  padding: 10rpx 20rpx;
+  border-radius: 12rpx;
+  font-size: 30rpx;
+  font-weight: 800;
+  letter-spacing: 2rpx;
+}
+
+/* 方向：进货 = 蓝（入库），卖货 = 橙（出库），其余 = 灰 */
+.actionbar__dir--purchase {
+  background: #e8f0ff;
+  color: #1554b5;
+}
+
+.actionbar__dir--sales {
+  background: #fff3d6;
+  color: #7a4d00;
+}
+
+.actionbar__dir--stock,
+.actionbar__dir--query,
+.actionbar__dir--sys {
+  background: #f1f3f5;
+  color: #4b5563;
+}
+
+.line {
+  display: flex;
+  align-items: center;
+  padding: 12rpx 0;
+  border-bottom: 1rpx solid #f4f6f8;
+}
+
+.line__name {
+  flex: 1;
+  font-size: 28rpx;
+  color: #1f2328;
+}
+
+.line__qty {
+  width: 160rpx;
+  text-align: right;
+  font-size: 26rpx;
+  color: #4b5563;
+  font-variant-numeric: tabular-nums;
+}
+
+.line__amount {
+  width: 180rpx;
+  text-align: right;
+  font-size: 30rpx;
+  font-weight: 700;
+  color: #1f2328;
+  font-variant-numeric: tabular-nums;
+}
+
+.original {
+  font-size: 30rpx;
+  color: #1f2328;
+  background: #f7f8fa;
+  border-radius: 12rpx;
+  padding: 16rpx 20rpx;
+}
+
+.actionbar__timer {
+  margin-left: 16rpx;
+  font-size: 24rpx;
+  color: #6b7280;
+  font-variant-numeric: tabular-nums;
+}
+
+.actionbar__timer--expired {
+  color: #b42318;
+  font-weight: 700;
+}
+
+.btn {
+  border-radius: 12rpx;
+  font-size: 28rpx;
+  height: 88rpx;
+  line-height: 88rpx;
+  padding: 0 28rpx;
+}
+
+.btn--primary {
+  background: #1f6feb;
+  color: #fff;
+  margin-left: auto;
+  font-weight: 700;
+}
+
+.btn--secondary {
+  background: #f1f3f5;
+  color: #4b5563;
+}
+
+.btn--ghost {
+  margin-top: 16rpx;
+  background: #e8f0ff;
+  color: #1554b5;
+}
+
+.card {
+  background: #fff;
+  border-radius: 16rpx;
+  padding: 20rpx 24rpx;
+  margin-bottom: 16rpx;
+}
+
+.card--risk {
+  background: #fff8e6;
+}
+
+.card__title {
+  font-size: 28rpx;
+  font-weight: 600;
+  color: #1f2328;
+  margin-bottom: 10rpx;
+}
+
+.amount {
+  font-size: 56rpx;
+  font-weight: 800;
+  color: #1f2328;
+  font-variant-numeric: tabular-nums;
+}
+
+.kv {
+  display: flex;
+  justify-content: space-between;
+  font-size: 26rpx;
+  color: #4b5563;
+  padding: 10rpx 0;
+  border-bottom: 1rpx solid #f4f6f8;
+}
+
+.muted {
+  font-size: 22rpx;
+  color: #6b7280;
+}
+
+.trace {
+  margin-top: 6rpx;
+  font-size: 22rpx;
+  color: #7a4d00;
+}
+
+.risk {
+  font-size: 24rpx;
+  color: #8a5300;
+  padding: 6rpx 0;
+}
+
+.clarify__question {
+  font-size: 30rpx;
+  font-weight: 600;
+  color: #1f2328;
+  margin-bottom: 16rpx;
+}
+
+.clarify__options {
+  display: flex;
+}
+
+.clarify__option {
+  flex: 1;
+  text-align: center;
+  padding: 26rpx 0;
+  border-radius: 12rpx;
+  background: #e8f0ff;
+  color: #1554b5;
+  font-size: 30rpx;
+  font-weight: 600;
+  margin-right: 16rpx;
+  min-height: 88rpx;
+}
+
+.clarify__option:last-child {
+  margin-right: 0;
+}
+
+.error {
+  margin: 8rpx 0 16rpx;
+  padding: 16rpx 20rpx;
+  background: #fde8e8;
+  color: #b42318;
+  border-radius: 12rpx;
+  font-size: 24rpx;
+}
+
+.footer {
+  display: flex;
+  margin-top: 20rpx;
+}
+
+.footer .btn {
+  flex: 1;
+  margin-right: 16rpx;
+}
+
+.footer .btn:last-child {
+  margin-right: 0;
+}

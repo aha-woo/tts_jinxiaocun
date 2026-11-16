@@ -137,10 +137,10 @@ def create_session(
     quota = QuotaService.from_settings(settings)
     decision = quota.take(str(ids.tenant_id))
     if decision.exhausted:
-        # 额度用尽：**降级不断服**，仍然给会话（手打也能记）
-        degrade = DegradeController().decide(
-            quota_exhausted=True, reason="token_bucket_exhausted"
-        )
+        # 额度用尽：**降级不断服**，仍然给会话（手打也能记）。
+        # 走 `usage_ratio=1.0` 而不是自造参数：额度用尽在 DegradePolicy 里对应 L3
+        # （语音解析暂停、手动录单保留），这样「为什么降级」与策略文件是同一套口径。
+        degrade = DegradeController().decide(usage_ratio=1.0)
         return JSONResponse(
             status_code=200,
             content=ok(
@@ -197,7 +197,7 @@ def create_session(
                     "max_bytes": settings.audio_max_bytes,
                 },
                 "audio_object_ref": ticket.audio_object_ref,
-                "quota": {"remaining_minute": decision.remaining_minute, "scope": decision.scope},
+                "quota": {"remaining_minute": decision.remaining, "scope": decision.scope},
                 "degrade_level": "L0",
                 "note": "音频请用 wx.cloud.uploadFile 直传对象存储，callContainer 只传引用",
             }
@@ -249,8 +249,8 @@ def parse_session(
         session_key=str(session_id),
         asr_confidence=payload.asr_confidence,
         resolver=runtime.products,
-        customers=runtime.partners,
-        suppliers=runtime.partners,
+        customers=runtime.customers,
+        suppliers=runtime.suppliers,
         tenant_id=str(ids.tenant_id),
         skip_gate=True,
     )

@@ -59,8 +59,26 @@ def bind(context: TenantContext) -> Token[TenantContext | None]:
 
 
 def reset(token: Token[TenantContext | None]) -> None:
-    """按 token 复位（务必放在 finally 里）。"""
-    _current.reset(token)
+    """按 token 复位（务必放在 finally 里）。
+
+    为什么这里要吞 ``ValueError``
+    ----------------------------
+    Starlette 的 ``BaseHTTPMiddleware`` 会把下游应用放进**另一个 task** 跑，
+    于是出现这种组合：``bind()`` 在下游 task 里执行，而依赖的 ``finally``
+    （收尾）跑在中间件的 task 里。此时 ``_current.reset(token)`` 会抛
+    ``ValueError: Token was created in a different Context``。
+
+    这个异常**没有任何实际危害**：token 属于的那个 context 已经结束，
+    当前 context 从头到尾就没绑定过这个值，跳过复位不会让任何租户上下文泄漏到
+    下一个请求。真正危险的是「吞掉之后以为自己复位了」——所以只在
+    *确实是跨 context* 这一种情况下跳过，其余异常照抛。
+    """
+    try:
+        _current.reset(token)
+    except ValueError:
+        # 跨 context 复位：token 所属的 context 已销毁，当前 context 无需清理。
+        # 不做 ``_current.set(None)``——那反而可能抹掉当前 context 里别的值。
+        return
 
 
 def clear() -> None:

@@ -93,8 +93,22 @@ def demo_resolver() -> AliasResolver:
 
 
 def demo_partners_resolver() -> AliasResolver:
-    """往来单位词表解析器。"""
+    """往来单位词表解析器（客户 + 供应商**合并**一份，仅用于认名字）。"""
     return AliasResolver(demo_partners())
+
+
+def demo_customers_resolver() -> AliasResolver:
+    """**只含客户**的词表（方向判据 ``partner.type`` 用；生产按 ``partner.type`` 装）。
+
+    演示数据的 ``partner_id`` 前缀就是类型（``c…`` = 客户、``s…`` = 供应商），
+    与生产 ``partner.type ∈ {customer, supplier}`` 一一对应。
+    """
+    return AliasResolver([row for row in demo_partners() if row.product_id.startswith("c")])
+
+
+def demo_suppliers_resolver() -> AliasResolver:
+    """**只含供应商**的词表（同上）。"""
+    return AliasResolver([row for row in demo_partners() if row.product_id.startswith("s")])
 
 
 def build_pipeline(

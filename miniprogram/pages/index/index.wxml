@@ -1,91 +1,87 @@
 <!--
-  首页（T01 自检页）：后端健康状态 + 契约计数 + 云托管初始化引导。
-  电脑版微信大屏与手机端共用本页：宽屏时 .wide-layout 生效为双栏（resizable）。
+  首页 · 手机端主录入（电脑版微信大屏自动变双栏）
+  - 大按钮：拇指热区 ≥88×88px，按住说 / 点一下说
+  - 状态条：降级态 L0~L4 在 UI 上真的可以看出差别
+  - 只有单商户：没有门店切换、没有组织概念
 -->
-<view class="container">
-  <view class="card">
-    <view class="card__title">语音记账 · 系统自检</view>
-    <view class="muted">
-      同一 AppID：手机端 + 电脑版微信大屏（resizable 双栏），没有独立网页端；后端走微信云托管
-      callContainer 私有链路。
+<view class="page {{wide ? 'page--wide' : ''}}">
+  <!-- 降级态状态条 -->
+  <view class="banner banner--{{degrade.tone}}">
+    <view class="banner__title">
+      <text>{{degrade.title}}</text>
+      <text class="banner__level">{{degrade.level}}</text>
+      <text class="banner__flag" wx:if="{{degrade.thrifty}}">省额度</text>
     </view>
+    <view class="banner__hint">{{degrade.hint}}</view>
   </view>
 
-  <view class="card">
-    <view class="card__title">后端状态</view>
-    <view class="card__row">
-      <text>连接</text>
-      <text class="card__value {{statusClass}}">{{statusText}}</text>
-    </view>
-    <view class="card__row">
-      <text>版本</text>
-      <text class="card__value">{{version}}</text>
-    </view>
-    <view class="card__row">
-      <text>检查时间</text>
-      <text class="card__value">{{checkedAt}}</text>
-    </view>
-    <view class="card__row">
-      <text>幂等存储</text>
-      <text class="card__value">{{backend}}</text>
-    </view>
-    <view wx:if="{{errorText}}" class="muted text-danger">
-      {{errorText}}
-      <text wx:if="{{lastErrorCode}}">（{{lastErrorCode}}）</text>
-    </view>
-  </view>
+  <view class="main">
+    <!-- 语音大按钮 -->
+    <view class="panel">
+      <big-button
+        recording="{{recording}}"
+        durationMs="{{durationMs}}"
+        bars="{{bars}}"
+        softLimit="{{softLimit}}"
+        disabled="{{!degrade.canVoice}}"
+        mode="{{mode}}"
+        bind:start="onStart"
+        bind:stop="onStop"
+        bind:modechange="onModeChange"
+      />
+      <view class="talking" wx:if="{{talkingText}}">{{talkingText}}</view>
+      <view class="error" wx:if="{{errorText}}">{{errorText}}</view>
 
-  <view class="card">
-    <view class="card__title">端服契约（必须与设计文档一致）</view>
-    <view class="card__row">
-      <text>语音意图 intent</text>
-      <text class="card__value">{{counts.intents}} / 38</text>
+      <!-- 键盘兜底入口：全程可脱离语音记账 -->
+      <view class="shortcuts">
+        <view class="shortcut" bindtap="onGoManual">
+          <text class="shortcut__title">手动记账</text>
+          <text class="shortcut__desc">不用说话，点着记</text>
+        </view>
+        <view class="shortcut" bindtap="onGoPending">
+          <text class="shortcut__title">待确认</text>
+          <text class="shortcut__desc">超时没确认的单子</text>
+        </view>
+      </view>
+      <view class="shortcuts">
+        <view class="shortcut" bindtap="onGoQuery">
+          <text class="shortcut__title">查一查</text>
+          <text class="shortcut__desc">库存 / 欠款 / 流水</text>
+        </view>
+        <view class="shortcut" bindtap="onGoPay">
+          <text class="shortcut__title">套餐</text>
+          <text class="shortcut__desc">买次数 / 续期</text>
+        </view>
+      </view>
+      <view class="shortcut shortcut--wide" bindtap="onGoAdmin">
+        <text class="shortcut__title">管理台</text>
+        <text class="shortcut__desc">电脑版微信里是双栏大屏；手机上也能进</text>
+      </view>
     </view>
-    <view class="card__row">
-      <text>槽位 slot</text>
-      <text class="card__value">{{counts.slots}} / 18</text>
-    </view>
-    <view class="card__row">
-      <text>来源枚举 source</text>
-      <text class="card__value">{{counts.sources}} / 5</text>
-    </view>
-    <view class="card__row">
-      <text>业务域 domain</text>
-      <text class="card__value">{{counts.domains}} / 12</text>
-    </view>
-    <view class="card__row">
-      <text>错误码 error code</text>
-      <text class="card__value">{{counts.errorCodes}}</text>
-    </view>
-    <view wx:if="{{!reachable}}" class="muted">
-      数字为 0 表示还没连上后端；先确认云托管已部署，再点下面的按钮。
-    </view>
-  </view>
 
-  <view class="card">
-    <view class="card__title">云托管环境</view>
-    <view class="card__row">
-      <text>CLOUD_ENV</text>
-      <text class="card__value">{{cloudEnv}}</text>
-    </view>
-    <view class="card__row">
-      <text>服务名</text>
-      <text class="card__value">{{cloudService}}</text>
-    </view>
-    <view wx:if="{{!envConfigured}}" class="muted text-warn">
-      还没替换 CLOUD_ENV：请在 miniprogram/services/api.ts 填入真实云开发环境 id
-      （占位值无法调用 callContainer）。
-    </view>
-    <button class="btn-primary" bindtap="onInitCloudTap" hover-class="none">初始化云托管</button>
-    <button class="btn-ghost" bindtap="onCheckHealthTap" hover-class="none">重新检查后端</button>
-    <button class="btn-ghost" bindtap="onCopyEnvTap" hover-class="none">复制环境信息</button>
-  </view>
+    <!-- 右栏（宽屏） / 下方（窄屏）：最近记录 + 自检 -->
+    <view class="side">
+      <view class="panel">
+        <view class="panel__title">最近</view>
+        <view class="recent__empty" wx:if="{{recent.length === 0}}">还没有记录</view>
+        <view wx:for="{{recent}}" wx:key="id" class="recent__item">
+          <text class="recent__text">{{item.text}}</text>
+          <text class="recent__meta">{{item.intent}} · {{item.at}}</text>
+        </view>
+      </view>
 
-  <view class="card">
-    <view class="card__title">下一步（本阶段边界）</view>
-    <view class="muted">
-      T01 只交付基础设施与共享契约：首页仅用于自检。语音录入（T03）、确认卡片与写账（T04）、
-      双端 UI（T05）随后接入。
+      <view class="panel">
+        <view class="panel__head" bindtap="onToggleSelfCheck">
+          <text class="panel__title">系统自检</text>
+          <text class="panel__more">{{selfCheckOpen ? '收起' : '展开'}}</text>
+        </view>
+        <view class="selfcheck" wx:if="{{selfCheckOpen}}">
+          <view class="kv"><text>后端</text><text>{{statusText}}</text></view>
+          <view class="kv"><text>版本</text><text>{{backendVersion}}</text></view>
+          <view class="kv"><text>契约</text><text>{{contractText}}</text></view>
+          <view class="kv"><text>登录态</text><text>{{loginOk ? '已登录' : '未登录（dev 联调可忽略）'}}</text></view>
+        </view>
+      </view>
     </view>
   </view>
 </view>

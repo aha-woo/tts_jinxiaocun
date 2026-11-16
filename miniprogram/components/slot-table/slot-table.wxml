@@ -1,0 +1,30 @@
+<!-- 槽位表：每行都带 source 角标；computed 必须显示计算式；pending 不显示确定值 -->
+<view class="table">
+  <view class="table__head">
+    <text class="table__title">明细（每项都标了来源）</text>
+  </view>
+
+  <view
+    wx:for="{{rows}}"
+    wx:key="code"
+    class="row {{item.tone === 'warn' || item.tone === 'danger' ? 'row--highlight' : ''}}"
+  >
+    <view class="row__left">
+      <text class="row__label">{{item.label_zh}}</text>
+      <text class="row__code">{{item.code}}</text>
+    </view>
+
+    <view class="row__value">
+      <text class="value {{item.source === 'pending' ? 'value--pending' : ''}}">
+        {{item.source === 'pending' ? '待确认（不猜）' : item.display}}
+      </text>
+      <text class="tag {{tagClass[item.source]}}">{{tagText[item.source]}}</text>
+    </view>
+
+    <view class="row__trace" wx:if="{{item.calc_trace}}">
+      <text class="trace">= {{item.calc_trace}}</text>
+    </view>
+  </view>
+
+  <view class="table__empty" wx:if="{{rows.length === 0}}">还没有明细</view>
+</view>

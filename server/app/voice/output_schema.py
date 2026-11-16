@@ -171,7 +171,11 @@ def semantic_issues(model: ParseResult, *, registry: IntentRegistry | None = Non
         issues.append(f"calc_traces: 槽位 {sorted(computed_slots)} 标为 computed，必须给出计算式")
 
     if model.clarify is not None:
-        if model.clarify.slot not in model.slots and model.clarify.slot not in _known_slot_codes():
+        if (
+            model.clarify.slot not in model.slots
+            and model.clarify.slot not in _known_slot_codes()
+            and model.clarify.slot not in _clarify_only_slots()
+        ):
             issues.append(f"clarify.slot: 未知槽位 {model.clarify.slot!r}")
         if len(model.clarify.question.strip()) == 0:
             issues.append("clarify.question: 不能为空")
@@ -189,6 +193,18 @@ def _known_slot_codes() -> frozenset[str]:
     from app.config import get_contracts  # 局部导入：避免模块级循环
 
     return frozenset(get_contracts().slot_codes)
+
+
+def _clarify_only_slots() -> frozenset[str]:
+    """G5 追问专用的**伪槽位**（``DIR``）。
+
+    这不是「第 19 个槽位」：它**不在** ``slots.json`` 里、**不落库**、
+    **不出现在 ``ParseResult.slots`` 里**，只作为「这一轮问的是什么」的标签，
+    让端上知道该渲染「进货 / 卖货」两个按钮。契约仍是 18 槽位。
+    """
+    from app.voice.direction import CLARIFY_ONLY_SLOTS  # 局部导入：避免模块级循环
+
+    return CLARIFY_ONLY_SLOTS
 
 
 def ensure_not_direct_write(intent_id: str, *, registry: IntentRegistry | None = None) -> None:

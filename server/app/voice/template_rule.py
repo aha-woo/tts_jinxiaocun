@@ -35,6 +35,11 @@ from typing import Any, Iterable, Sequence
 
 from app.utils.date_utils import resolve_relative_date
 from app.utils.unit import CANONICAL_UNITS, normalize_unit
+from app.voice.direction import (
+    NEUTRAL_TRADE_WORDS,
+    PURCHASE_DIRECTION_WORDS,
+    SALES_DIRECTION_WORDS,
+)
 from app.voice.number_normalizer import NumberParse, parse_quantity
 
 __all__ = [
@@ -571,6 +576,16 @@ def _r(
 #: 退货/纠正保护词（任何写模板都不得吞掉这些语义）
 _REVERSAL_GUARD: tuple[str, ...] = ("退回", "退货", "退给", "退款", "退他", "退她", "退了", "退我", "不要在", "不要了")
 
+#: 采购侧识别词 = 方向唯一的进货词 + **方向中性**的交易动词。
+#: 中性词（要/要了/拿了/到了）只负责「认出这是一笔交易」，
+#: 方向由 :mod:`app.voice.direction` 单独判（明确方向词 > partner.type > 收付信号 > 追问）。
+_PURCHASE_KEYWORDS: tuple[str, ...] = PURCHASE_DIRECTION_WORDS + NEUTRAL_TRADE_WORDS
+
+#: 销售侧识别词 = 方向唯一的销售词 + **同一批**中性词。
+#: 两侧在中性词上必须**完全对称**，否则「要十件」这类话会直接漏到 G4 花钱；
+#: 对称性是硬约束，由 ``tests/test_direction_resolution.py`` 断言守着。
+_SALES_KEYWORDS: tuple[str, ...] = SALES_DIRECTION_WORDS + NEUTRAL_TRADE_WORDS
+
 #: G3 规则表：**只覆盖 18 个 ``template_hit=true`` 的意图**。
 #: 其余 20 个意图一律走 G4（LLM），因为它们的语义/槽位不适合纯模板。
 RULE_TABLE: tuple[TemplateRule, ...] = (
@@ -671,7 +686,10 @@ RULE_TABLE: tuple[TemplateRule, ...] = (
     ),
     _r(
         "debt.query",
-        PRIORITY_QUERY,
+        # 比通用查询高 10：句子里出现「欠/应收/应付/挂账」时，方向是**明确**的账簿语义，
+        # 不该被 stock.query 的泛化词（「还有」）抢走——「应收还有多少没收回来」
+        # 曾被判成库存查询，这是「答非所问」级错误。
+        PRIORITY_QUERY + 10,
         (("欠", "应收", "应付", "挂账"),),
         rule_id="rule.debt.query",
         require_interrogative=True,
@@ -693,7 +711,7 @@ RULE_TABLE: tuple[TemplateRule, ...] = (
     _r(
         "purchase.create_multi",
         PRIORITY_WRITE + 20,
-        (("进了", "进货", "进点货", "上货", "采购", "拿货", "提货", "到了", "拉到", "拉了", "拿了", "再入", "又进", "补了", "补货"),),
+        (_PURCHASE_KEYWORDS,),
         rule_id="rule.purchase.create_multi",
         none_keywords=_REVERSAL_GUARD + ("以后", "我说"),
         require_quantity=True,
@@ -703,7 +721,7 @@ RULE_TABLE: tuple[TemplateRule, ...] = (
     _r(
         "purchase.create",
         PRIORITY_WRITE,
-        (("进了", "进货", "进点货", "上货", "采购", "拿货", "提货", "到了", "拉到", "拉了", "拿了", "再入", "又进", "补了", "补货"),),
+        (_PURCHASE_KEYWORDS,),
         rule_id="rule.purchase.create",
         none_keywords=_REVERSAL_GUARD + ("以后", "我说", "进价", "售价"),
         require_quantity=True,
@@ -712,7 +730,7 @@ RULE_TABLE: tuple[TemplateRule, ...] = (
     _r(
         "sales.create_multi",
         PRIORITY_WRITE + 20,
-        (("卖了", "卖", "出库", "拿走", "要了", "要", "提走", "发出了"),),
+        (_SALES_KEYWORDS,),
         rule_id="rule.sales.create_multi",
         require_multi=True,
         none_keywords=_REVERSAL_GUARD
@@ -747,7 +765,7 @@ RULE_TABLE: tuple[TemplateRule, ...] = (
     _r(
         "sales.create",
         PRIORITY_WRITE,
-        (("卖了", "卖", "出库", "拿走", "要了", "要", "提走", "发出了"),),
+        (_SALES_KEYWORDS,),
         rule_id="rule.sales.create",
         none_keywords=_REVERSAL_GUARD
         + (

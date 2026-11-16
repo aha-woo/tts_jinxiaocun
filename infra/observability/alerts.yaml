@@ -1,0 +1,202 @@
+# 告警规则（T05 / 架构 §9）
+#
+# 设计原则
+# --------
+# 1. **每条告警都必须对应一个用户能感知的现象**，而不是「指标难看」。看不出来的不打。
+# 2. `severity` 只有三档：`page`（把人叫起来）/ `ticket`（当天处理）/ `log`（周报看）。
+# 3. `runbook` 写「第一步该看什么」，不写「排查一下」这种废话。
+# 4. 阈值全部是**产品假设，需核实**，与 `metrics.yaml` / `DegradePolicy` 同一套口径。
+#
+# 命名：告警名用大驼峰（Prometheus/Grafana 习惯），中文说明给运营看。
+
+version: 3
+updated_at: "2026-02-18"
+owner: "工程师（Kou）"
+metrics_file: "infra/observability/metrics.yaml"
+
+groups:
+  # -------------------------------------------------------------------------
+  # 一、记错账风险（最高优先级：这个错是不可逆的）
+  # -------------------------------------------------------------------------
+  - name: correctness
+    description: "方向判反 / CAS 被静默覆盖 / 落账口径错 —— 一旦发生就是记错账"
+    rules:
+      - alert: RuleMisjudgeRateHigh
+        severity: page
+        expr: erp_rule_misjudge_ratio > 0.05
+        for: 10m
+        summary: "规则层误判率 {{ $value | humanizePercentage }} 超过 5% 硬门槛"
+        impact: "用户说『进了两箱可乐』可能被记成卖货，库存与账都反了。"
+        runbook:
+          - "先看 `erp_rule_misjudge_ratio` 的 intent_id 维度，定位是哪条规则在错。"
+          - "对照 `server/app/voice/direction.py` 的三类判据优先级：明确方向词 > partner.type > 收付信号 > 澄清。"
+          - "确认是不是有人把**方向中性词**（要/要了/拿了/到了）塞回了某一侧词表。"
+          - "无法定位就先把该 intent 强制走澄清（宁可多问一句），别带着误判继续跑。"
+
+      - alert: PreviewVersionConflictSpike
+        severity: ticket
+        expr: erp_preview_version_conflict_ratio > 0.02
+        for: 15m
+        summary: "CAS 冲突率 {{ $value | humanizePercentage }} 偏高"
+        impact: "用户点了确认却被 1202 挡回，要重新看预演；体验差但**账是对的**。"
+        runbook:
+          - "看是不是卡片停留过久（30s 倒计时只提示不自动提交，用户可能挂很久）。"
+          - "确认没有代码路径在冲突时**静默覆盖**（这是红线，见 `inventory_service.py`）。"
+          - "若集中在少数商品：可能是同一商品被多人同时录，属预期，不用改代码。"
+
+      - alert: BodyRejectObserved
+        severity: page
+        expr: increase(erp_body_reject_total[5m]) > 0
+        for: 1m
+        summary: "出现请求体超 100KiB 被拒（应为 0）"
+        impact: "有人把音频本体塞进了 `callContainer` 请求体，线上会整批失败。"
+        runbook:
+          - "查 `endpoint` 维度，确认是语音还是导出接口。"
+          - "核对端侧是否漏用 `upload_ticket` 直传（音频只准传 `audio_object_ref`）。"
+          - "这是端侧回归，立刻回滚对应前端版本。"
+
+  # -------------------------------------------------------------------------
+  # 二、花钱失控
+  # -------------------------------------------------------------------------
+  - name: cost
+    description: "LLM 调用率 / 单次成本 / 预算"
+    rules:
+      - alert: LlmCallRatioHigh
+        severity: ticket
+        expr: erp_llm_call_ratio > 0.20
+        for: 30m
+        summary: "LLM 调用率 {{ $value | humanizePercentage }} 超过 20%"
+        impact: "规则层覆盖不足，成本线性上涨；同时说明有大量说法没进规则表。"
+        runbook:
+          - "按 `model` 维度看是不是某个模型被兜底全接走了。"
+          - "抽样 20 条走 LLM 的原始文本，看能否补进 G3 规则表或伙伴/商品词库。"
+          - "先确认 `degrade_level` 是否已经是 L2（L2 应关闭 LLM 兜底，若仍 >0 说明降级开关没生效）。"
+
+      - alert: CostPerParseHigh
+        severity: ticket
+        expr: histogram_quantile(0.95, sum(rate(erp_cost_per_parse_yuan_bucket[15m])) by (le)) > 0.01
+        for: 30m
+        summary: "单次解析成本 P95 超过 0.01 元"
+        impact: "月成本会超套餐预算，最终触发降级、用户被限流。"
+        runbook:
+          - "看 `route` 维度：若 `rule` 也在涨，说明成本统计口径错了（规则层应为 0）。"
+          - "确认 few-shot 注入长度（L1 降级会把参考示例减半）。"
+
+      - alert: CacheHitRatioLow
+        severity: log
+        expr: erp_cache_hit_ratio < 0.30
+        for: 1h
+        summary: "解析缓存命中率低于 30%"
+        impact: "重复说法反复付费。"
+        runbook:
+          - "当前缓存为 **planned** 状态，本告警在缓存上线前不生效；先确认是否已部署。"
+          - "缓存 key 是「归一化文本 + 租户词库版本」，词库频繁变更会打穿缓存。"
+
+  # -------------------------------------------------------------------------
+  # 三、慢
+  # -------------------------------------------------------------------------
+  - name: latency
+    description: "端到端 P95 与分段耗时"
+    rules:
+      - alert: ParseLatencyP95High
+        severity: ticket
+        expr: histogram_quantile(0.95, sum(rate(erp_parse_latency_ms_bucket[10m])) by (le)) > 8000
+        for: 10m
+        summary: "端到端 P95 {{ $value }}ms 超过 8000ms 硬约束"
+        impact: "用户说完要等很久，会以为没反应而重复说，进而产生重复单据。"
+        runbook:
+          - "先看 `erp_stage_latency_ms` 哪个 stage 在涨（g0_g2 / asr / g3 / g4 / preview / commit）。"
+          - "ASR 涨 → 查对象存储/转写服务；G4 涨 → 查模型侧；commit 涨 → 查 DB 锁。"
+          - "端到端 ⑦ 的实测分解见交付报告⑤，可直接对照基线。"
+
+      - alert: StageLatencySkew
+        severity: log
+        expr: histogram_quantile(0.95, sum(rate(erp_stage_latency_ms_bucket{stage="g3"}[10m])) by (le)) > 200
+        for: 30m
+        summary: "G3 规则层 P95 超过 200ms"
+        impact: "规则层本该是微秒级，慢了说明正则回溯或词表爆炸。"
+        runbook:
+          - "检查 `template_rule.py` 是否新增了会灾难性回溯的正则。"
+          - "检查词表条数是否失控增长（伙伴/商品词库应按租户装配，不该全局遍历）。"
+
+  # -------------------------------------------------------------------------
+  # 四、收不到货（钱付了但额度没到账）
+  # -------------------------------------------------------------------------
+  - name: delivery
+    description: "虚拟支付发货"
+    rules:
+      - alert: DeliverFailureSpike
+        severity: page
+        expr: increase(erp_deliver_failed_total[10m]) > 0
+        for: 1m
+        summary: "10 分钟内出现 {{ $value }} 次发货失败"
+        impact: "用户付了钱没到账，直接是资损投诉。"
+        runbook:
+          - "看 `reason`：`sku_unknown` 通常是套餐配置漏了；网络类失败可直接补发。"
+          - "**发货只以微信支付服务端推送为准**，前端 `success` 一律不信；先确认回调是否真的收到。"
+          - "补发入口：管理页『用量与套餐』；`duplicate_ignored` 是幂等命中，属正常。"
+
+      - alert: DeliverCallbackMissing
+        severity: page
+        expr: increase(erp_deliver_total[1h]) == 0 and increase(erp_confirm_total{result="ok"}[1h]) > 0
+        for: 30m
+        summary: "有落账但 1 小时内零发货回调记录"
+        impact: "回调地址/验签可能整体挂了，所有支付都不到账。"
+        runbook:
+          - "先在微信支付商户平台看回调是否到达（是否 4xx/5xx）。"
+          - "核对验签密钥与平台证书是否过期。"
+          - "确认没有把发货逻辑挪到前端（这是红线）。"
+
+  # -------------------------------------------------------------------------
+  # 五、降级（不是故障，但必须被看见）
+  # -------------------------------------------------------------------------
+  - name: degrade
+    description: "L0~L4 档位变化"
+    rules:
+      - alert: DegradedBeyondL1
+        severity: ticket
+        expr: erp_degrade_level > 1
+        for: 5m
+        summary: "降级到 L{{ $value }}（L2 及以上）"
+        impact: "关掉了 LLM 兜底（L2）/ 语音解析（L3）/ 写入（L4），用户能力被削。"
+        runbook:
+          - "看触发信号：额度使用率 / LLM 失败率 / 成本超预算率。"
+          - "核对 UI 是否**真的**表现出差别（L2 要提示『先用固定句式』，L3 语音入口要变『稍后再试』，L4 写操作要转待办）。"
+          - "**只升不降**：恢复必须走人工 `reset`，不许自动放宽（避免体验抖动）。"
+
+      - alert: StuckInDegrade
+        severity: ticket
+        expr: erp_degrade_level > 0
+        for: 6h
+        summary: "降级状态持续 6 小时未恢复"
+        impact: "如果是误触发（例如错误率统计有 bug），用户会长期用不上功能。"
+        runbook:
+          - "确认额度是否真的用尽（`usage_quota.period=YYYY-MM` 自然月口径）。"
+          - "与 `entitlement`（30 天滚动窗口）**分开看**，两者不得互相推导。"
+          - "确属误触发则人工 `reset` 到 L0 并记录原因。"
+
+  # -------------------------------------------------------------------------
+  # 六、可用性
+  # -------------------------------------------------------------------------
+  - name: availability
+    description: "健康检查与依赖"
+    rules:
+      - alert: ReadyzFailing
+        severity: page
+        expr: up{job="erp-api"} == 0
+        for: 2m
+        summary: "API 2 分钟不可达"
+        impact: "完全不能用。"
+        runbook:
+          - "先看 `/healthz` 与 `/readyz` 的 `degraded_reasons`。"
+          - "`database_unreachable` → 查 DB；`table_count_mismatch` → 查迁移是否漏跑；"
+          - "`jwt_secret_is_default` → 生产仍在用本地默认密钥，**必须立刻换**。"
+
+      - alert: HealthDegraded
+        severity: ticket
+        expr: erp_health_status{status="degraded"} == 1
+        for: 5m
+        summary: "健康检查持续 degraded"
+        impact: "服务可用但依赖有问题，可能随时恶化。"
+        runbook:
+          - "非 PG 方言（本地 SQLite）**不算** degraded，是设计内的应用层隔离模式，别误判。"

@@ -1,0 +1,24 @@
+<!-- 待确认：30 秒没确认的单子都在这里，不落账、不重复扣次 -->
+<view class="page">
+  <view class="hint">这些单子还没记账。打开后仍是同一张卡（不会重复扣次数）。</view>
+
+  <view class="empty" wx:if="{{!loading && items.length === 0}}">没有待确认的单子</view>
+  <view class="loading" wx:if="{{loading}}">加载中…</view>
+
+  <view wx:for="{{items}}" wx:key="cardId" class="item">
+    <view class="item__main">
+      <text class="item__title">{{item.title}}</text>
+      <text class="item__amount">{{item.amountText}}</text>
+    </view>
+    <view class="item__meta">
+      <text class="badge {{item.expired ? 'badge--expired' : ''}}">{{item.expired ? '已超时（未记账）' : '待确认'}}</text>
+      <text class="item__version">数据版本 v{{item.previewVersion}}</text>
+    </view>
+    <view class="item__actions">
+      <button class="btn btn--primary" data-card="{{item.cardId}}" bindtap="onOpen">打开确认</button>
+      <button class="btn btn--ghost" data-card="{{item.cardId}}" bindtap="onDiscard">丢弃</button>
+    </view>
+  </view>
+
+  <view class="error" wx:if="{{errorText}}">{{errorText}}</view>
+</view>

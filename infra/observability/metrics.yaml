@@ -1,0 +1,209 @@
+# 观测指标定义（T05 / 架构 §9「可观测性」）
+#
+# 约定
+# ----
+# 1. 指标名一律 `erp_` 前缀，单位写进名字后缀（`_total` 计数器 / `_ms` 时长 / `_ratio` 比例）。
+# 2. `source` 指明这条指标**在代码里从哪来**，可被 `server/tests/test_observability_spec.py` 校验；
+#    凡标 `planned` 的，说明当前是**规格先行**、埋点尚未落到代码里（不许在报告里当成已实现）。
+# 3. 所有阈值是**产品假设，需核实**，与 `server/app/services/degrade.py` 里的 `DegradePolicy` 保持同一套口径。
+# 4. 铁律：UI 只暴露**单商户**，因此所有指标都**不带 store/org/tenant 维度做聚合**——
+#    `tenant_id` 只用于隔离与排障，不进业务看板。
+
+version: 3
+updated_at: "2026-02-18"
+owner: "工程师（Kou）"
+related_docs:
+  - "docs/架构设计.md §9"
+  - "infra/observability/alerts.yaml"
+
+# ---------------------------------------------------------------------------
+# 一、核心漏斗指标
+# ---------------------------------------------------------------------------
+metrics:
+  # G0~G6 六层漏斗的入口与出口：所有比率指标的**分母**都从这里取，
+  # 避免「命中率」和「LLM 调用率」各算各的分母导致数字对不上。
+  - name: erp_parse_total
+    type: counter
+    unit: 次
+    description: "进入解析链路的次数（语音 + 手动，手动记为 channel=manual）"
+    labels: [channel, route, degrade_level]
+    source: "server/app/services/voice_runtime.py::parse"
+    status: implemented
+    window: "自然日 / 自然月"
+
+  # 规则层命中率：**省钱的主指标**，但要和误判率一起看（只看命中率会激励瞎猜）。
+  - name: erp_rule_hit_ratio
+    type: gauge
+    unit: 比例
+    description: "G3 规则层给出明确 route 的比例 = rule_hit / erp_parse_total"
+    formula: "sum(rate(erp_parse_total{route!=\"clarify\",layer=\"rule\"}[5m])) / sum(rate(erp_parse_total[5m]))"
+    labels: [degrade_level]
+    source: "server/app/voice/template_engine.py::TemplateEngine.run"
+    status: implemented
+    target: ">= 0.40（T05 独立集实测 29.2%，见交付报告②；目标值需随独立集扩容重估）"
+    note: "命中率**允许下降**：判不准的从『瞎猜命中』改成『不命中→问一句』是要的方向。"
+
+  # 误判率：**硬门槛**。误判 = 规则层给出了明确 route 但方向/意图与人工标注不符。
+  - name: erp_rule_misjudge_ratio
+    type: gauge
+    unit: 比例
+    description: "规则层判错比例 = misjudge / (misjudge + rule_hit)"
+    formula: "sum(erp_rule_misjudge_total) / clamp_min(sum(erp_parse_total{layer=\"rule\",route!=\"clarify\"}), 1)"
+    labels: [intent_id, degrade_level]
+    source: "server/tests/test_g3_independent.py（离线评测口径）"
+    status: implemented
+    target: "<= 0.05（硬指标，做不到不许进联调验收）"
+    oncall: "超过 5% 一律回滚方向词表改动，不允许『先上线再看』"
+
+  # 强制澄清率：判不准就问一句的代价（多一轮交互），用来监控「是不是问太多了」。
+  - name: erp_force_clarify_ratio
+    type: gauge
+    unit: 比例
+    description: "因三类判据都缺失而强制发起方向澄清的比例"
+    formula: "sum(rate(erp_clarify_total{reason=\"direction_unknown\"}[5m])) / sum(rate(erp_parse_total[5m]))"
+    labels: [reason, degrade_level]
+    source: "server/app/voice/direction.py::resolve_direction"
+    status: implemented
+    target: "<= 0.35（超过说明词表覆盖不足，该补商品/伙伴词库而不是放宽判据）"
+
+  # LLM 调用率：花的钱都在这里。
+  - name: erp_llm_call_ratio
+    type: gauge
+    unit: 比例
+    description: "走 LLM 的比例 = llm_call / erp_parse_total"
+    formula: "sum(rate(erp_llm_call_total[5m])) / sum(rate(erp_parse_total[5m]))"
+    labels: [model, degrade_level]
+    source: "server/app/voice/template_engine.py（`route == \"llm\"` 分支）"
+    status: implemented
+    target: "<= 0.20（L2 降级后应趋近 0）"
+
+  # 缓存命中率：同一个说法第二次不该再花钱。
+  - name: erp_cache_hit_ratio
+    type: gauge
+    unit: 比例
+    description: "解析结果缓存命中比例（key = 归一化文本 + 租户词库版本）"
+    formula: "sum(rate(erp_cache_hit_total[5m])) / sum(rate(erp_parse_total[5m]))"
+    labels: [cache_layer]
+    source: "planned::server/app/voice/cache.py"
+    status: planned
+    target: ">= 0.30"
+    note: "当前未实现解析缓存，指标先立规格；不许在报告里写成已上线。"
+
+  # 单次成本：成本护栏的输入，直接喂给 DegradePolicy.cost_ratio。
+  - name: erp_cost_per_parse_yuan
+    type: histogram
+    unit: 元
+    description: "单次解析的模型成本（规则层命中记 0）"
+    buckets: [0, 0.0005, 0.001, 0.002, 0.005, 0.01, 0.05]
+    labels: [route, model]
+    source: "server/app/voice/cost_monitor.py"
+    status: implemented
+    target: "P50 <= 0.001 元；月累计 <= 套餐预算"
+    note: "计费双口径：`usage_quota.period=YYYY-MM` 与 `entitlement` 30 天滚动窗口**不得互相推导**。"
+
+  # 延迟：端到端 + 分段，用于归因「慢在哪一层」。
+  - name: erp_parse_latency_ms
+    type: histogram
+    unit: 毫秒
+    description: "从收到音频到返回卡片/澄清的总耗时"
+    buckets: [200, 500, 1000, 2000, 4000, 6000, 8000, 12000, 20000]
+    labels: [route, degrade_level]
+    source: "server/app/api/v1/voice.py::parse"
+    status: implemented
+    target: "P95 <= 8000ms（端到端 ⑦ 的硬约束）"
+
+  - name: erp_stage_latency_ms
+    type: histogram
+    unit: 毫秒
+    description: "分段耗时（G0-G2 / ASR / G3 / G4 / 预演 / 落账），用于 ⑦ 的耗时分解"
+    buckets: [50, 100, 200, 500, 800, 1500, 3000, 6000]
+    labels: [stage]
+    source: "server/app/services/voice_runtime.py（trace 计时）"
+    status: implemented
+    stages: ["g0_g2", "asr", "g3", "g4", "preview", "commit"]
+
+  # 落账：并发冲突必须被看见，不能被「静默覆盖」吞掉。
+  - name: erp_confirm_total
+    type: counter
+    unit: 次
+    description: "确认落账次数（按结果分类）"
+    labels: [result]
+    source: "server/app/api/v1/confirm.py::confirm"
+    status: implemented
+    result_values: ["ok", "idempotent_replay", "version_conflict", "rejected"]
+
+  - name: erp_preview_version_conflict_ratio
+    type: gauge
+    unit: 比例
+    description: "CAS 冲突率 = E_PREVIEW_VERSION_CONFLICT / erp_confirm_total"
+    formula: "sum(rate(erp_confirm_total{result=\"version_conflict\"}[5m])) / sum(rate(erp_confirm_total[5m]))"
+    labels: [intent_id]
+    source: "server/app/domain/inventory_service.py（CAS 乐观锁）"
+    status: implemented
+    target: "<= 0.02（超过说明卡片停留太久或同一商品被多人同时录）"
+    note: "冲突**绝不静默覆盖**；返回 1202 让用户重新看一遍预演。"
+
+  # 支付：发货只认服务端推送，前端 success 一律不信。
+  - name: erp_deliver_total
+    type: counter
+    unit: 次
+    description: "虚拟支付发货结果（按结果分类）"
+    labels: [result, sku]
+    source: "server/app/pay/deliver_callback.py"
+    status: implemented
+    result_values: ["ok", "duplicate_ignored", "failed", "sku_unknown"]
+
+  - name: erp_deliver_failed_total
+    type: counter
+    unit: 次
+    description: "发货失败次数（**必须能被人工补发**，不允许只记日志）"
+    labels: [reason, sku]
+    source: "server/app/pay/deliver_callback.py"
+    status: implemented
+    note: "对应 alert `DeliverFailureSpike`；补发入口在管理页『用量与套餐』。"
+
+  # 降级：L0~L4 每一档持续多久、因为什么。
+  - name: erp_degrade_level
+    type: gauge
+    unit: 档位编码
+    description: "当前降级档位（L0=0 ... L4=4），非 0 即告警面板高亮"
+    labels: [tenant_bucket]
+    source: "server/app/services/degrade.py::DegradeController.level"
+    status: implemented
+    target: "L0 时长占比 >= 0.95"
+    note: "**UI 上必须真的能看到差别**：L1 只藏「参考示例」，L2 关 LLM 兜底并提示，L3 语音入口变『稍后再试』，L4 写操作全转待办。"
+
+  # 上传/门禁：端侧省钱的第一道闸。
+  - name: erp_audio_gate_drop_total
+    type: counter
+    unit: 次
+    description: "端侧门禁丢弃的录音（误触/过短/静音/超长），**没有产生任何服务端请求**"
+    labels: [reason]
+    source: "miniprogram/services/audio-gate.ts::judgeRecording"
+    status: implemented
+    reason_values: ["too_short", "silent", "too_long"]
+
+  - name: erp_body_reject_total
+    type: counter
+    unit: 次
+    description: "请求体超 100KiB 被拒的次数（应为 0；音频只传引用）"
+    labels: [endpoint]
+    source: "server/app/api/middleware.py（MAX_BODY_BYTES）"
+    status: implemented
+    target: "== 0"
+
+# ---------------------------------------------------------------------------
+# 二、维度约定（控制基数，避免指标爆炸）
+# ---------------------------------------------------------------------------
+label_policy:
+  forbidden:
+    - tenant_id        # 只用于隔离与排障，禁止进业务看板（且基数不可控）
+    - store_id         # 铁律：UI 只暴露单商户，无门店概念
+    - org_id
+    - user_openid      # 隐私 + 基数
+  bounded:
+    route: ["rule", "clarify", "card", "llm", "reject"]
+    degrade_level: ["L0", "L1", "L2", "L3", "L4"]
+    channel: ["voice", "manual", "admin"]
+    stage: ["g0_g2", "asr", "g3", "g4", "preview", "commit"]
+  max_series_per_metric: 500

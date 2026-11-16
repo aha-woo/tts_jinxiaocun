@@ -1,0 +1,7 @@
+{
+  "navigationBarTitleText": "确认记账",
+  "usingComponents": {
+    "slot-table": "/components/slot-table/slot-table",
+    "impact-preview": "/components/impact-preview/impact-preview"
+  }
+}

@@ -1,0 +1,6 @@
+{
+  "navigationBarTitleText": "手动记账",
+  "usingComponents": {
+    "num-keyboard": "/components/num-keyboard/num-keyboard"
+  }
+}

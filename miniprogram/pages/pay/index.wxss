@@ -1,0 +1,140 @@
+.page {
+  min-height: 100vh;
+  background: #f4f6f8;
+  padding: 20rpx;
+  box-sizing: border-box;
+}
+
+.card {
+  background: #fff;
+  border-radius: 16rpx;
+  padding: 24rpx;
+  margin-bottom: 16rpx;
+}
+
+.card--entitle {
+  background: linear-gradient(180deg, #f7f9ff 0%, #ffffff 100%);
+  border: 1rpx solid #dbe6ff;
+}
+
+.card__title {
+  font-size: 26rpx;
+  color: #6b7280;
+  margin-bottom: 12rpx;
+}
+
+.stats {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+}
+
+.stats__num {
+  font-size: 52rpx;
+  font-weight: 800;
+  color: #1f2328;
+  font-variant-numeric: tabular-nums;
+}
+
+.stats__num--days {
+  margin-left: 24rpx;
+  color: #1554b5;
+}
+
+.stats__unit {
+  margin-left: 8rpx;
+  font-size: 24rpx;
+  color: #6b7280;
+}
+
+.muted {
+  font-size: 22rpx;
+  color: #6b7280;
+  margin-top: 6rpx;
+}
+
+.level {
+  margin-top: 10rpx;
+  font-size: 22rpx;
+  color: #b42318;
+}
+
+.entitle__name {
+  font-size: 32rpx;
+  font-weight: 700;
+  color: #1554b5;
+  margin-bottom: 8rpx;
+}
+
+.goods {
+  border-top: 1rpx solid #f4f6f8;
+  padding: 18rpx 0;
+}
+
+.goods__main {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+}
+
+.goods__name {
+  font-size: 28rpx;
+  font-weight: 600;
+  color: #1f2328;
+}
+
+.goods__price {
+  font-size: 30rpx;
+  font-weight: 700;
+  color: #b42318;
+}
+
+.goods__desc {
+  font-size: 22rpx;
+  color: #6b7280;
+  margin-top: 6rpx;
+}
+
+.buy {
+  margin-top: 14rpx;
+  height: 88rpx;
+  line-height: 88rpx;
+  background: #1f6feb;
+  color: #fff;
+  border-radius: 12rpx;
+  font-size: 28rpx;
+}
+
+.warn {
+  margin-top: 12rpx;
+  font-size: 22rpx;
+  color: #8a5300;
+  background: #fff8e6;
+  border-radius: 12rpx;
+  padding: 14rpx 18rpx;
+}
+
+.message {
+  margin-top: 12rpx;
+  padding: 16rpx 20rpx;
+  background: #e6f6ee;
+  color: #0f7b4c;
+  border-radius: 12rpx;
+  font-size: 24rpx;
+}
+
+.error {
+  margin-top: 12rpx;
+  padding: 16rpx 20rpx;
+  background: #fde8e8;
+  color: #b42318;
+  border-radius: 12rpx;
+  font-size: 24rpx;
+}
+
+.hint {
+  margin-top: 16rpx;
+  font-size: 22rpx;
+  color: #9aa4ae;
+  text-align: center;
+}

@@ -44,6 +44,13 @@ from app.voice.conflict_detector import (
     blocking_conflicts,
     detect,
 )
+from app.voice.direction import (
+    DirectionVerdict,
+    build_direction_clarify,
+    is_trade_intent,
+    resolve_direction,
+    switch_trade_intent,
+)
 from app.voice.output_schema import ClarifyPrompt, ParseResult, validate_parse_result
 from app.voice.slot_filler import SlotFillResult, SlotFiller
 from app.voice.template_rule import (
@@ -66,6 +73,7 @@ from app.voice.template_rule import (
 
 __all__ = [
     "ParsedItem",
+    "PartyHits",
     "TemplateEngine",
     "TemplateOutcome",
     "extract_product_name_fallback",
@@ -188,6 +196,14 @@ _VERB_WORDS: tuple[str, ...] = (
     "别名",
     "以后",
 )
+
+
+@dataclass(frozen=True)
+class PartyHits:
+    """句中出现过的往来对象（**按类型分开**，方向判据的 ``partner.type`` 来源）。"""
+
+    customer_names: tuple[str, ...] = ()
+    supplier_names: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -446,10 +462,21 @@ class TemplateEngine:
                 ),
             )
         partner_name = _party_name(cleaned, customers=customers, suppliers=suppliers, exclude=product.name if product else "")
+        # 往来对象**按类型**各记一份：命中哪张词表 = partner.type，方向判据靠它（0 成本）
+        party = _party_hits(
+            cleaned,
+            customers=customers,
+            suppliers=suppliers,
+            exclude=product.name if product else "",
+        )
 
         # 3) 认意图（「一句话多商品」由商品命中数判定，不靠标点猜）
         scanned_items = scan_items(cleaned, resolver=resolver)
-        multi_present = len([item for item in scanned_items if item.product_name]) >= 2
+        # 「一句话多商品」只认**在商品档案里真的命中**的片段：
+        # 兜底猜出来的名字（``extract_product_name_fallback``）不算证据，
+        # 否则「跟老张拿货，红牛一箱」这种只有一个真商品的话会被判成多商品，
+        # 直接走成 ``*_create_multi``，是「记错账」级误判。
+        multi_present = _resolved_item_count(cleaned, resolver=resolver) >= 2
         matches = match_rules(
             cleaned,
             rules=self._rules,
@@ -472,6 +499,24 @@ class TemplateEngine:
 
         spec = self._registry.require(best.intent_id)
         trace.append(best.explain())
+
+        # 3.5) 方向判定（方案 d）：关键词只负责「认出这是一笔交易」，
+        #      方向由「明确方向词 > partner.type > 收付信号」单独判；
+        #      三类都没有 → **不猜**，强制澄清问一句（下一节 _decide_clarify）。
+        direction: DirectionVerdict | None = None
+        if is_trade_intent(best.intent_id):
+            direction = resolve_direction(
+                cleaned,
+                has_customer=bool(party.customer_names),
+                has_supplier=bool(party.supplier_names),
+                customer_names=party.customer_names,
+                supplier_names=party.supplier_names,
+            )
+            trace.append(direction.explain())
+            switched = switch_trade_intent(best.intent_id, direction.direction)
+            if switched is not None and switched != best.intent_id:
+                trace.append(f"方向判定改写意图：{best.intent_id} → {switched}")
+                spec = self._registry.require(switched)
 
         # 4) product.create 等「档案类」允许兜底抽名
         if "P" not in spans and "P" in spec.all_slots:
@@ -516,7 +561,7 @@ class TemplateEngine:
         conflicts = detect(
             ConflictContext(
                 text=cleaned,
-                intent_id=best.intent_id,
+                intent_id=spec.intent_id,
                 slots=filled.slots,
                 source=filled.source,
                 ambiguous_spans=tuple(ambiguous),
@@ -536,11 +581,25 @@ class TemplateEngine:
 
         # 7) 置信度 + 追问
         unknown = tuple(_unknown_spans(cleaned, spans, items))
+        # ``pending`` 分两类，扣分口径必须不同：
+        # - **必填槽位** pending = 关键信息缺失 → 该重扣并追问；
+        # - **可选槽位** pending = 我们**诚实地留白**（例如没说供应商，S=「待补」），
+        #   卡片上会带「待补」角标让用户自己补。把它当成「猜错了」按必填扣分，
+        #   会让「进了两箱可乐，一件三十五」这类最常见、最该出卡的话**永远出不了卡**
+        #   —— 这才是命中率上不去的真实原因，不是方向词不够。
+        optional_pending = tuple(
+            code for code in filled.pending if code not in spec.required_slots
+        )
+        required_pending = tuple(
+            code for code in filled.pending if code in spec.required_slots
+        )
+        if optional_pending:
+            trace.append(f"可选槽位留白（不扣置信度）：{list(optional_pending)}")
         confidence = combine(
             rule_score=best.score,
             asr_confidence=asr_confidence,
             defaults=tuple(filled.defaults),
-            pending=filled.pending,
+            pending=required_pending,
             ambiguities=tuple(filled.ambiguities),
             blocking_conflicts=len(blocking),
             soft_conflicts=len(soft),
@@ -554,6 +613,7 @@ class TemplateEngine:
             product_options=product_options,
             resolver=resolver,
             confidence_value=confidence.value,
+            direction=direction,
         )
 
         route = _route_for(spec, clarify=clarify, confidence_value=confidence.value)
@@ -601,8 +661,15 @@ class TemplateEngine:
         product_options: tuple[str, ...],
         resolver: AliasResolver | None,
         confidence_value: float,
+        direction: DirectionVerdict | None = None,
     ) -> ClarifyPrompt | None:
-        """决定这一轮问什么（一次只问 1 个槽位）。"""
+        """决定这一轮问什么（一次只问 1 个槽位）。
+
+        **方向优先**：方向判错＝账记错，代价远高于「多问一句」，
+        所以只要方向判不出来（或判据互相矛盾），第一句就问方向，别的槽位往后排。
+        """
+        if direction is not None and direction.direction is None:
+            return build_direction_clarify(conflict=direction.conflict)
         for conflict in blocking:
             if conflict.clarify_slot:
                 dynamic = conflict.options or None
@@ -628,8 +695,20 @@ class TemplateEngine:
             slot = first.split("：", 1)[0]
             return build_clarify(spec.intent_id, slot, catalog=self._catalog)
         if confidence_value < BAND_MID:
-            # 低置信不出写卡：问最影响入账的一项
-            slot = pick_slot_to_ask(tuple(spec.required_slots), spec=spec) or "Q"
+            # 低置信不出写卡：问最影响入账的一项。
+            # 优先问**还没被原话确认**的必填槽位（pending / default / computed）；
+            # 都比原话确认过就退回按契约顺序问第一个——问一个已经有答案的槽位
+            # 用户也答不出新信息，但至少不会漏问关键项。
+            doubtful = tuple(
+                code
+                for code in spec.required_slots
+                if filled.source.get(code) in {"pending", "default", "computed"}
+            )
+            slot = (
+                pick_slot_to_ask(doubtful, spec=spec)
+                if doubtful
+                else pick_slot_to_ask(tuple(spec.required_slots), spec=spec)
+            ) or "Q"
             del resolver
             return build_clarify(spec.intent_id, slot, catalog=self._catalog)
         return None
@@ -719,6 +798,42 @@ def _pick_product(
     return longest.product, False, ()
 
 
+def _resolved_item_count(text: str, *, resolver: AliasResolver | None) -> int:
+    """数「真的在商品档案里命中」的片段（多商品判定的唯一证据来源）。
+
+    只有 ``_pick_product`` 拿到 ``ProductEntry``（或报歧义）才算数；
+    兜底猜出来的名字只是候选，**不能**用来证明「这句话有两个商品」。
+    """
+    if resolver is None:
+        return 0
+    # 同一句话里**不同**的商品个数：按 ``product_id`` 去重，
+    # 因此「可乐两箱红牛一箱」这种**没有顿号**的口语也能数出 2 个。
+    product_ids: set[str] = set()
+    guessed = 0
+    for segment in split_items(text):
+        hits = resolver.scan(segment)
+        found = {
+            hit.product.product_id for hit in hits if hit.resolved and hit.product is not None
+        }
+        if found:
+            product_ids |= found
+            continue
+        _entry, ambiguous, _options = _pick_product(hits)
+        if ambiguous:
+            guessed += 1
+            continue
+        # 档案里没命中，但「有数量 + 有名字」的片段同样是独立的商品行
+        # （多商品句的典型形态就是「红牛一件、和其正两件」，后者在演示词表里可能没建档）。
+        # 只有**数量**才是证据：光一个猜出来的名字（「跟老张拿货」）不算第二个商品。
+        has_qty = any(
+            span.code == "Q" and span.ok
+            for span in extract_quantity_spans(segment, allow_zero=True)
+        )
+        if has_qty and extract_product_name_fallback(segment):
+            guessed += 1
+    return len(product_ids) + guessed
+
+
 def scan_items(text: str, *, resolver: AliasResolver | None = None) -> tuple[ParsedItem, ...]:
     """把一句话切成多商品候选（``*_multi`` 意图与多商品判定共用）。
 
@@ -748,6 +863,40 @@ def scan_items(text: str, *, resolver: AliasResolver | None = None) -> tuple[Par
             )
         )
     return tuple(items)
+
+
+def _party_hits(
+    text: str,
+    *,
+    customers: AliasResolver | None,
+    suppliers: AliasResolver | None,
+    exclude: str = "",
+) -> "PartyHits":
+    """按**类型**收集句中出现的往来对象（方向判据用）。
+
+    上游把客户与供应商分成两个词表，所以「命中哪张表」本身就等于 ``partner.type``：
+    ``customers`` 命中 → 客户；``suppliers`` 命中 → 供应商；两边都命中 →
+    同一家既是客户又是供应商，方向判据**不采纳**（见 :func:`resolve_direction`）。
+    """
+    return PartyHits(
+        customer_names=_names_of(text, customers, exclude=exclude),
+        supplier_names=_names_of(text, suppliers, exclude=exclude),
+    )
+
+
+def _names_of(text: str, resolver: AliasResolver | None, *, exclude: str = "") -> tuple[str, ...]:
+    """从一张词表里取出命中的名字（去重、保序、排除被当成商品的那段）。"""
+    if resolver is None:
+        return ()
+    names: dict[str, None] = {}
+    for hit in resolver.scan(text):
+        if hit.product is None:
+            continue
+        name = hit.product.display_name()
+        if exclude and hit.product.name == exclude:
+            continue
+        names.setdefault(name, None)
+    return tuple(names)
 
 
 def _party_name(

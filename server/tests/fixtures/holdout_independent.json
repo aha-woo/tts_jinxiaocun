@@ -1,0 +1,213 @@
+{
+  "$schema_note": "方案 d（方向整改）之后的**独立验证集**。先写句子、先跑，跑完不回改规则表适配这批句子。",
+  "version": "1.0.0",
+  "owner": "软件工程师",
+  "count": 24,
+  "how_to_use": [
+    "只用于度量：命中率 / 误判率 / 强制澄清率三个数字都从这里出。",
+    "与 fixtures/heldout_utterances.json 完全不重叠，且都不得出现在契约 sample_utterances 里。",
+    "改句子必须同步改 count，并在交付报告里说明改了哪条、为什么。"
+  ],
+  "scenarios": [
+    "purchase",
+    "sales",
+    "stock_query",
+    "debt_query",
+    "return",
+    "stock_take"
+  ],
+  "utterances": [
+    {
+      "id": "N01",
+      "scenario": "purchase",
+      "text": "老李送过来三箱冰红茶，一箱二十八",
+      "expect_intent": "purchase.create",
+      "expect_slots": { "Q": 3, "U": "箱" },
+      "note": "供应商送货：『送过来』不在方向词表里，靠 partner.type(供应商) 判"
+    },
+    {
+      "id": "N02",
+      "scenario": "purchase",
+      "text": "进价涨了，可乐也进了四箱",
+      "expect_intent": "purchase.create",
+      "expect_slots": { "Q": 4, "U": "箱" },
+      "note": "「进了」是方向唯一的进货词"
+    },
+    {
+      "id": "N03",
+      "scenario": "purchase",
+      "text": "今天补了十件矿泉水，还没给钱",
+      "expect_intent": "purchase.create",
+      "expect_slots": { "Q": 10, "U": "件", "PS": "未结" },
+      "note": "「补了」进货 + 未给钱"
+    },
+    {
+      "id": "N04",
+      "scenario": "purchase",
+      "text": "南门批发拉来五箱红牛，欠他六百",
+      "expect_intent": "purchase.create",
+      "expect_slots": { "Q": 5, "U": "箱" },
+      "note": "「拉来」不在词表，靠 partner.type(南门批发=供应商)"
+    },
+    {
+      "id": "N05",
+      "scenario": "purchase",
+      "text": "再入了两箱和其正",
+      "expect_intent": "purchase.create",
+      "expect_slots": { "Q": 2, "U": "箱" },
+      "note": "「再入」进货"
+    },
+    {
+      "id": "N06",
+      "scenario": "purchase",
+      "text": "采购了两件旺仔，一共九十",
+      "expect_intent": "purchase.create",
+      "expect_slots": { "Q": 2, "U": "件" },
+      "note": "「采购」进货"
+    },
+    {
+      "id": "N07",
+      "scenario": "sales",
+      "text": "给二中店送过去两箱可乐，收了一百二",
+      "expect_intent": "sales.create",
+      "expect_slots": { "Q": 2, "U": "箱" },
+      "note": "客户 + 收钱，两个判据同向"
+    },
+    {
+      "id": "N08",
+      "scenario": "sales",
+      "text": "零售出去六瓶红牛",
+      "expect_intent": "sales.create",
+      "expect_slots": { "Q": 6, "U": "瓶" },
+      "note": "「零售」销售"
+    },
+    {
+      "id": "N09",
+      "scenario": "sales",
+      "text": "卖了四箱娃哈哈给来福超市",
+      "expect_intent": "sales.create",
+      "expect_slots": { "Q": 4, "U": "箱" },
+      "note": "「卖了」销售"
+    },
+    {
+      "id": "N10",
+      "scenario": "sales",
+      "text": "李婶拿走了一件矿泉水，现结",
+      "expect_intent": "sales.create",
+      "expect_slots": { "Q": 1, "U": "件" },
+      "note": "「拿走」+ 客户 + 现结，三个判据同向"
+    },
+    {
+      "id": "N11",
+      "scenario": "sales",
+      "text": "出库三瓶可乐，收了现金",
+      "expect_intent": "sales.create",
+      "expect_slots": { "Q": 3, "U": "瓶" },
+      "note": "「出库」销售"
+    },
+    {
+      "id": "N12",
+      "scenario": "sales",
+      "text": "今天卖货两箱可乐，一百二",
+      "expect_intent": "sales.create",
+      "expect_slots": { "Q": 2, "U": "箱" },
+      "note": "「卖货」销售"
+    },
+    {
+      "id": "N13",
+      "scenario": "stock_query",
+      "text": "可乐现在还剩多少呀",
+      "expect_intent": "stock.query",
+      "expect_slots": {},
+      "note": "只读查询"
+    },
+    {
+      "id": "N14",
+      "scenario": "stock_query",
+      "text": "红牛库存还有几箱",
+      "expect_intent": "stock.query",
+      "expect_slots": {},
+      "note": "只读查询"
+    },
+    {
+      "id": "N15",
+      "scenario": "stock_query",
+      "text": "顺便看下矿泉水剩几瓶",
+      "expect_intent": "stock.query",
+      "expect_slots": {},
+      "note": "只读查询"
+    },
+    {
+      "id": "N16",
+      "scenario": "debt_query",
+      "text": "老张欠我多少钱",
+      "expect_intent": "debt.query",
+      "expect_slots": {},
+      "note": "只读查询"
+    },
+    {
+      "id": "N17",
+      "scenario": "debt_query",
+      "text": "兴旺超市的账还差多少",
+      "expect_intent": "debt.query",
+      "expect_slots": {},
+      "note": "只读查询"
+    },
+    {
+      "id": "N18",
+      "scenario": "debt_query",
+      "text": "应收还有多少没收回来",
+      "expect_intent": "debt.query",
+      "expect_slots": {},
+      "note": "只读查询"
+    },
+    {
+      "id": "N19",
+      "scenario": "return",
+      "text": "把红牛退给老张一箱",
+      "expect_intent": "purchase_return.create",
+      "expect_slots": { "Q": 1, "U": "箱" },
+      "note": "退给供应商 = 采购退货"
+    },
+    {
+      "id": "N20",
+      "scenario": "return",
+      "text": "李婶退回两箱可乐",
+      "expect_intent": "sales_return.create",
+      "expect_slots": { "Q": 2, "U": "箱" },
+      "note": "客户退回 = 销售退货"
+    },
+    {
+      "id": "N21",
+      "scenario": "return",
+      "text": "矿泉水客户不要了，退回来三瓶",
+      "expect_intent": "sales_return.create",
+      "expect_slots": { "Q": 3, "U": "瓶" },
+      "note": "「不要了」+「退回来」= 销售退货"
+    },
+    {
+      "id": "N22",
+      "scenario": "stock_take",
+      "text": "盘点一下，红牛还剩十二箱",
+      "expect_intent": "stock.take",
+      "expect_slots": {},
+      "note": "单商品盘点"
+    },
+    {
+      "id": "N23",
+      "scenario": "stock_take",
+      "text": "盘库：可乐八箱、红牛六箱",
+      "expect_intent": "stock.take_multi",
+      "expect_slots": {},
+      "note": "多商品盘点（有顿号）"
+    },
+    {
+      "id": "N24",
+      "scenario": "stock_take",
+      "text": "今天盘货，矿泉水二十瓶",
+      "expect_intent": "stock.take",
+      "expect_slots": { "Q": 20, "U": "瓶" },
+      "note": "单商品盘点"
+    }
+  ]
+}

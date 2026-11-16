@@ -1,0 +1,105 @@
+<!--
+  确认卡片：7 区块一个都不能少
+  ① original ② intent ③ slots ④ calc ⑤ impact ⑥ risk ⑦ actions
+  窄屏纵向堆叠，但金额 / 影响预览 / 方向 / 主按钮**必须在首屏**
+
+  每个区块都带 `data-block`，一是给测试做机器可读断言（少一块 CI 就红），
+  二是排障时一眼能对应到服务端 `ConfirmCardView.to_payload()` 的字段名。
+-->
+<view class="page {{wide ? 'page--wide' : ''}}">
+  <!-- ⑦ 操作区（吸顶，首屏可见）：方向 + 金额 + 倒计时 + 主按钮，四样都在这一条里 -->
+  <view class="actionbar" wx:if="{{card}}" data-block="actions">
+    <view class="actionbar__dir actionbar__dir--{{card.intent.domain}}" data-role="direction">
+      <text class="actionbar__dirtext">{{directionText}}</text>
+    </view>
+    <view class="actionbar__amount" data-role="amount">{{totalAmountText}}</view>
+    <view class="actionbar__timer {{expired ? 'actionbar__timer--expired' : ''}}">
+      {{expired ? '已过期' : countdown + 's'}}
+    </view>
+    <button class="btn btn--primary" bindtap="onConfirm" loading="{{loading}}">
+      {{card.actions.primary_label}}
+    </button>
+  </view>
+
+  <!-- 澄清（方向/槽位没判清时先问，不猜） -->
+  <view class="card" wx:if="{{clarify}}">
+    <view class="card__title">要确认一下</view>
+    <view class="clarify__question">{{clarify.question}}</view>
+    <view class="clarify__options">
+      <view
+        wx:for="{{clarify.options}}"
+        wx:key="*this"
+        class="clarify__option"
+        data-value="{{item}}"
+        bindtap="onClarify"
+      >{{item}}</view>
+    </view>
+  </view>
+
+  <!-- ① 原文区 -->
+  <view class="card" wx:if="{{card}}" data-block="original">
+    <view class="card__title">你刚说的</view>
+    <view class="original" wx:if="{{card.original.asr_text}}">{{card.original.asr_text}}</view>
+    <view class="muted" wx:if="{{card.original.low_confidence_highlight}}">
+      这句我听得不太准，下面高亮的项请重点看一眼
+    </view>
+  </view>
+
+  <!-- ② 意图区 -->
+  <view class="card" wx:if="{{card}}" data-block="intent">
+    <view class="card__title">{{card.intent.intent_label_zh}}</view>
+    <view class="kv"><text>类别</text><text>{{card.intent.domain_label_zh}}</text></view>
+    <view class="kv"><text>风险等级</text><text>{{card.intent.risk_level}}</text></view>
+    <view class="kv"><text>确认方式</text><text>{{card.intent.confirm_policy}}</text></view>
+  </view>
+
+  <!-- ③ 槽位区（组件根节点自带 data-block="slots"） -->
+  <slot-table rows="{{card.slots}}" wx:if="{{card}}" data-block="slots" />
+
+  <!-- ④ 计算区（金额 + 每行明细） -->
+  <view class="card" wx:if="{{card}}" data-block="calc">
+    <view class="card__title">金额 {{totalAmountText}}</view>
+    <view
+      wx:for="{{card.calc.lines}}"
+      wx:key="product_label"
+      class="line"
+    >
+      <text class="line__name">{{item.product_label}}</text>
+      <text class="line__qty">{{item.quantity}}{{item.unit}}</text>
+      <text class="line__amount">{{item.amount_display}}</text>
+    </view>
+    <view class="trace" wx:for="{{card.calc.calc_traces}}" wx:key="*this">= {{item}}</view>
+  </view>
+
+  <!-- ⑤ 影响预览区 -->
+  <impact-preview
+    wx:if="{{card}}"
+    data-block="impact"
+    rows="{{card.impact}}"
+    previewVersion="{{card.meta.preview_version}}"
+    note=""
+  />
+
+  <!-- ⑥ 风险区 -->
+  <view class="card card--risk" wx:if="{{card && card.risk.level !== 'ok'}}" data-block="risk">
+    <view class="card__title">要注意</view>
+    <view class="risk">{{card.risk.reason_zh}}</view>
+    <view wx:for="{{card.risk.conflicts}}" wx:key="*this" class="risk">· {{item}}</view>
+  </view>
+
+  <!-- C2 二次语音 + 按钮兜底（兜底永远在） -->
+  <view class="card" wx:if="{{needSecondVoice}}">
+    <view class="card__title">这笔要再确认一次</view>
+    <view class="muted">点下面说一句「确认」，或者直接按上方主按钮（会记为按钮兜底）</view>
+    <button class="btn btn--ghost" bindtap="onSecondVoice">我说了「确认」</button>
+  </view>
+
+  <view class="error" wx:if="{{errorText}}">{{errorText}}</view>
+
+  <view class="footer" wx:if="{{card}}">
+    <button class="btn btn--secondary" bindtap="onCancel">先不记</button>
+    <button class="btn btn--primary" bindtap="onConfirm" loading="{{loading}}">
+      {{card.actions.primary_label}}
+    </button>
+  </view>
+</view>

@@ -1,0 +1,13 @@
+<!-- 大屏左导航：宽屏竖排、窄屏横向（区块数量不变，只变布局） -->
+<view class="nav {{narrow ? 'nav--narrow' : ''}}">
+  <view
+    wx:for="{{items}}"
+    wx:key="key"
+    class="item {{active === item.key ? 'item--active' : ''}} {{item.bossOnly && !isBoss ? 'item--locked' : ''}}"
+    data-key="{{item.key}}"
+    bindtap="onSelect"
+  >
+    <text class="item__label">{{item.label}}</text>
+    <text class="item__lock" wx:if="{{item.bossOnly && !isBoss}}">老板</text>
+  </view>
+</view>

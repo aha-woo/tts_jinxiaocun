@@ -71,6 +71,11 @@ class VoiceRuntime:
     store_name: str
     contract_version: str
     registry: IntentRegistry = field(default_factory=default_registry)
+    #: **按类型分开**的往来单位词表（方向判据 ``partner.type`` 的来源）。
+    #: 上游客商同名不同型是常态（``uq_partner_tenant_id_type_name`` 允许同名两行），
+    #: 所以「命中哪张表」就是类型，不需要再查库。
+    customers: AliasResolver = field(default_factory=lambda: AliasResolver(()))
+    suppliers: AliasResolver = field(default_factory=lambda: AliasResolver(()))
 
     def llm_calls(self) -> int:
         """本次运行时累计模型调用次数（成本归因）。"""
@@ -150,15 +155,25 @@ def load_partner_lexicon(
     *,
     tenant_id: uuid.UUID,
     limit: int = PROMPT_TOP_PARTNERS,
+    partner_type: str | None = None,
 ) -> list[ProductEntry]:
-    """从库里装往来单位词表（正名 + 别名）。"""
-    partners = list(
-        session.execute(
-            select(Partner)
-            .where(Partner.tenant_id == tenant_id, Partner.status == "active")
-            .limit(max(1, limit))
-        ).scalars()
-    )
+    """从库里装往来单位词表（正名 + 别名）。
+
+    Args:
+        session: 会话。
+        tenant_id: 租户。
+        limit: 最多装多少个（控 prompt 体积）。
+        partner_type: ``customer`` / ``supplier``；``None`` 表示不过滤。
+            方向判据只认「客户表 / 供应商表分别命中」，
+            所以调用方要按类型各装一份（见 :func:`build_runtime`）。
+
+    Returns:
+        :class:`ProductEntry` 列表（``product_id`` 放的是 ``partner_id``）。
+    """
+    stmt = select(Partner).where(Partner.tenant_id == tenant_id, Partner.status == "active")
+    if partner_type is not None:
+        stmt = stmt.where(Partner.type == partner_type)
+    partners = list(session.execute(stmt.limit(max(1, limit))).scalars())
     if not partners:
         return []
     ids = [partner.partner_id for partner in partners]
@@ -206,6 +221,13 @@ def build_runtime(
         session, tenant_id=tenant_id, member_id=member_id, limit=settings.prompt_top_products
     )
     partner_entries = load_partner_lexicon(session, tenant_id=tenant_id)
+    # 方向判据要「命中哪张表就是什么类型」，所以按 partner.type 各装一份
+    customer_entries = load_partner_lexicon(
+        session, tenant_id=tenant_id, partner_type="customer"
+    )
+    supplier_entries = load_partner_lexicon(
+        session, tenant_id=tenant_id, partner_type="supplier"
+    )
 
     provider: LlmProvider = build_llm_provider(settings)
     counter = CountingLlmProvider(provider)
@@ -235,6 +257,8 @@ def build_runtime(
         asr=build_asr_provider(settings),
         products=AliasResolver(product_entries),
         partners=AliasResolver(partner_entries),
+        customers=AliasResolver(customer_entries),
+        suppliers=AliasResolver(supplier_entries),
         store_name=store_name,
         contract_version=reg.version,
         registry=reg,
@@ -295,8 +319,19 @@ def lines_of_result(
     payment_status = str(result.slots.get("PS") or "已结")
     lines: list[LedgerLine] = []
 
-    if items:
-        for item in items:
+    # **单商品意图也会带 1 个 item**（``_parse_items`` 造的是只有文本、没有数量/金额的壳），
+    # 所以「items 非空」不等于「多商品」。只按 items 分支走会让「进了两箱可乐，一件三十五」
+    # 落成数量为 0、金额为 0 的空单据（库存不动、账面上的金额是 0）——这是记错账，不是小问题。
+    # 判定标准改成：这个 item **真的带了数量或金额**才走多商品分支。
+    usable_items = [
+        item
+        for item in items
+        if getattr(item, "quantity", None) is not None
+        or int(getattr(item, "total_fen", 0) or 0) > 0
+    ]
+
+    if usable_items:
+        for item in usable_items:
             name = getattr(item, "product_name", None)
             product = _resolve(runtime.products, name) if name else None
             quantity = getattr(item, "quantity", None)

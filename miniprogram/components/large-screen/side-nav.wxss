@@ -1,0 +1,52 @@
+.nav {
+  display: flex;
+  flex-direction: column;
+  width: 240rpx;
+  flex-shrink: 0;
+  background: #fff;
+  border-right: 1rpx solid #eef1f4;
+  padding: 16rpx 0;
+}
+
+/* 窄屏（窗口变窄）→ 横向标签，仍然保留全部入口 */
+.nav--narrow {
+  width: 100%;
+  flex-direction: row;
+  overflow-x: auto;
+  border-right: none;
+  border-bottom: 1rpx solid #eef1f4;
+  padding: 8rpx 12rpx;
+}
+
+.item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 22rpx 24rpx;
+  font-size: 26rpx;
+  color: #4b5563;
+}
+
+.nav--narrow .item {
+  padding: 16rpx 20rpx;
+  white-space: nowrap;
+}
+
+.item--active {
+  color: #1f6feb;
+  font-weight: 700;
+  background: #e8f0ff;
+}
+
+.item--locked {
+  color: #9aa4ae;
+}
+
+.item__lock {
+  font-size: 18rpx;
+  color: #9aa4ae;
+  border: 1rpx solid #d5dbe1;
+  border-radius: 999rpx;
+  padding: 2rpx 10rpx;
+  margin-left: 8rpx;
+}

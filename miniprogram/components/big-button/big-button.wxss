@@ -1,0 +1,99 @@
+/* 语音大按钮：**拇指热区 176rpx ≈ 88px**（375dp 屏），满足 PRD 3.2 的 ≥88×88px */
+.wrap {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 24rpx 0;
+}
+
+.button {
+  /* 热区：88px × 88px 是下限，这里给到 176rpx（≈88px）并由 padding 再放大命中区 */
+  min-width: 88px;
+  min-height: 88px;
+  width: 176rpx;
+  height: 176rpx;
+  padding: 24rpx;
+  border-radius: 50%;
+  background: linear-gradient(180deg, #1f6feb 0%, #1554b5 100%);
+  color: #fff;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 8rpx 24rpx rgba(31, 111, 235, 0.32);
+  transition: transform 120ms ease, background 120ms ease;
+}
+
+.button:active {
+  transform: scale(0.97);
+}
+
+.button--recording {
+  background: linear-gradient(180deg, #e5484d 0%, #b42318 100%);
+  box-shadow: 0 8rpx 24rpx rgba(229, 72, 77, 0.36);
+}
+
+.button--disabled {
+  background: #c9d1d9;
+  color: #6b7280;
+  box-shadow: none;
+}
+
+.button__icon {
+  font-size: 44rpx;
+  line-height: 1;
+}
+
+.button__text {
+  margin-top: 8rpx;
+  font-size: 24rpx;
+  letter-spacing: 2rpx;
+}
+
+.meter {
+  margin-top: 20rpx;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  width: 420rpx;
+}
+
+.meter__time {
+  font-size: 28rpx;
+  color: #1f6feb;
+  font-variant-numeric: tabular-nums;
+}
+
+.meter__time--warn {
+  color: #e5484d;
+}
+
+.meter__bars {
+  margin-top: 12rpx;
+  height: 64rpx;
+  width: 100%;
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+}
+
+.meter__bar {
+  width: 12rpx;
+  border-radius: 6rpx;
+  background: #1f6feb;
+  opacity: 0.75;
+  min-height: 6rpx;
+}
+
+.meter__hint {
+  margin-top: 10rpx;
+  font-size: 22rpx;
+  color: #b42318;
+}
+
+.mode {
+  margin-top: 18rpx;
+  font-size: 24rpx;
+  color: #6b7280;
+  padding: 12rpx 20rpx;
+}
