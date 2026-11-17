@@ -262,6 +262,21 @@ def test_amount_columns_are_integer_fen(pg_sql: str) -> None:
 # --------------------------------------------------------------- 方言差异（不假装）
 
 
+def test_doc_header_marks_reversal_docs(pg_sql: str) -> None:
+    """``doc_header.reverses_doc_id``：反做单必须能自报「我撤的是谁」。
+
+    没有这一列时：反做单继承原单 ``intent_id``，「+48 还是 −48」在单头上丢失
+    → 撤销的撤销再减一次（240→192→144），日报也把反做单当成又一笔采购。
+    """
+    block = create_table_block(pg_sql, "doc_header")
+    assert re.search(r"\breverses_doc_id UUID", block), "doc_header 缺少 reverses_doc_id 列"
+    # 正常单据为 NULL：不能设成 NOT NULL（否则每张单都得指向一张单）
+    assert not re.search(r"reverses_doc_id UUID NOT NULL", block)
+    # 唯一约束/索引仍以 tenant_id 打头（不许因为加列破坏租户内唯一）
+    for columns in re.findall(r"UNIQUE \(([^)]+)\)", block):
+        assert columns.split(",")[0].strip() == "tenant_id", columns
+
+
 def test_sqlite_render_contains_no_rls_statements(sqlite_sql: str) -> None:
     """SQLite 方言下迁移**不渲染** RLS —— 不假装 SQLite 有行级安全。"""
     assert "ROW LEVEL SECURITY" not in sqlite_sql

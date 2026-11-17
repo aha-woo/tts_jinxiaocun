@@ -206,6 +206,25 @@ class ReversalService:
         if doc is None:
             raise AppError("E_VALIDATION", message="单据不存在或不属于当前租户")
 
+        # ➓ 拒绝「撤销的撤销」（P0-3 的错账根因）
+        #
+        # 反做单继承了原单的 ``intent_id``，方向只按契约取反 —— 于是「撤销一张反做单」
+        # 会**再减一次**（240 → 192 → 144）。语义上用户自己也困惑，所以直接拒绝，
+        # 并给出可执行的两条路（重新录一句 / 用 PATCH 改卡片）。
+        if doc.reverses_doc_id is not None:
+            raise AppError(
+                "E_VALIDATION",
+                message=(
+                    f"{doc.doc_no} 本身就是一张撤销单，不能再撤销（否则会重复冲销一次）；"
+                    "要改请重新录一句正确的，或用「改一下」在卡片上直接改数量/金额"
+                ),
+                data={
+                    "reason": "cannot_reverse_a_reversal",
+                    "doc_no": str(doc.doc_no),
+                    "reverses_doc_id": str(doc.reverses_doc_id),
+                },
+            )
+
         spec = self._registry.get(str(doc.intent_id))
         reversal_spec = dict(spec.reversal or {}) if spec is not None else {}
         if not reversal_spec.get("allowed", False):
@@ -265,6 +284,8 @@ class ReversalService:
             biz_date=date.today() if moment is None else moment.date(),
             created_by=member_id,
             payment_status=str(doc.payment_status),
+            # 反做单必须自报「我撤的是谁」：报表据此排除、也据此拒绝「撤销的撤销」
+            reversal_of=doc_id,
             lines=tuple(
                 DocLineDraft(
                     product_id=line.product_id,

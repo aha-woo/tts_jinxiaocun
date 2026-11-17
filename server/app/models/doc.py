@@ -31,6 +31,13 @@ class DocHeader(Base, TenantMixin, StoreScopedMixin):
     #: confirmed / reversed（撤销走反做单，原单保留）
     status: Mapped[str] = mapped_column(String(16), nullable=False, server_default="confirmed")
     reversed_by: Mapped[uuid.UUID | None] = mapped_column(nullable=True)
+    #: **反做单指向的原单**（``NULL`` = 正常单据）。
+    #:
+    #: 为什么必须有这一列：反做单继承了原单的 ``intent_id``（``purchase.create``），
+    #: 于是「这张单是 +48 还是 −48」在单头上完全丢失 —— 既导致「撤销的撤销」再减一次，
+    #: 又让日报把反做单当成又一笔采购。现在靠它把「反做单」从正常单据里区分出来：
+    #: 反做单（非空）不参与报表汇总、不能被再次撤销、「上一单」也不会选中它。
+    reverses_doc_id: Mapped[uuid.UUID | None] = mapped_column(nullable=True)
     created_by: Mapped[uuid.UUID] = mapped_column(nullable=False)
     created_at: Mapped[datetime] = created_at_column()
 

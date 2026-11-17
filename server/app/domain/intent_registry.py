@@ -179,10 +179,41 @@ def default_registry() -> IntentRegistry:
     return IntentRegistry(get_contracts())
 
 
+#: 走「单据 + 库存 + 应收」这条链路的 side_effect.entities 取值
+DOC_PATH_ENTITIES: frozenset[str] = frozenset({"doc", "inventory", "ar_ap", "payment"})
+
+
+def is_pure_entity_intent(spec: IntentSpec | None) -> bool:
+    """是否**纯实体写入**意图（只写档案，不写单据/库存/应收）。
+
+    为什么需要这个判定（P0-2 的根因）
+    --------------------------------
+    ``product.create`` 要建的商品**本来就还不存在**，所以
+    ``lines_of_result()`` 里 ``product is None`` 恒成立 → 明细行被标成
+    ``pending=True`` → ``LedgerService.confirm()`` 的行级 pending 守卫直接
+    422，**唯一的生产入口被自己的守卫堵死**（实体写入器写得再对也到不了）。
+
+    纯实体意图的明细行只是「这次会创建什么」的展示占位，不参与
+    「数量口径是否可信」的判定，因此不参与行级 pending。
+
+    Args:
+        spec: 意图规格（``None`` 视为非实体意图）。
+
+    Returns:
+        True = ``entities`` 非空且全部落在实体白名单里。
+    """
+    if spec is None:
+        return False
+    entities = {str(entity) for entity in (spec.side_effect or {}).get("entities") or ()}
+    return bool(entities) and not (entities & DOC_PATH_ENTITIES)
+
+
 __all__ = [
     "IntentRegistry",
     "IntentSpec",
     "STATIC_INTENT_IDS",
     "R3_INTENTS_FROZEN",
+    "DOC_PATH_ENTITIES",
     "default_registry",
+    "is_pure_entity_intent",
 ]

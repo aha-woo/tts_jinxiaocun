@@ -324,6 +324,14 @@ API 与测试**都调它**，`test_route_matrix.py` 再把「判定结论」与�
 （应收应付已核销 / 已有反做单 / 有收付款流水）→ `E_DOC_REFERENCED`(1204) 并**展示引用链**。
 盘点快照（`stock.take`）没有留档前值，**不能反做**（拒绝而不是猜一个数）。
 
+反做单靠 `doc_header.reverses_doc_id`（非空 = 我撤的是那张单）自我标识，三处据此收敛：
+
+| 位置 | 规则 |
+|---|---|
+| `reversal.reverse()` | 目标单 `reverses_doc_id` 非空 → `E_VALIDATION`（`cannot_reverse_a_reversal`）。**不做「撤销的撤销」**：反做单继承原意图、方向只按契约取反，再撤一次就是再冲销一次（实测 240→192→144） |
+| `ledger._resolve_target_doc("上一单")` | 只挑 `status='confirmed' AND reverses_doc_id IS NULL`，不会盯上那辆 `-R` |
+| `report_service._sum_docs()` | 同样排除 `reverses_doc_id IS NOT NULL`，否则「撤销后今日采购仍是 7000」 |
+
 ### 编辑不重调 AI
 
 `voice/correction_edit.py::apply_slot_updates` 是纯函数：改数量/单价就机械重算金额，0 次模型调用。
@@ -406,7 +414,10 @@ assert original_doc.status == "reversed"          # 撤销后原单仍在、状�
 assert _count(database, UsageQuota) == 1          # 发货后额度行真的多了一条
 ```
 
-参考实现：`tests/test_write_end_state.py`（15 条）、`tests/test_deliver_callback_http.py`（9 条）。
+参考实现：`tests/test_write_end_state.py`（15 条）、`tests/test_deliver_callback_http.py`（9 条）、
+`tests/test_main_chain_http.py`（9 条，**只说 PRD 原话**走真实 HTTP：
+`login → /voice/sessions → parse → confirm`）。后者覆盖「可选槽位留白不阻塞确认／必填缺失仍拦／
+纯实体意图能建出商品／不许撤销反做单／报表 200 且撤销后采购归零／35 次连打只放行 30」。
 后者覆盖「正确令牌 → 权益真到账（贴着 `select(Entitlement)` 的实际值断言）／缺令牌·错令牌·错通道 → 403
 且 `deliver_event` 0 行、额度没动／服务端未配令牌 → 503 + ERROR 告警／重复推送 → 1402 只加一次」，
 并额外要求：**发货、回调这类端点必须走 TestClient 打真实 HTTP 路径**，

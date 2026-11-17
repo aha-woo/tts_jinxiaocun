@@ -309,7 +309,9 @@ class ReportService:
         if direction is not None:
             statement = statement.where(ArAp.direction == direction)
         rows: list[DebtSummary] = []
-        for ar_ap, partner in self._session.execute(statement).limit(max(1, limit)).all():
+        # ``.limit()`` 必须打在 **Select** 上（返回 Result 之后再 .limit 会 AttributeError，
+        # 「老张欠我多少」「今天卖了多少」这两个每天都问的意图会直接 500）
+        for ar_ap, partner in self._session.execute(statement.limit(max(1, limit))).all():
             rows.append(
                 DebtSummary(
                     partner_id=str(ar_ap.partner_id),
@@ -433,6 +435,9 @@ class ReportService:
             DocHeader.store_id == store_id,
             DocHeader.status == "confirmed",
             DocHeader.doc_type.in_(list(doc_types)),
+            # 反做单不算营业额/采购额：原单已被 status='reversed' 排除，
+            # 反做单自己必须靠 reverses_doc_id 排除，否则「撤销后今日采购仍是 7000」
+            DocHeader.reverses_doc_id.is_(None),
         )
         if biz_date is not None:
             statement = statement.where(DocHeader.biz_date == biz_date)

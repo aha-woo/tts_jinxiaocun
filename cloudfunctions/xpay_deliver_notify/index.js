@@ -34,25 +34,25 @@ const cloud = require('wx-server-sdk');
 
 cloud.init({ env: cloud.DYNAMIC_CURRENT_ENV });
 
-/** 业务码：与 packages/shared/contracts/error-codes.json 的 numeric 对齐。 */
+/** 业务码：与 packages/shared/contracts/error-codes.json 的 numeric **一一对齐**。 */
 const CODES = {
   OK: 0,
   PAY_SIGN_INVALID: 1401,
   DELIVER_DUPLICATE: 1402,
   VALIDATION: 1502,
   INTERNAL: 1503,
-  /** 本地扩展码：服务端权益发放未接通（缺 URL / 令牌），**必须让运维看见** */
-  NOT_WIRED: 1501,
 };
+// 注意：不要自造 `1501`。契约里 1501 = `E_DUPLICATE_REQUEST`（http 409），
+// 若拿它表示「发货未接通」，同一个数字就有了两个含义，排查时必然误导。
+// 「云函数没配好」属于运维配置错误 → 用现成的 `E_INTERNAL`(1503)，别新增错误码（总数必须仍是 25）。
 
-/** 字符串错误码：与 contracts/error-codes.json 一致。 */
+/** 字符串错误码：与 contracts/error-codes.json 一致（**全部已登记**）。 */
 const ERROR_CODES = {
   PAY_SIGN_INVALID: 'E_PAY_SIGN_INVALID',
   DELIVER_DUPLICATE: 'E_DELIVER_DUPLICATE',
   VALIDATION: 'E_VALIDATION',
   INTERNAL: 'E_INTERNAL',
-  NOT_WIRED: 'E_DELIVER_NOT_WIRED',
-  CALLBACK_FAILED: 'E_DELIVER_CALLBACK_FAILED',
+  CALLBACK_FAILED: 'E_INTERNAL',
 };
 
 /** 默认发货回调超时（毫秒）：**必须设**，否则云函数会被挂到平台超时 */
@@ -112,7 +112,7 @@ async function callServerDeliver(event, outTradeNo, tenantId) {
       '[deliver] 未配置 DELIVER_CALLBACK_URL / SERVICE_TOKEN，发货未接通',
       { outTradeNo }
     );
-    return { settled: false, code: CODES.NOT_WIRED, errorCode: ERROR_CODES.NOT_WIRED };
+    return { settled: false, code: CODES.INTERNAL, errorCode: ERROR_CODES.INTERNAL };
   }
 
   if (typeof fetch !== 'function') {
@@ -121,7 +121,7 @@ async function callServerDeliver(event, outTradeNo, tenantId) {
       '[deliver] 当前运行时没有全局 fetch（需 Node 18+ 或显式引入 node-fetch），发货未接通',
       { outTradeNo }
     );
-    return { settled: false, code: CODES.NOT_WIRED, errorCode: ERROR_CODES.NOT_WIRED };
+    return { settled: false, code: CODES.INTERNAL, errorCode: ERROR_CODES.INTERNAL };
   }
 
   const controller = new AbortController();

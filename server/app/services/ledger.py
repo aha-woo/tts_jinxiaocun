@@ -45,7 +45,7 @@ from app.domain.entity_writer import (
     EntityWriter,
     UnsupportedSideEffect,
 )
-from app.domain.intent_registry import IntentRegistry, default_registry
+from app.domain.intent_registry import IntentRegistry, default_registry, is_pure_entity_intent
 from app.domain.inventory_service import (
     InventoryDelta,
     InventoryService,
@@ -576,14 +576,27 @@ class LedgerService:
         #
         # 卡片自己在 actions 里写着「存在待确认槽位，不得静默落账」，那就必须在
         # 写库前拦住。两类「待确认」都要看：
-        # - 槽位级：``source[code] == "pending"``（没听清，值可能为空或猜的）；
+        # - 槽位级：``source[code] == "pending"`` **且该槽位是必填**
+        #   （可选槽位留白是设计如此：``S`` 没说供应商时永远 pending，
+        #   若一并拦下，``purchase.create`` 的卡片一出生就不可确认 —— 主链路被守卫锁死，
+        #   用户还得手打供应商才能记账。用「先确认黄色项」引导，不阻塞确认）；
         # - 行级：``line["pending"] is True``（例如缺单位换算系数，数量口径不明）。
-        # 典型后果：缺「1 箱 = 24 瓶」时 ``qty_base`` 退化成原数量，
-        # **5 箱会记成 5 瓶**——数字自洽、账面全错，用户还看不到提示。
-        pending_codes = sorted(code for code, src in payload.source.items() if src == "pending")
-        pending_lines = [
-            index for index, line in enumerate(payload.lines, start=1) if line.get("pending")
-        ]
+        #   典型后果：缺「1 箱 = 24 瓶」时 ``qty_base`` 退化成原数量，
+        #   **5 箱会记成 5 瓶**——数字自洽、账面全错，用户还看不到提示。
+        required_codes = set(spec.required_slots)
+        pending_codes = sorted(
+            code
+            for code, src in payload.source.items()
+            if src == "pending" and code in required_codes
+        )
+        # 纯实体意图（product.create 等）的明细行只是「这次会创建什么」的占位，
+        # 商品本来就还不存在 → 一行都不参与行级 pending（否则唯一入口被堵死）
+        entity_only = is_pure_entity_intent(spec)
+        pending_lines = (
+            []
+            if entity_only
+            else [index for index, line in enumerate(payload.lines, start=1) if line.get("pending")]
+        )
         if pending_codes or pending_lines:
             raise AppError(
                 "E_VALIDATION",
@@ -613,7 +626,9 @@ class LedgerService:
             .where(
                 ConfirmCard.tenant_id == tenant_id,
                 ConfirmCard.card_id == card.card_id,
-                ConfirmCard.status.in_(["active", "expired"]),
+                # 只允许 active：把 expired 也算可确认，就等着有人调换守卫顺序后
+                # 出现「超时 30s 仍能落账」的口子（TTL 守卫在前，今天是死条件）
+                ConfirmCard.status == "active",
             )
             .values(status="confirmed")
         )
@@ -1198,10 +1213,16 @@ class LedgerService:
             by_no = doc_service.get_by_no(tenant_id=tenant_id, doc_no=text_value)
             if by_no is not None:
                 return by_no
-        # 「上一单」/ 空：取最近一张**还没被撤销**的单（撤销过的再撤一次没有意义）
+        # 「上一单」/ 空：取最近一张**正常且还没被撤销**的单。
+        # 跳过反做单：撤过一次之后，那张 `-R` 单就是最近一张 confirmed，
+        # 用户随口再说一句「撤销上一单」就会撤到反做单上（再减一次，必错账）。
         statement = (
             select(DocHeader)
-            .where(DocHeader.tenant_id == tenant_id, DocHeader.status == "confirmed")
+            .where(
+                DocHeader.tenant_id == tenant_id,
+                DocHeader.status == "confirmed",
+                DocHeader.reverses_doc_id.is_(None),
+            )
             .order_by(DocHeader.created_at.desc())
             .limit(1)
         )

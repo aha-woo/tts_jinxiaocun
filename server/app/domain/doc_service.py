@@ -178,6 +178,7 @@ class DocService:
             total_amount_fen=draft.total_amount_fen,
             status="confirmed",
             created_by=draft.created_by,
+            reverses_doc_id=draft.reversal_of,
         )
         self._session.add(header)
         self._session.flush()

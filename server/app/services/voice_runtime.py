@@ -27,7 +27,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.config import Settings
-from app.domain.intent_registry import IntentRegistry, default_registry
+from app.domain.intent_registry import IntentRegistry, default_registry, is_pure_entity_intent
 from app.models.catalog import Product, ProductAlias, UnitConversion
 from app.models.partner import Partner, PartnerAlias
 from app.voice.alias_resolver import AliasResolver, ProductEntry
@@ -318,6 +318,9 @@ def lines_of_result(
     """
     payment_status = str(result.slots.get("PS") or "已结")
     lines: list[LedgerLine] = []
+    # 纯实体意图（只写档案、不写单据/库存/应收）：明细行不参与「数量口径是否可信」的
+    # 判定。否则 product.create 的卡片一出生就带一条 pending 行，确认必失败（P0-2）。
+    entity_only = is_pure_entity_intent(runtime.registry.get(result.intent))
 
     # **单商品意图也会带 1 个 item**（``_parse_items`` 造的是只有文本、没有数量/金额的壳），
     # 所以「items 非空」不等于「多商品」。只按 items 分支走会让「进了两箱可乐，一件三十五」
@@ -356,8 +359,12 @@ def lines_of_result(
                         else f"{quantity}{unit}×{unit_price_fen}分={amount_fen}分"
                     ),
                     # 缺换算系数也算「待确认」：qty_base 此时按 1:1 记，
-                    # 而 1 箱 ≠ 1 瓶——不标 pending 就会把 5 箱记成 5 瓶
-                    pending=product is None or quantity is None or not ratio_resolved,
+                    # 而 1 箱 ≠ 1 瓶——不标 pending 就会把 5 箱记成 5 瓶。
+                    # 纯实体意图（product.create 等）例外：商品本来就还不存在、
+                    # 数量也没有，一并标 pending 会把唯一入口堵死，所以整行不参与判定。
+                    pending=False
+                    if entity_only
+                    else (product is None or quantity is None or not ratio_resolved),
                 )
             )
         if lines:
@@ -384,10 +391,15 @@ def lines_of_result(
             partner_id=partner_id,
             payment_status=payment_status,
             calc_trace=result.calc_traces[0] if result.calc_traces else None,
-            pending=product_slot is None
-            or result.source.get("P") == "pending"
-            or product is None
-            or not ratio_resolved,
+            # 同上：纯实体意图（product.create）的商品还不存在，不能据此标 pending
+            pending=False
+            if entity_only
+            else (
+                product_slot is None
+                or result.source.get("P") == "pending"
+                or product is None
+                or not ratio_resolved
+            ),
         )
     ]
 

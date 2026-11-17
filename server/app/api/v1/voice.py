@@ -136,7 +136,29 @@ def create_session(
 
     quota = QuotaService.from_settings(settings)
     decision = quota.take(str(ids.tenant_id))
-    if decision.exhausted:
+    # 判 `allowed`，**不判 `exhausted`**：`exhausted` 只认「日额度用尽」
+    # （``reason == 'quota_exceeded'``），而分钟桶限流是 ``reason='rate_limited'``
+    # → 用 exhausted 会把分钟限流整个吞掉（实测 35 次连打 35 次放行）。
+    if not decision.allowed:
+        if decision.reason == "rate_limited":
+            # 说得太快：**不降级**（不是额度问题），只让用户缓一下，且不扣次
+            return JSONResponse(
+                status_code=200,
+                content=ok(
+                    {
+                        "session_id": None,
+                        "state": STATE_REJECTED,
+                        "error_code": decision.error_code or "E_QUOTA_EXCEEDED",
+                        "reason": "rate_limited",
+                        "limit_per_minute": decision.limit,
+                        "message_zh": (
+                            f"一分钟最多 {decision.limit} 次，缓一下再按；"
+                            "这次没有扣额度"
+                        ),
+                        "manual_entry_required": True,
+                    }
+                ),
+            )
         # 额度用尽：**降级不断服**，仍然给会话（手打也能记）。
         # 走 `usage_ratio=1.0` 而不是自造参数：额度用尽在 DegradePolicy 里对应 L3
         # （语音解析暂停、手动录单保留），这样「为什么降级」与策略文件是同一套口径。
