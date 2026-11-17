@@ -147,8 +147,20 @@ class Database:
         传入 ``context`` 时会**同时**把它绑定到 contextvar（离开时复位）：
         这样 ``TenantRepository`` 与 ORM 全局 scope 在同一个会话里看到的一定是同一个租户，
         避免「GUC 是 A、contextvar 是 B（或干脆缺失）」这种最难查的错位。
+
+        幂等绑定（``bound == context`` 时不再二次 bind）
+        ------------------------------------------------
+        ``get_tenant_session`` 是**同步生成器依赖**，Starlette 会把它交给
+        ``contextmanager_in_threadpool`` 执行：``__enter__`` 与 ``__exit__``
+        各自跑在不同线程、且各自持有**当前 context 的副本**。于是
+        「进线程时 ``bind()`` 拿 token」+「出线程时 ``reset(token)``」必然跨 context，
+        token 在另一个副本里无效 —— 这正是 ``context_reset_cross_context_total``
+        每请求 +1 的来源（不是数据错位，但会让这个「不变式计数器」失去意义）。
+
+        请求链路里 ``require_auth`` 已经在本请求 task 里绑定过**同一个**上下文，
+        此时再 bind 一次纯属重复，故：上下文已存在且相同 → 只设 GUC、不 bind。
         """
-        from app.tenant.context import bind, reset  # 局部导入：避免循环依赖
+        from app.tenant.context import bind, get as get_context, reset  # 局部导入：避免循环依赖
 
         session = self.session_factory()
         token = None
@@ -157,7 +169,9 @@ class Database:
                 session.info[BYPASS_SCOPE_KEY] = True
             elif context is not None:
                 rls.set_tenant_guc(session, context.tenant_id)
-                token = bind(context)
+                already = get_context()
+                if already is None or already != context:
+                    token = bind(context)
             yield session
             session.commit()
         except Exception:

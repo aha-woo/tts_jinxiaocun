@@ -138,7 +138,8 @@ async def require_auth(
     try:
         yield context
     finally:
-        reset(context_token)
+        # 带上 X-Request-Id：万一真的发生了跨 context 复位，告警日志才能定位到请求
+        reset(context_token, request_id=request.headers.get("x-request-id", ""))
 
 
 def get_request_id(

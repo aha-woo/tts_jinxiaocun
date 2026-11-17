@@ -110,6 +110,37 @@ python infra/ci/tenant-guard-scan.py     # 裸 SQL 是否带 tenant_id（当前 
 `infra/ci/lint.yml` / `test.yml` 为 GitHub Actions 定义：ruff、契约 JSON 校验、多租户守卫、
 小程序 tsc、pytest、`/healthz` 冒烟。
 
+### 3.5 小程序模板编译检查（**仅 Windows 本地**）
+
+`tsc --noEmit` 只证明 TS 类型没问题，**证明不了 WXML/WXSS 能编译**。开发者工具自带官方
+编译器，命令行可直接调用，**不需要开 IDE 服务端口**（`cli.bat open` 会报
+`IDE service port disabled`，那条路走不通）：
+
+```text
+<微信开发者工具>/resources/app.asar.unpacked/node_modules/wcc-exec/wcc.exe    # WXML
+<微信开发者工具>/resources/app.asar.unpacked/node_modules/wcc-exec/wcsc.exe   # WXSS
+```
+
+```bash
+# 全量检查：遍历 *.wxml / *.wxss（跳过 node_modules），逐个编译
+python miniprogram/scripts/check-templates.py
+
+# 编译器不在默认位置时（或用环境变量 WCC / WCSC）
+python miniprogram/scripts/check-templates.py --wcc "D:/wechatSDK/resources/app.asar.unpacked/node_modules/wcc-exec/wcc.exe" \
+                                             --wcsc "D:/wechatSDK/resources/app.asar.unpacked/node_modules/wcc-exec/wcsc.exe"
+```
+
+两条必须知道的坑：
+
+1. **`wcc.exe` / `wcsc.exe` 的退出码恒为 0**（实测：故意写坏语法时同样是 `EXIT=0`）。
+   所以脚本的判定口径是「**输出非空即失败**」，不看 returncode；
+2. **GitHub Actions 的 Linux runner 上没有 `wcc.exe` / `wcsc.exe`**（PE 可执行文件，
+   也没有对应的 Linux 版）。找不到编译器时脚本打印 `[skip]` 并 `exit 0`：
+   那**不代表「模板没问题」，只代表「模板层这一关没验」**。
+   **CI 全绿 ≠ 模板层验过**，发版前必须在 Windows 本地跑一次。
+
+当前状态：`WXML 12 + WXSS 13 = 25 个文件，零错误`。
+
 ---
 
 ## 4. T01 边界（做了什么 / 没做什么）

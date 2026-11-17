@@ -2,6 +2,12 @@ name: lint
 
 # 说明：本项目**无网页前端工程**（无 Vite/React/ESLint 前端流水线）。
 # lint 只做三件事：Python 静态检查、契约文件 JSON 校验、多租户守卫扫描。
+#
+# ⚠️ **不在这里的一件**：小程序模板（WXML/WXSS）编译检查
+# 它用的是微信开发者工具自带的 wcc.exe / wcsc.exe —— Windows PE 可执行文件，
+# ubuntu-latest runner 上没有（也没有对应的 Linux 版）。所以它只能在 Windows 本地跑：
+#     python miniprogram/scripts/check-templates.py
+# 见 README §3.5。**CI 全绿不代表模板层验过**，发版前必须本地跑一次。
 
 on:
   push:

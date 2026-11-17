@@ -21,11 +21,10 @@ import logging
 import time
 from collections import OrderedDict
 from dataclasses import dataclass
-from typing import Any, Protocol
+from typing import Any, Mapping, Protocol
 
-from fastapi import Request, Response
 from fastapi.responses import JSONResponse
-from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoint
+from starlette.responses import Response
 
 from app.common.envelope import failure
 from app.config import Settings, get_contracts
@@ -297,80 +296,162 @@ def build_store(settings: Settings) -> HybridStore:
     return HybridStore(primary=primary, fallback=fallback, primary_expected=True)
 
 
-def _cacheable(response: Response) -> bool:
+def _cacheable(status_code: int, headers: Mapping[str, str]) -> bool:
     """只缓存成功/业务失败的 JSON 响应；5xx 与二进制不缓存。"""
-    content_type = response.headers.get("content-type", "")
-    return "application/json" in content_type.lower() and response.status_code < 500
+    content_type = headers.get("content-type", "")
+    return "application/json" in content_type.lower() and status_code < 500
 
 
-class IdempotencyMiddleware(BaseHTTPMiddleware):
-    """读取 ``Idempotency-Key`` 并实现「首次执行 + 重复复用」。"""
+class IdempotencyMiddleware:
+    """读取 ``Idempotency-Key`` 并实现「首次执行 + 重复复用」——**纯 ASGI 中间件**。
 
-    def __init__(self, app: Any, store: HybridStore) -> None:  # noqa: ANN401 - Starlette 约定
-        super().__init__(app)
+    为什么是纯 ASGI（不是 ``BaseHTTPMiddleware``）
+    --------------------------------------------
+    ``BaseHTTPMiddleware`` 把下游放进另一个 task 跑，导致租户上下文
+    ``bind()`` / ``reset()`` 落在不同 context —— 这会让租户上下文错位，
+    而错位的后果是**跨租户串数据**。纯 ASGI 形态下中间件与下游同一个 task，
+    从根上消除这个错位。
+
+    实现要点
+    --------
+    1. **``send`` 侧拦截**：看到 ``http.response.start`` 时抓 status 与响应头，
+       据此当场判定「能不能缓存」（JSON 且 < 500）——不需要先把响应缓冲起来；
+    2. 可缓存时**边转发边抄一份 body**，``more_body=False`` 时落库，
+       用户感知的延迟不受影响；
+    3. **异常路径**：下游抛异常时 ``release`` 掉占位、**不写入任何「成功」结果**，
+       否则一次崩溃会被当成「首次执行的正确结果」重放出去；
+    4. 租户命名空间：幂等键必须按租户隔离，否则 A 商户的
+       ``export:stock:csv`` 会把 B 商户的导出结果直接重放回去。
+       租户从 JWT claims 解出（**不查库**）；无 token / token 非法时不拒绝请求
+       （那是鉴权层的事），退回 ``anon`` 命名空间。
+    """
+
+    def __init__(
+        self,
+        app: Any,  # noqa: ANN401 - Starlette 约定
+        store: IdempotencyStore,
+        *,
+        settings: Settings | None = None,
+    ) -> None:
+        self.app = app
         self._store = store
+        self._settings = settings
 
-    async def dispatch(self, request: Request, call_next: RequestResponseEndpoint) -> Response:
-        if request.method not in IDEMPOTENT_METHODS:
-            return await call_next(request)
+    async def __call__(self, scope: Any, receive: Any, send: Any) -> None:  # noqa: ANN401
+        if scope["type"] != "http" or scope.get("method") not in IDEMPOTENT_METHODS:
+            await self.app(scope, receive, send)
+            return
 
-        raw_key = request.headers.get("Idempotency-Key") or request.headers.get("idempotency-key")
+        raw_key = _header_of(scope, b"idempotency-key")
         if raw_key is None or raw_key.strip() == "":
-            return await call_next(request)
+            await self.app(scope, receive, send)
+            return
 
-        # 租户维度命名空间：T02 会在鉴权中间件里写入 request.state.tenant_id
-        tenant = getattr(request.state, "tenant_id", "anon")
-        key = f"{tenant}:{raw_key.strip()}"
+        key = f"{_tenant_namespace(scope, self._settings)}:{raw_key.strip()}"
 
         state = await self._store.begin(key)
         if state == STATE_IN_PROGRESS:
             spec = get_contracts().error_codes["E_DUPLICATE_REQUEST"]
-            return JSONResponse(status_code=spec.http_status, content=failure(spec))
+            await JSONResponse(status_code=spec.http_status, content=failure(spec))(scope, receive, send)
+            return
         if state == STATE_COMPLETED:
             cached = await self._store.get(key)
             if cached is not None:
                 headers = dict(cached.headers)
                 headers["X-Idempotent-Replay"] = "1"
-                return Response(
+                await Response(
                     content=cached.body,
                     status_code=cached.status_code,
                     media_type=cached.media_type,
                     headers=headers,
-                )
+                )(scope, receive, send)
+                return
 
-        response = await call_next(request)
-
-        if not _cacheable(response):
+        captured = _ResponseCapture()
+        try:
+            await self.app(scope, receive, captured.send_through(send))
+        except Exception:
+            # 下游炸了：释放占位，绝不把半成品当成「首次执行结果」缓存
             await self._store.release(key)
-            return response
+            raise
 
-        body = await self._read_body(response)
-        snapshot = CachedResponse(
-            status_code=response.status_code,
-            body=body,
-            media_type=response.headers.get("content-type", "application/json"),
+        snapshot = captured.snapshot()
+        if snapshot is None:
+            # 没抓到完整响应（不该发生）或不可缓存：释放占位，让下次能重试
+            await self._store.release(key)
+            return
+        await self._store.complete(key, snapshot)
+
+
+class _ResponseCapture:
+    """转发的同时抄一份响应（只在可缓存时抄 body）。"""
+
+    def __init__(self) -> None:
+        self._status_code: int | None = None
+        self._headers: dict[str, str] = {}
+        self._body: list[bytes] = []
+        self._cacheable = False
+        self._completed = False
+
+    def send_through(self, send: Any) -> Any:  # noqa: ANN401
+        """返回一个「先转发再抄写」的 send。"""
+
+        async def _send(message: Mapping[str, Any]) -> None:
+            kind = message.get("type")
+            if kind == "http.response.start":
+                self._status_code = int(message.get("status", 200))
+                self._headers = {
+                    name.decode("latin-1"): value.decode("latin-1")
+                    for name, value in message.get("headers", [])
+                }
+                self._cacheable = _cacheable(self._status_code, self._headers)
+            elif kind == "http.response.body" and self._cacheable:
+                body = message.get("body", b"")
+                if body:
+                    self._body.append(body if isinstance(body, bytes) else str(body).encode("utf-8"))
+                if not message.get("more_body", False):
+                    self._completed = True
+            await send(message)
+
+        return _send
+
+    def snapshot(self) -> CachedResponse | None:
+        """可缓存且已收尾时给出快照，否则 ``None``。"""
+        if not self._cacheable or not self._completed or self._status_code is None:
+            return None
+        return CachedResponse(
+            status_code=self._status_code,
+            body=b"".join(self._body),
+            media_type=self._headers.get("content-type", "application/json"),
             headers={
-                key_name: value
-                for key_name, value in response.headers.items()
-                if key_name.lower() not in {"content-length", "transfer-encoding"}
+                name: value
+                for name, value in self._headers.items()
+                if name.lower() not in {"content-length", "transfer-encoding"}
             },
         )
-        await self._store.complete(key, snapshot)
-        return Response(
-            content=snapshot.body,
-            status_code=snapshot.status_code,
-            media_type=snapshot.media_type,
-            headers=snapshot.headers,
-        )
 
-    @staticmethod
-    async def _read_body(response: Response) -> bytes:
-        """把（流式）响应体完整读出来再回写，便于缓存。"""
-        body_iterator = getattr(response, "body_iterator", None)
-        if body_iterator is None:
-            body = getattr(response, "body", b"")
-            return body if isinstance(body, bytes) else str(body).encode("utf-8")
-        chunks: list[bytes] = []
-        async for chunk in body_iterator:
-            chunks.append(chunk if isinstance(chunk, bytes) else str(chunk).encode("utf-8"))
-        return b"".join(chunks)
+
+def _header_of(scope: Mapping[str, Any], name: bytes) -> str | None:
+    """从 ASGI scope 里取一个请求头的文本值。"""
+    for raw_name, raw_value in scope.get("headers", []):
+        if raw_name.lower() == name:
+            return raw_value.decode("latin-1")
+    return None
+
+
+def _tenant_namespace(scope: Mapping[str, Any], settings: Settings | None) -> str:
+    """幂等键的租户命名空间（**不解库**，只解 JWT claims）。
+
+    拿不到就退回 ``anon``：登录接口本身还没有租户，而它的 key 是
+    ``login:{code}``，code 一次性、天然唯一，不会撞。
+    """
+    authorization = _header_of(scope, b"authorization")
+    if not authorization or not authorization.startswith("Bearer ") or settings is None:
+        return "anon"
+    try:
+        from app.services.auth import decode_token  # 局部导入：避免模块级循环依赖
+
+        claims = decode_token(settings, authorization[len("Bearer ") :].strip())
+        return str(claims.get("tenant_id") or "anon")
+    except Exception:  # noqa: BLE001 - 鉴权失败由 require_auth 负责报错，这里只降级
+        return "anon"

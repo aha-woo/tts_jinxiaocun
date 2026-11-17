@@ -16,11 +16,10 @@ from __future__ import annotations
 
 import logging
 from contextlib import asynccontextmanager
-from typing import AsyncIterator, Callable
+from typing import Any, AsyncIterator, Callable
 
-from fastapi import FastAPI, Request, Response
+from fastapi import FastAPI
 from fastapi.responses import JSONResponse
-from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoint
 
 from app.api.v1 import (
     account,
@@ -51,36 +50,118 @@ logger = logging.getLogger(__name__)
 MAX_BODY_BYTES = 100 * 1024
 
 
-class RequestSizeGuardMiddleware(BaseHTTPMiddleware):
-    """请求体大小守卫（100K 断言）。
+class _BodyTooLarge(Exception):
+    """内部信号：请求体在流式读取过程中超过上限。
 
-    音频本体绝不进私有链路：端侧直传对象存储，仅传 ``audio_object_ref``。
+    只在 :class:`RequestSizeGuardMiddleware` 内部使用，**不对外暴露**——
+    它从 ``receive()`` 里抛出，穿过下游业务代码，被中间件自己接住并转成 413。
+    """
+
+    def __init__(self, total_bytes: int) -> None:
+        super().__init__(f"请求体已累计 {total_bytes} 字节，超过上限")
+        self.total_bytes = total_bytes
+
+
+class RequestSizeGuardMiddleware:
+    """请求体大小守卫（100K 断言）——**纯 ASGI 中间件**。
+
+    为什么是纯 ASGI（不是 ``BaseHTTPMiddleware``）
+    --------------------------------------------
+    ``BaseHTTPMiddleware`` 会把下游应用放进**另一个 task** 跑，于是
+    ``bind()``（在下游 task）与 ``reset()``（在中间件 task）落在不同 context 里，
+    租户上下文可能错位——而错位的后果是多租户串数据，不是报错。
+    纯 ASGI 形态下 ``__call__`` 与下游在**同一个 task**，从根上不产生这个问题。
+
+    行为约束
+    --------
+    - **不一次性缓冲整个 body**：包装 ``receive``，边读边累计字节数；
+    - 一旦超限**立即抛 :class:`_BodyTooLarge` 中断下游**，由本中间件回 413，
+      不再继续读剩下的字节（省带宽也省内存）；
+    - ``content-length`` 头已声明超限时直接拒绝，连下游都不进；
+    - 非 ``http`` scope（``lifespan`` / ``websocket``）原样透传。
+
+    音频本体绝不进本链路：端侧直传对象存储，仅传 ``audio_object_ref``。
     """
 
     def __init__(self, app: Callable, max_bytes: int = MAX_BODY_BYTES) -> None:  # noqa: ANN401
-        super().__init__(app)
+        self.app = app
         self._max_bytes = max_bytes
 
-    async def dispatch(self, request: Request, call_next: RequestResponseEndpoint) -> Response:
-        content_length = request.headers.get("content-length")
-        if content_length is not None:
-            try:
-                declared = int(content_length)
-            except ValueError:
-                declared = 0
-            if declared > self._max_bytes:
-                spec = get_contracts().error_codes["E_AUDIO_TOO_LARGE"]
-                return JSONResponse(
-                    status_code=spec.http_status,
-                    content=failure(
-                        spec,
-                        message=(
-                            f"请求体 {declared} 字节超过 {self._max_bytes} 字节上限；"
-                            "音频请直传对象存储，仅传 audio_object_ref"
-                        ),
-                    ),
+    async def __call__(self, scope: Any, receive: Any, send: Any) -> None:  # noqa: ANN401
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+
+        declared = _declared_length(scope)
+        if declared is not None and declared > self._max_bytes:
+            await self._reject(scope, receive, send, total_bytes=declared)
+            return
+
+        total = 0
+
+        async def limited_receive() -> Any:  # noqa: ANN401
+            """边读边累计；超限立刻中断（不再把剩余字节喂给下游）。"""
+            nonlocal total
+            message = await receive()
+            if message["type"] == "http.request":
+                total += len(message.get("body", b""))
+                if total > self._max_bytes:
+                    raise _BodyTooLarge(total)
+            return message
+
+        response_started = False
+
+        async def tracking_send(message: Any) -> None:  # noqa: ANN401
+            nonlocal response_started
+            if message["type"] == "http.response.start":
+                response_started = True
+            await send(message)
+
+        try:
+            await self.app(scope, limited_receive, tracking_send)
+        except _BodyTooLarge as exc:
+            if response_started:
+                # 已经回了一部分响应（流式场景）：改不了状态码，如实记录
+                logger.warning(
+                    "请求体超限但响应已开始发送，无法改回 413（已读 %d 字节，上限 %d）",
+                    exc.total_bytes,
+                    self._max_bytes,
                 )
-        return await call_next(request)
+                raise
+            await self._reject(scope, receive, send, total_bytes=exc.total_bytes)
+
+    async def _reject(
+        self,
+        scope: Any,  # noqa: ANN401
+        receive: Any,  # noqa: ANN401
+        send: Any,  # noqa: ANN401
+        *,
+        total_bytes: int,
+    ) -> None:
+        """回 413 + ``E_AUDIO_TOO_LARGE``（直接作为 ASGI 应用发送，不经下游）。"""
+        spec = get_contracts().error_codes["E_AUDIO_TOO_LARGE"]
+        response = JSONResponse(
+            status_code=spec.http_status,
+            content=failure(
+                spec,
+                message=(
+                    f"请求体 {total_bytes} 字节超过 {self._max_bytes} 字节上限；"
+                    "音频请直传对象存储，仅传 audio_object_ref"
+                ),
+            ),
+        )
+        await response(scope, receive, send)
+
+
+def _declared_length(scope: Any) -> int | None:  # noqa: ANN401
+    """从 ASGI scope 里读 ``content-length``（没有 / 非法都返回 ``None``）。"""
+    for raw_name, raw_value in scope.get("headers", []):
+        if raw_name.lower() == b"content-length":
+            try:
+                return int(raw_value)
+            except (TypeError, ValueError):
+                return None
+    return None
 
 
 def _configure_logging(settings: Settings) -> None:
@@ -164,8 +245,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     register_exception_handlers(app)
     app.add_middleware(RequestSizeGuardMiddleware, max_bytes=resolved.max_request_body_bytes)
-    # 注意：后注册的中间件先执行；幂等中间件包在外层，先占位再交给内层处理
-    app.add_middleware(IdempotencyMiddleware, store=app.state.idempotency_store)
+    # 注意：后注册的中间件先执行；幂等中间件包在外层，先占位再交给内层处理。
+    # 必须传 settings：幂等键的租户命名空间要从 JWT claims 解（否则全部落进 ``anon``，
+    # A 商户的 export 结果会被重放给 B 商户）。
+    app.add_middleware(
+        IdempotencyMiddleware, store=app.state.idempotency_store, settings=resolved
+    )
 
     app.include_router(health.router)
     app.include_router(health.router, prefix="/api/v1")

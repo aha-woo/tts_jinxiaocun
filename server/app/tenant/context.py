@@ -7,16 +7,22 @@
 - 异步并发安全：contextvar 按 task 隔离，`asyncio.gather` 下两个租户互不串味；
 - 异步队列 / 定时任务 / 导出 Job 必须显式 ``with use_context(ctx):``，不允许裸跑。
 
-本模块刻意只依赖标准库，避免与 ORM 形成循环导入。
+本模块刻意只依赖标准库与 :mod:`app.tenant.metrics`（同样只用标准库），
+避免与 ORM / 配置形成循环导入。
 """
 
 from __future__ import annotations
 
+import logging
 import uuid
 from contextlib import contextmanager
 from contextvars import ContextVar, Token
 from dataclasses import dataclass
 from typing import Iterator
+
+from app.tenant.metrics import record_cross_context_reset
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -58,27 +64,40 @@ def bind(context: TenantContext) -> Token[TenantContext | None]:
     return _current.set(context)
 
 
-def reset(token: Token[TenantContext | None]) -> None:
+def reset(token: Token[TenantContext | None], *, request_id: str = "") -> None:
     """按 token 复位（务必放在 finally 里）。
 
-    为什么这里要吞 ``ValueError``
-    ----------------------------
-    Starlette 的 ``BaseHTTPMiddleware`` 会把下游应用放进**另一个 task** 跑，
-    于是出现这种组合：``bind()`` 在下游 task 里执行，而依赖的 ``finally``
-    （收尾）跑在中间件的 task 里。此时 ``_current.reset(token)`` 会抛
-    ``ValueError: Token was created in a different Context``。
+    跨 context 复位的兜底：**可见的防御，不是静默吞掉**
+    -----------------------------------------------
+    ``bind()`` 与 ``reset()`` **必须**在同一个 task/context 里成对出现。
+    T05 收尾时把两处 ``BaseHTTPMiddleware`` 换成了纯 ASGI 中间件，消除了
+    「下游被放进另一个 task 跑」这一类错位来源。
 
-    这个异常**没有任何实际危害**：token 属于的那个 context 已经结束，
-    当前 context 从头到尾就没绑定过这个值，跳过复位不会让任何租户上下文泄漏到
-    下一个请求。真正危险的是「吞掉之后以为自己复位了」——所以只在
-    *确实是跨 context* 这一种情况下跳过，其余异常照抛。
+    ``ValueError`` 的兜底保留作**防御纵深**（理论上不再触发）：
+    - 触发时不抛异常——否则一个请求直接 500，而它其实没有数据风险；
+    - 但**必须留下痕迹**：``logger.warning`` 打 ``request_id`` + 计数器
+      ``context_reset_cross_context_total`` 自增。
+    - **不许静默 return**：在多租户系统里，「跳过租户上下文复位」是一条一旦破掉
+      就会跨租户串数据的不变式，不允许存在「读懂注释才能确认安全」的实现。
+
+    **计数器 > 0 时怎么读**：说明 bind/reset 被拆进了两个 context 副本。已知两种成因
+    （见 :mod:`app.tenant.metrics`）：① 同步 ``yield`` 依赖 + 线程池
+    （``contextmanager_in_threadpool`` 的 enter/exit 分处两个副本——本仓库实测就撞在
+    这里：``Database.session(context=...)`` 的二次绑定，已改为幂等绑定）；
+    ② 中间件又变回跨 task 形态。无论哪一种，都应立刻停下排查，而不是调高阈值。
     """
     try:
         _current.reset(token)
     except ValueError:
-        # 跨 context 复位：token 所属的 context 已销毁，当前 context 无需清理。
-        # 不做 ``_current.set(None)``——那反而可能抹掉当前 context 里别的值。
-        return
+        total = record_cross_context_reset()
+        logger.warning(
+            "租户上下文跨 context 复位被跳过（request_id=%s，"
+            "context_reset_cross_context_total=%d）：bind/reset 不在同一个 task/context "
+            "（同步 yield 依赖被线程池拆成两段，或中间件把下游放进了另一个 task），"
+            "请立刻排查并回滚那段改动",
+            request_id or "-",
+            total,
+        )
 
 
 def clear() -> None:
