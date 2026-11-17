@@ -354,3 +354,22 @@ docker run --rm -p 8000:80 voice-inventory-lite:local
   - PG 上的只读预演（`SET TRANSACTION READ ONLY`）与真并发 CAS 冲突（需 `PG_TEST_URL`）。
 - 运维：把 PG 的**应用账号**建成非 `BYPASSRLS`、非表 owner（`FORCE` 之外的第二重保证），
   并用 `tests/test_rls_cross_tenant.py` 在真库上复核一次
+
+
+## 测试约定：写操作必须断言**业务终态**
+
+不要写 `assert count(DocHeader) == 1` 这种「有没有写单据」的断言——它挡不住
+「确认成功但档案里没这个商品」「说撤销了其实多写一张正向单」这类**语义反转的记错账**。
+
+要写：
+
+```python
+assert session.scalar(select(Product).where(Product.name == "可乐")) is not None
+assert inventory.qty_base == Decimal("240")
+assert original_doc.status == "reversed"          # 撤销后原单仍在、状态是 reversed
+assert _count(database, UsageQuota) == 1          # 发货后额度行真的多了一条
+```
+
+参考实现：`tests/test_write_end_state.py`（15 条）、`tests/test_deliver_callback_http.py`（4 条）。
+后者还额外要求：**发货、回调这类端点必须走 TestClient 打真实 HTTP 路径**，
+不要只测 service（上一轮的 403 就是「只测 service 绕过装配」漏掉的）。

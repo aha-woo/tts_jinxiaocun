@@ -88,6 +88,9 @@ class Settings:
     wx_provider: str = os.getenv("WX_PROVIDER", "fake")
     wx_appid: str = os.getenv("WX_APPID", "")
     wx_app_secret: str = os.getenv("WX_APP_SECRET", "")
+    #: 服务间令牌（云函数 → 云托管内网调用发货推送）。**未配置即拒**：
+    #: 发货回调是「付了钱发额度」的入口，不能靠「没配就放行」。
+    service_token: str = os.getenv("SERVICE_TOKEN", "")
     wx_api_base_url: str = os.getenv("WX_API_BASE_URL", "https://api.weixin.qq.com")
     wx_timeout_seconds: float = float(os.getenv("WX_TIMEOUT_SECONDS", "5"))
 

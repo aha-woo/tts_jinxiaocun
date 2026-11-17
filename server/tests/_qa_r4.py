@@ -64,7 +64,7 @@ def seed(app: FastAPI, tenant_id: str, store_id: str) -> str:
     with app.state.database.session(bypass_scope=True) as s:
         s.add(Product(tenant_id=uuid.UUID(tenant_id), product_id=pid, name="可乐", spec="500ml", base_unit="瓶", last_purchase_price_fen=3500, last_sale_price_fen=yuan_to_fen("3")))
         s.add(Inventory(tenant_id=uuid.UUID(tenant_id), store_id=uuid.UUID(store_id), product_id=pid, qty_base=192, version=0))
-        s.add(UnitConversion(tenant_id=uuid.UUID(tenant_id), from_unit="箱", to_unit="瓶", ratio=24, status="approved"))
+        s.add(UnitConversion(tenant_id=uuid.UUID(tenant_id), product_id=pid, from_unit="箱", to_unit="瓶", ratio=24, status="approved"))
     return str(pid)
 
 

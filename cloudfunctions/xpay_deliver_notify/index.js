@@ -128,24 +128,56 @@ exports.main = async (event) => {
       };
     }
 
-    // TODO(T04): 调用云托管 /entitlement/deliver-callback（内网 + 服务间令牌），
-    // 由服务端完成：加 usage_quota 额度 / 延长 entitlement.valid_until，
-    // 并把 deliver_event.delivered 置 true。**发货不写 usage_ledger**。
+    // 服务端发放：calling 云托管 /entitlement/deliver-callback（内网 + 服务间令牌）。
+    // 服务端负责：加 usage_quota 额度 / 延长 entitlement.valid_until / 置 deliver_event。
+    // **发货不写 usage_ledger**（权益发放与语音扣次是两本账）。
     const callbackUrl = process.env.DELIVER_CALLBACK_URL;
-    if (!callbackUrl) {
-      console.warn('[deliver] 未配置 DELIVER_CALLBACK_URL，仅记录事件', { outTradeNo });
+    const serviceToken = process.env.DELIVER_SERVICE_TOKEN;
+    if (!callbackUrl || !serviceToken) {
+      // 不许把「没接通」伪装成「处理完毕」：delivered:false 会让上游以为已经发过了，
+      // 用户付了钱却永远拿不到额度，而且没有任何告警。
+      console.error('[deliver] 未配置 DELIVER_CALLBACK_URL / DELIVER_SERVICE_TOKEN，发货未接通', {
+        outTradeNo,
+      });
       return {
-        code: 0,
-        data: { out_trade_no: outTradeNo, delivered: false, replay_safe: true },
-        message: '已记录发货事件（权益发放待 T04 接通）',
+        code: 1501,
+        data: {
+          out_trade_no: outTradeNo,
+          delivered: false,
+          error_code: 'E_DELIVER_NOT_WIRED',
+        },
+        message: '服务端权益发放未接通（缺 DELIVER_CALLBACK_URL / DELIVER_SERVICE_TOKEN），本条未发货',
       };
     }
 
-    console.log('[deliver] 待接通服务端发放', { outTradeNo, callbackUrl });
+    const response = await fetch(callbackUrl, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Wx-Channel': 'cloudfunc',
+        'X-Service-Token': serviceToken,
+        'X-Tenant-Id': tenantId,
+      },
+      body: JSON.stringify(event),
+    });
+    const body = await response.json().catch(() => ({}));
+    console.log('[deliver] 服务端发放结果', { outTradeNo, status: response.status, body });
+    if (!response.ok) {
+      // 不吞：把服务端的错误码原样带出去，方便云函数日志定位
+      return {
+        code: 1502,
+        data: {
+          out_trade_no: outTradeNo,
+          delivered: false,
+          error_code: (body && body.data && body.data.error_code) || 'E_DELIVER_CALLBACK_FAILED',
+        },
+        message: '服务端发放失败，详见云托管日志',
+      };
+    }
     return {
       code: 0,
-      data: { out_trade_no: outTradeNo, delivered: false },
-      message: '骨架：待接通服务端权益发放（T04）',
+      data: { out_trade_no: outTradeNo, delivered: true, upstream: body && body.data },
+      message: '已发货',
     };
   } catch (error) {
     console.error('[deliver] 处理异常', error);

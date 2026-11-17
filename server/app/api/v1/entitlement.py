@@ -15,21 +15,27 @@
 
 from __future__ import annotations
 
+import secrets
+import uuid
 from typing import Any, Mapping
 
 from fastapi import APIRouter, Header, Request
+from sqlalchemy import select
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field
 
 from app.api.v1._shared import ids_of, require_roles, WRITE_ROLES
 from app.common.envelope import ok
+from app.common.errors import AppError
 from app.config import Settings
-from app.deps import AuthContextDep, SettingsDep, TenantSessionDep
+from app.deps import AuthContextDep, DatabaseDep, SettingsDep, TenantSessionDep
 from app.pay.deliver_callback import DELIVER_CHANNEL_CLOUD_FUNCTION
 from app.pay.goods_item import GoodsCatalog
 from app.pay.sign import build_verifier
+from app.models.pay import VirtualOrder
 from app.pay.virtual_payment import VirtualPaymentService
 from app.services.entitlement import EntitlementService
+from app.tenant.context import TenantContext, bind, reset
 
 router = APIRouter(prefix="/entitlement", tags=["entitlement"])
 
@@ -67,6 +73,193 @@ def list_goods(context: AuthContextDep) -> JSONResponse:
                 "min_payment_fen": catalog.min_payment_fen(),
                 "auto_renew": False,
                 "note": "一次性道具直购；到期不自动扣费，靠自有推送提醒复购",
+            }
+        ),
+    )
+
+
+@router.get("", summary="当前权益（30 天滚动窗口口径）")
+def get_entitlement(context: AuthContextDep, session: TenantSessionDep) -> JSONResponse:
+    """权益与用量**分两个子对象**返回，禁止拼成一个进度条。"""
+    ids = ids_of(context)
+    service = EntitlementService(session)
+    return JSONResponse(
+        status_code=200,
+        content=ok(
+            {
+                "entitlement": service.current(tenant_id=ids.tenant_id).as_dict(),
+                "usage": service.usage(tenant_id=ids.tenant_id).as_dict(),
+                "caliber_note": (
+                    "entitlement 是 30 天滚动窗口，usage 是自然月 YYYY-MM；"
+                    "两者分别存储、不得互相推导"
+                ),
+            }
+        ),
+    )
+
+
+@router.post("/order", summary="下单（幂等键派生 outTradeNo）")
+def create_order(
+    payload: OrderRequest,
+    context: AuthContextDep,
+    session: TenantSessionDep,
+    settings: SettingsDep,
+    idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
+) -> JSONResponse:
+    """生成订单 + ``wx.requestVirtualPayment`` 参数；**前端 success 不发货**。"""
+    require_roles(context, WRITE_ROLES)
+    ids = ids_of(context)
+    service = VirtualPaymentService(
+        session,
+        env=int(settings.virtual_pay_env),
+    )
+    order = service.create_order(
+        tenant_id=ids.tenant_id,
+        member_id=ids.member_id,
+        goods_id=payload.goods_id,
+        idempotency_key=idempotency_key,
+    )
+    return JSONResponse(
+        status_code=200,
+        content=ok(
+            {
+                "order": order.as_dict(),
+                "deliver_rule": "发货只以发货推送为准；前端 success 不作发货依据",
+            }
+        ),
+    )
+
+
+#: 服务间令牌的请求头名（云函数 → 云托管内网）
+SERVICE_TOKEN_HEADER = "X-Service-Token"
+
+
+def _assert_service_caller(settings: Settings, *, channel: str | None, token: str | None) -> None:
+    """发货回调的鉴权：**服务间令牌 + 通道白名单**，与用户 JWT 完全无关。
+
+    为什么不能复用 ``AuthContextDep``（上一版的 403 根源）
+    ----------------------------------------------------
+    ``AuthContextDep`` 要求「用户 JWT → claims → 租户」，而发货推送是**微信侧的
+    服务调用**，压根没有用户 JWT。上一版这里用了 ``TenantSessionDep`` 却没有
+    鉴权依赖，于是 contextvar 永远没绑 → 每次都 403 ``E_TENANT_DENIED``：
+    付了钱的用户拿不到额度，而测试只测了 ``DeliverService``（直接传 session），
+    绕过了装配——测试与实现同一个盲点。
+
+    现在的边界：**令牌对 + 通道是云函数**才放行；租户从订单反查，不信请求头。
+
+    Raises:
+        AppError: ``E_AUTH_INVALID``(401) —— 令牌缺失/不匹配，或通道不是云函数。
+    """
+    expected = str(getattr(settings, "service_token", "") or "")
+    if not expected:
+        raise AppError(
+            "E_AUTH_INVALID",
+            message="服务间令牌未配置（SERVICE_TOKEN），拒绝发货推送（不能靠「没配就放行」）",
+        )
+    if (channel or "").strip().lower() != DELIVER_CHANNEL_CLOUD_FUNCTION:
+        raise AppError(
+            "E_AUTH_INVALID",
+            message="发货推送只接受云函数通道（X-Wx-Channel: cloudfunc）；云托管消息推送不是发货路径",
+        )
+    if not secrets.compare_digest(str(token or ""), expected):
+        raise AppError("E_AUTH_INVALID", message="服务间令牌不匹配（X-Service-Token）")
+
+
+def _context_of_push(
+    database: Any, *, body: Mapping[str, Any], tenant_hint: str | None
+) -> TenantContext:
+    """从推送体反查租户上下文（``out_trade_no`` → ``virtual_order``）。
+
+    订单表是 ``UNIQUE(tenant_id, out_trade_no)``，所以单号本身不全球唯一：
+    优先用云函数带来的 ``X-Tenant-Id``，再退回「按单号查到的唯一一行」。
+    查不到就是脏推送 → ``E_NOT_FOUND``，不猜租户。
+
+    ``store_id / member_id`` 用 nil UUID：发货链路不碰门店维度的数据
+    （只写 ``usage_quota`` / ``entitlement`` / ``deliver_event``，都是租户级），
+    用真实的门店 id 反而会让人误以为它有门店语义。
+    """
+    out_trade_no = str(body.get("OutTradeNo") or body.get("out_trade_no") or "").strip()
+    if not out_trade_no:
+        raise AppError("E_VALIDATION", message="推送体缺少 OutTradeNo，无法定位订单")
+
+    with database.session(bypass_scope=True) as session:
+        statement = select(VirtualOrder).where(VirtualOrder.out_trade_no == out_trade_no)
+        hint = (tenant_hint or "").strip()
+        if hint:
+            statement = statement.where(VirtualOrder.tenant_id == uuid.UUID(hint))
+        orders = list(session.execute(statement).scalars())
+        tenant_version = 1
+        if len(orders) == 1:
+            tenant_id = orders[0].tenant_id
+        elif hint:
+            tenant_id = uuid.UUID(hint)
+        else:
+            raise AppError(
+                "E_NOT_FOUND",
+                message=f"推送的单号 {out_trade_no} 找不到唯一订单；请由云函数带上 X-Tenant-Id",
+                data={"out_trade_no": out_trade_no},
+            )
+        from app.models.tenant import Tenant
+
+        tenant = session.get(Tenant, tenant_id)
+        if tenant is not None:
+            tenant_version = int(tenant.version)
+
+    return TenantContext(
+        tenant_id=tenant_id,
+        store_id=uuid.UUID(int=0),
+        member_id=uuid.UUID(int=0),
+        role_code="system",
+        tenant_version=tenant_version,
+    )
+
+
+@router.post("/deliver-callback", summary="发货推送（唯一发货路径）")
+async def deliver_callback(
+    request: Request,
+    database: DatabaseDep,
+    settings: SettingsDep,
+    x_wx_channel: str | None = Header(default=None, alias="X-Wx-Channel"),
+    x_service_token: str | None = Header(default=None, alias=SERVICE_TOKEN_HEADER),
+    x_tenant_id: str | None = Header(default=None, alias="X-Tenant-Id"),
+) -> JSONResponse:
+    """``xpay_*`` 推送：**服务间鉴权** → 反查租户 → 幂等 → 发额度（绝不写 ``usage_ledger``）。
+
+    云托管消息推送**不是**发货路径（``X-Wx-Channel: cloudrun`` 会被拒）。
+    """
+    body: Mapping[str, Any] = await request.json()
+    _assert_service_caller(settings, channel=x_wx_channel, token=x_service_token)
+    context = _context_of_push(database, body=body, tenant_hint=x_tenant_id)
+
+    # 显式绑定租户后再开会话：PG 上才能 SET LOCAL app.tenant_id（RLS 生效）
+    token = bind(context)
+    try:
+        with database.session(context=context) as session:
+            service = VirtualPaymentService(
+                session,
+                verifier=_verifier_or_none(settings),
+                settings=settings,
+                env=int(settings.virtual_pay_env),
+            )
+            result = service.handle_deliver_push(
+                body,
+                tenant_id=str(context.tenant_id),
+                channel=DELIVER_CHANNEL_CLOUD_FUNCTION,
+            )
+    finally:
+        reset(token)
+
+    return JSONResponse(
+        status_code=200,
+        content=ok(
+            {
+                "delivered": result.delivered,
+                "reason": result.reason,
+                "error_code": result.error_code,
+                "grant_quota": result.grant_quota,
+                "extend_days": result.extend_days,
+                "out_trade_no": result.out_trade_no,
+                "wrote_usage_ledger": result.wrote_usage_ledger,
             }
         ),
     )
