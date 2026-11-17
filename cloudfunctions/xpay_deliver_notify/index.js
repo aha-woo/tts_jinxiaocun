@@ -5,17 +5,27 @@
  * -------------------------------------
  * - 发货**只以发货推送为准**：小程序端 `wx.requestVirtualPayment` 的 success 不作发货依据；
  * - 幂等键 = `outTradeNo`，落 `deliver_event` 时依赖 `UNIQUE(tenant_id, out_trade_no)`，
- *   重复推送返回 `E_DELIVER_DUPLICATE`，**不重复发额度**；
+ *   重复推送返回 `E_DELIVER_DUPLICATE`(1402)，**不重复发额度**；
  * - 验签失败返回 `E_PAY_SIGN_INVALID`，不落任何权益；
  * - 发货动作 = `usage_quota` 加额度 / 延长 `entitlement.valid_until`，**不写 `usage_ledger`**
  *   （权益发放与语音扣次分离，A10）；
- * - 本文件 T01 仅交付**骨架**：验签、幂等落库、调服务端发放三步都留了明确的 TODO，
- *   真正实现在 T03（`server/app/pay/deliver_callback.py`）+ T04（`entitlement.py`）。
+ * - 真正的发放逻辑在服务端（`server/app/api/v1/entitlement.py` 的
+ *   `POST /entitlement/deliver-callback`）。本函数只做「验签 + 转发 + 如实回报」。
+ *
+ * **不吞异常原则**（P0-3）
+ * ------------------------
+ * 付了钱没拿到额度，且云函数返回「成功」= 最坏的故障形态：用户投诉无门、日志无痕、
+ * 平台也不会重推。因此本函数只在**服务端明确回执已发货**时返回成功码；
+ * 任何其它情况（未配置、令牌错、网络断、服务端 5xx、服务端说「没发货」）都返回
+ * 非 0 业务码 + 错误详情，并打 `OutTradeNo`，让微信重推 / 人工介入。
+ * 「重复推送」是**幂等成功**（1402），直接返回给平台，不算失败、也不必重推。
  *
  * 环境变量（云开发控制台配置，禁止写死在代码里）
+ * --------------------------------------------
  * - `XPAY_APP_KEY`：现网 AppKey（**沙箱 Key 不得用于生产**）
- * - `DELIVER_CALLBACK_URL`：云托管 `/entitlement/deliver-callback` 内网地址
- * - `DELIVER_CALLBACK_TOKEN`：服务端间调用令牌
+ * - `DELIVER_CALLBACK_URL`：云托管 `/api/v1/entitlement/deliver-callback` 内网地址
+ * - `SERVICE_TOKEN`：服务间令牌，**必须与云托管同名环境变量一致**
+ *   （服务端读取同名变量并用 `hmac.compare_digest` 比对）
  */
 
 'use strict';
@@ -24,15 +34,29 @@ const cloud = require('wx-server-sdk');
 
 cloud.init({ env: cloud.DYNAMIC_CURRENT_ENV });
 
-/** 错误码常量：与 packages/shared/contracts/error-codes.json 保持一致。 */
+/** 业务码：与 packages/shared/contracts/error-codes.json 的 numeric 对齐。 */
+const CODES = {
+  OK: 0,
+  PAY_SIGN_INVALID: 1401,
+  DELIVER_DUPLICATE: 1402,
+  VALIDATION: 1502,
+  INTERNAL: 1503,
+  /** 本地扩展码：服务端权益发放未接通（缺 URL / 令牌），**必须让运维看见** */
+  NOT_WIRED: 1501,
+};
+
+/** 字符串错误码：与 contracts/error-codes.json 一致。 */
 const ERROR_CODES = {
   PAY_SIGN_INVALID: 'E_PAY_SIGN_INVALID',
   DELIVER_DUPLICATE: 'E_DELIVER_DUPLICATE',
   VALIDATION: 'E_VALIDATION',
   INTERNAL: 'E_INTERNAL',
+  NOT_WIRED: 'E_DELIVER_NOT_WIRED',
+  CALLBACK_FAILED: 'E_DELIVER_CALLBACK_FAILED',
 };
 
-const DELIVER_COLLECTION = 'deliver_event';
+/** 默认发货回调超时（毫秒）：**必须设**，否则云函数会被挂到平台超时 */
+const CALLBACK_TIMEOUT_MS = 8000;
 
 /**
  * 校验发货推送签名。
@@ -59,36 +83,111 @@ function verifySign(event) {
 }
 
 /**
- * 幂等占位：先在 deliver_event 里抢占 outTradeNo。
+ * 调服务端完成真正的额度/权益发放。
  *
- * TODO(T02/T03): 改为服务端 `INSERT ... ON CONFLICT DO NOTHING` 或云开发数据库唯一索引，
- * 保证并发推送下也只发一次额度；当前实现仅用于骨架联调。
+ * 返回值的语义（调用方据此决定是否让微信重推）：
+ * - `{ settled: true }`：已发货；
+ * - `{ settled: true, duplicate: true }`：重复推送，幂等成功；
+ * - `{ settled: false, code, errorCode }`：**未发货**，必须让上游重推/告警。
  *
+ * 为什么不在这里抢 `deliver_event`（原先的 `claimDeliverEvent` 已删除）
+ * ------------------------------------------------------------------
+ * 幂等只有**一个**权威：服务端的 `UNIQUE(tenant_id, out_trade_no)` + `E_DELIVER_DUPLICATE`。
+ * 云函数先在本地集合里插一条 `delivered:false` 的行，一旦后续服务端调用失败，
+ * 微信重推时就会被自己这条「占位」判成重复 → 永远不再发货，而用户已经付钱。
+ * 两层幂等互相打架 = 静默丢单，所以这一层去掉。
+ *
+ * @param {Record<string, unknown>} event 原始推送报文
+ * @param {string} outTradeNo 订单号
  * @param {string} tenantId 租户
- * @param {string} outTradeNo 订单号（幂等键）
- * @returns {Promise<boolean>} true=首次处理；false=重复推送
+ * @returns {Promise<{settled: boolean, duplicate?: boolean, code?: number, errorCode?: string, detail?: unknown}>}
  */
-async function claimDeliverEvent(tenantId, outTradeNo) {
-  const db = cloud.database();
-  const existing = await db
-    .collection(DELIVER_COLLECTION)
-    .where({ tenant_id: tenantId, out_trade_no: outTradeNo })
-    .limit(1)
-    .get();
-  if (existing.data && existing.data.length > 0) {
-    return false;
+async function callServerDeliver(event, outTradeNo, tenantId) {
+  const callbackUrl = process.env.DELIVER_CALLBACK_URL;
+  const serviceToken = process.env.SERVICE_TOKEN;
+
+  if (!callbackUrl || !serviceToken) {
+    // 不许把「没接通」伪装成「处理完毕」
+    console.error(
+      '[deliver] 未配置 DELIVER_CALLBACK_URL / SERVICE_TOKEN，发货未接通',
+      { outTradeNo }
+    );
+    return { settled: false, code: CODES.NOT_WIRED, errorCode: ERROR_CODES.NOT_WIRED };
   }
-  await db.collection(DELIVER_COLLECTION).add({
-    data: {
-      tenant_id: tenantId,
-      out_trade_no: outTradeNo,
-      source: 'xpay_goods_deliver_notify',
-      sign_status: 'verified',
-      delivered: false,
-      received_at: new Date().toISOString(),
-    },
+
+  if (typeof fetch !== 'function') {
+    // 运行时低于 Node 18 时没有全局 fetch：显式报错，不要静默变成「发不出去的成功」
+    console.error(
+      '[deliver] 当前运行时没有全局 fetch（需 Node 18+ 或显式引入 node-fetch），发货未接通',
+      { outTradeNo }
+    );
+    return { settled: false, code: CODES.NOT_WIRED, errorCode: ERROR_CODES.NOT_WIRED };
+  }
+
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), CALLBACK_TIMEOUT_MS);
+  let response;
+  try {
+    response = await fetch(callbackUrl, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        // 服务端只认这两个头：通道白名单 + 服务间令牌（常量时间比较）
+        'X-Wx-Channel': 'cloudfunc',
+        'X-Service-Token': serviceToken,
+        'X-Tenant-Id': tenantId,
+      },
+      body: JSON.stringify(event),
+      signal: controller.signal,
+    });
+  } catch (error) {
+    // 网络层失败（DNS/超时/连接重置）：**不吞**，如实回报「未发货」让平台重推
+    console.error('[deliver] 调用服务端发放失败（网络层）', { outTradeNo, error: String(error) });
+    return { settled: false, code: CODES.INTERNAL, errorCode: ERROR_CODES.CALLBACK_FAILED };
+  } finally {
+    clearTimeout(timer);
+  }
+
+  const body = await response.json().catch(() => ({}));
+  const data = (body && body.data) || {};
+  console.log('[deliver] 服务端发放回执', {
+    outTradeNo,
+    httpStatus: response.status,
+    envelopeCode: body && body.code,
+    errorCode: data.error_code,
+    delivered: data.delivered,
+    grantQuota: data.grant_quota,
   });
-  return true;
+
+  // 幂等重复：服务端回 1402（HTTP 200），对平台而言是「已处理」，不必重推
+  if (
+    data.error_code === ERROR_CODES.DELIVER_DUPLICATE ||
+    (body && body.code === CODES.DELIVER_DUPLICATE)
+  ) {
+    return { settled: true, duplicate: true };
+  }
+
+  if (!response.ok) {
+    // 401/403/404/422/503 一律视为**未发货**：把服务端错误码原样带出去，便于定位
+    return {
+      settled: false,
+      code: (body && body.code) || CODES.INTERNAL,
+      errorCode: data.error_code || ERROR_CODES.CALLBACK_FAILED,
+      detail: body && body.message,
+    };
+  }
+
+  if (!data.delivered) {
+    // HTTP 200 但服务端说「没发货」：绝不能当成功
+    return {
+      settled: false,
+      code: CODES.INTERNAL,
+      errorCode: data.error_code || ERROR_CODES.CALLBACK_FAILED,
+      detail: data.reason,
+    };
+  }
+
+  return { settled: true };
 }
 
 /**
@@ -101,9 +200,12 @@ exports.main = async (event) => {
   const outTradeNo = event && (event.OutTradeNo || event.out_trade_no);
   const tenantId = event && (event.TenantId || event.tenant_id);
 
+  console.log('[deliver] 收到发货推送', { outTradeNo, tenantId });
+
   if (!outTradeNo || !tenantId) {
+    console.error('[deliver] 推送缺少 outTradeNo / tenant_id', { outTradeNo, tenantId });
     return {
-      code: 1502,
+      code: CODES.VALIDATION,
       data: { error_code: ERROR_CODES.VALIDATION },
       message: '发货推送缺少 outTradeNo / tenant_id',
     };
@@ -112,79 +214,52 @@ exports.main = async (event) => {
   if (!verifySign(event)) {
     console.warn('[deliver] 验签失败', { outTradeNo });
     return {
-      code: 1401,
-      data: { error_code: ERROR_CODES.PAY_SIGN_INVALID },
+      code: CODES.PAY_SIGN_INVALID,
+      data: { error_code: ERROR_CODES.PAY_SIGN_INVALID, out_trade_no: outTradeNo },
       message: '验签失败，未发货',
     };
   }
 
   try {
-    const firstTime = await claimDeliverEvent(tenantId, outTradeNo);
-    if (!firstTime) {
-      return {
-        code: 1402,
-        data: { error_code: ERROR_CODES.DELIVER_DUPLICATE, out_trade_no: outTradeNo },
-        message: '重复推送，已幂等忽略（不重复发额度）',
-      };
-    }
+    const outcome = await callServerDeliver(event, outTradeNo, tenantId);
 
-    // 服务端发放：calling 云托管 /entitlement/deliver-callback（内网 + 服务间令牌）。
-    // 服务端负责：加 usage_quota 额度 / 延长 entitlement.valid_until / 置 deliver_event。
-    // **发货不写 usage_ledger**（权益发放与语音扣次是两本账）。
-    const callbackUrl = process.env.DELIVER_CALLBACK_URL;
-    const serviceToken = process.env.DELIVER_SERVICE_TOKEN;
-    if (!callbackUrl || !serviceToken) {
-      // 不许把「没接通」伪装成「处理完毕」：delivered:false 会让上游以为已经发过了，
-      // 用户付了钱却永远拿不到额度，而且没有任何告警。
-      console.error('[deliver] 未配置 DELIVER_CALLBACK_URL / DELIVER_SERVICE_TOKEN，发货未接通', {
+    if (!outcome.settled) {
+      console.error('[deliver] 服务端未完成发放，本条**未发货**（等待平台重推 / query_order 兜底）', {
         outTradeNo,
+        errorCode: outcome.errorCode,
+        detail: outcome.detail,
       });
       return {
-        code: 1501,
+        code: outcome.code || CODES.INTERNAL,
         data: {
           out_trade_no: outTradeNo,
           delivered: false,
-          error_code: 'E_DELIVER_NOT_WIRED',
+          error_code: outcome.errorCode,
         },
-        message: '服务端权益发放未接通（缺 DELIVER_CALLBACK_URL / DELIVER_SERVICE_TOKEN），本条未发货',
+        message: '服务端未完成发放，本条未发货（详见云托管日志）',
       };
     }
 
-    const response = await fetch(callbackUrl, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'X-Wx-Channel': 'cloudfunc',
-        'X-Service-Token': serviceToken,
-        'X-Tenant-Id': tenantId,
-      },
-      body: JSON.stringify(event),
-    });
-    const body = await response.json().catch(() => ({}));
-    console.log('[deliver] 服务端发放结果', { outTradeNo, status: response.status, body });
-    if (!response.ok) {
-      // 不吞：把服务端的错误码原样带出去，方便云函数日志定位
+    if (outcome.duplicate) {
       return {
-        code: 1502,
-        data: {
-          out_trade_no: outTradeNo,
-          delivered: false,
-          error_code: (body && body.data && body.data.error_code) || 'E_DELIVER_CALLBACK_FAILED',
-        },
-        message: '服务端发放失败，详见云托管日志',
+        code: CODES.DELIVER_DUPLICATE,
+        data: { out_trade_no: outTradeNo, delivered: true, error_code: ERROR_CODES.DELIVER_DUPLICATE },
+        message: '服务端判定为重复推送，已幂等忽略（额度未重复发放）',
       };
     }
+
     return {
-      code: 0,
-      data: { out_trade_no: outTradeNo, delivered: true, upstream: body && body.data },
+      code: CODES.OK,
+      data: { out_trade_no: outTradeNo, delivered: true },
       message: '已发货',
     };
   } catch (error) {
-    console.error('[deliver] 处理异常', error);
+    // 走到这里说明发生了未预期的异常：**照样如实回报失败**，不伪装成功
+    console.error('[deliver] 处理异常', { outTradeNo, error: String(error) });
     return {
-      code: 1503,
-      data: { error_code: ERROR_CODES.INTERNAL },
-      message: '发货回调处理异常，等待平台重推或 query_order 兜底',
+      code: CODES.INTERNAL,
+      data: { out_trade_no: outTradeNo, delivered: false, error_code: ERROR_CODES.INTERNAL },
+      message: '发货回调处理异常，本条未确认发货，等待平台重推或 query_order 兜底',
     };
   }
 };

@@ -23,7 +23,7 @@ from fastapi.responses import JSONResponse
 
 from app.common.envelope import ok
 from app.common.idempotency import HybridStore
-from app.config import EXPECTED_TABLES, ContractBundle, Settings
+from app.config import EXPECTED_RLS_POLICIES, EXPECTED_TABLES, ContractBundle, Settings
 from app.db.session import Database
 from app.deps import get_app_settings, get_contract_bundle, get_database, get_store
 
@@ -113,6 +113,9 @@ async def readyz(
             "notes": capabilities.get("notes"),
             # 如实标注：非 PG 下隔离强度下降，只剩应用层 scope + 唯一索引 + CI 扫描 + 越权单测
             "strength": "db_rls" if capabilities.get("rls_enabled") else "reduced_one_layer_less",
+            # 策略总数（与迁移 DDL 断言共用 config.EXPECTED_RLS_POLICIES 这一个来源）：
+            # 32 张租户表 × tenant_isolation + member_login_lookup + xpay_deliver_lookup
+            "rls_policies_expected": EXPECTED_RLS_POLICIES,
         },
         "auth": {
             "jwt_algorithm": settings.jwt_algorithm,

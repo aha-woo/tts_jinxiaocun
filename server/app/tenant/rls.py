@@ -28,6 +28,13 @@ GUC_TENANT_ID: Final[str] = "app.tenant_id"
 #: 登录引导标志 GUC（仅用于「openid -> tenant_id」这一步的反查，见 migration 中的 member 策略）
 GUC_AUTH_BOOTSTRAP: Final[str] = "app.auth_bootstrap"
 
+#: 发货推送引导标志 GUC（仅用于「out_trade_no -> tenant_id」这一步的反查）
+#:
+#: 与 ``app.auth_bootstrap`` 是**两个独立开关**：登录反查放开 ``member``，发货反查放开
+#: ``virtual_order``。共用一个开关会让「登录那一刻」也能读别人的订单，
+#: 违反最小授权，故此处单独一个 GUC。
+GUC_DELIVER_BOOTSTRAP: Final[str] = "app.deliver_bootstrap"
+
 #: 方案 A 的方言名
 PG_DIALECT: Final[str] = "postgresql"
 
@@ -81,6 +88,33 @@ def set_auth_bootstrap(session: Session, enabled: bool = True) -> bool:
     session.execute(
         text("SELECT set_config(:name, :value, true)"),
         {"name": GUC_AUTH_BOOTSTRAP, "value": "on" if enabled else "off"},
+    )
+    return True
+
+
+def set_deliver_bootstrap(session: Session, enabled: bool = True) -> bool:
+    """开启/关闭发货推送引导标志（只允许在 PG 上生效，**事务级**）。
+
+    该标志只放开 `virtual_order` 表的**只读**反查（见迁移中的
+    `xpay_deliver_lookup` 策略），用于「发货推送里只有 ``out_trade_no``、
+    但业务写入必须先知道 tenant_id」这一步。投递顺序必须是：
+
+    1. 开 bootstrap（此时 ``app.tenant_id`` 必须为空）；
+    2. 按 ``out_trade_no`` 精确查一条 ``virtual_order``，取出 ``tenant_id``；
+    3. **立刻** :func:`set_tenant_guc` 切到租户模式，并 :func:`set_deliver_bootstrap`
+       关掉开关 —— 之后的业务写入一律走正常 RLS 过滤，不再借引导开关。
+
+    ``set_config(..., is_local=true)`` 是事务级的：事务结束（提交/回滚）后自动复位，
+    连接归还池时不会把「引导开关」泄漏给下一个请求。
+
+    Returns:
+        True = 已在 PG 上设置；False = 非 PG 方言下无操作（无 RLS，靠应用层 scope）。
+    """
+    if not is_pg(session):
+        return False
+    session.execute(
+        text("SELECT set_config(:name, :value, true)"),
+        {"name": GUC_DELIVER_BOOTSTRAP, "value": "on" if enabled else "off"},
     )
     return True
 
@@ -159,4 +193,24 @@ def member_bootstrap_policy_sql() -> str:
         "CREATE POLICY member_login_lookup ON member FOR SELECT "
         f"USING (current_setting('{GUC_TENANT_ID}', true) IS NULL "
         f"AND current_setting('{GUC_AUTH_BOOTSTRAP}', true) = 'on')"
+    )
+
+
+def xpay_deliver_lookup_policy_sql() -> str:
+    """发货推送引导策略：仅在 `app.tenant_id` 未设置且 `app.deliver_bootstrap=on` 时放开订单只读。
+
+    为什么需要它：虚拟支付发货推送只带 ``out_trade_no``（没有 JWT、没有 tenant 头），
+    而所有业务写入（``usage_quota`` / ``entitlement`` / ``deliver_event``）都受 RLS
+    的 ``tenant_id = current_setting('app.tenant_id')`` 约束。若为了「查订单拿租户」
+    去 ``bypass_scope`` 关掉应用层 scope，就等于在发货路径上开了一个**全表可读**的后门
+    —— 这正是本次要避免的写法。
+
+    因此与登录反查同构：只授 ``SELECT``、只在「无租户上下文」+「引导标志 on」时生效，
+    用完立刻切回租户模式（见 :func:`set_deliver_bootstrap` 的投递顺序说明）。
+    业务查询（含发货本身）绝不允许带着这个标志执行。
+    """
+    return (
+        "CREATE POLICY xpay_deliver_lookup ON virtual_order FOR SELECT "
+        f"USING (current_setting('{GUC_TENANT_ID}', true) IS NULL "
+        f"AND current_setting('{GUC_DELIVER_BOOTSTRAP}', true) = 'on')"
     )

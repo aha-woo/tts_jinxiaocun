@@ -1,21 +1,23 @@
-"""静态护栏：``set_auth_bootstrap`` 的调用点**只允许**在 ``app/services/auth.py``。
+"""静态护栏：两个 RLS「鸡生蛋」引导开关的调用点被**点名**限制。
 
-为什么需要这条护栏
-------------------
-``member_login_lookup`` 策略 + ``app.auth_bootstrap`` GUC 是 RLS 的**鸡生蛋解法**：
-登录时还不知道租户是谁，只能先放开「按 openid 查会员」这一条只读路径。
-它一旦被别处调用，等于在业务代码里随手关掉租户隔离 —— 这类漏洞不会报错、
-不会失败测试，只会**安静地泄漏数据**。
+``set_auth_bootstrap``（登录）与 ``set_deliver_bootstrap``（发货）
+-----------------------------------------------------------------
+两者都是 RLS 的鸡生蛋解法：在还不知道租户是谁的时候，**只读**地放开一条精确反查路径
+（``member_login_lookup`` / ``xpay_deliver_lookup``）。它们一旦被别处调用，
+等于在业务代码里随手关掉租户隔离 —— 这类漏洞不会报错、不会失败测试，
+只会**安静地泄漏数据**。
 
 因此这里不用正则，而是用 ``ast`` 精确判断「谁真的调用了它」：
 
 - **允许**：
-  1. ``app/tenant/rls.py`` 里的**定义**（``def set_auth_bootstrap``）；
+  1. ``app/tenant/rls.py`` 里的**定义**；
   2. 所有测试文件（它们要验证护栏本身，必须能调用）。
-- **只允许调用点**：``app/services/auth.py``（登录链路唯一入口）。
+- **只允许调用点**：
+  - ``set_auth_bootstrap`` → ``app/services/auth.py``（登录链路唯一入口）；
+  - ``set_deliver_bootstrap`` → ``app/api/v1/entitlement.py``（发货推送唯一入口）。
 
-同时做两条「非空洞」断言：``auth.py`` 里确实有调用（≥1），
-且 ``rls.py`` 里确实有定义 —— 否则文件改名后这条护栏会变成永远通过的空壳。
+同时做「非空洞」断言：被允许的文件里确实有调用（≥1），``rls.py`` 里确实有定义
+—— 否则文件改名后这条护栏会变成永远通过的空壳。
 """
 
 from __future__ import annotations
@@ -35,6 +37,10 @@ ALLOWED_CALL_FILES = frozenset({"app/services/auth.py"})
 
 #: 豁免：定义处（不是调用）
 DEFINITION_FILES = frozenset({"app/tenant/rls.py"})
+
+#: 发货引导开关（第二处鸡生蛋）：调用点只允许在发货回调端点
+DELIVER_TARGET = "set_deliver_bootstrap"
+ALLOWED_DELIVER_CALL_FILES = frozenset({"app/api/v1/entitlement.py"})
 
 
 def _iter_python_files(root: Path) -> list[Path]:
@@ -61,8 +67,12 @@ def _call_name(node: ast.Call) -> str | None:
     return None
 
 
-def collect_call_sites(files: list[Path]) -> dict[str, int]:
-    """扫描所有文件里的 ``set_auth_bootstrap(...)`` 调用点。
+def collect_call_sites(files: list[Path], *, target: str = TARGET) -> dict[str, int]:
+    """扫描所有文件里的 ``target(...)`` 调用点。
+
+    Args:
+        files: 待扫描文件。
+        target: 函数名（默认 :data:`TARGET`）。
 
     Returns:
         ``{相对路径: 调用次数}``；只包含出现过调用的文件。
@@ -74,7 +84,7 @@ def collect_call_sites(files: list[Path]) -> dict[str, int]:
         except SyntaxError as exc:  # pragma: no cover - 语法错误应被别的测试抓住
             raise AssertionError(f"{_rel(path)} 无法解析：{exc}") from exc
         for node in ast.walk(tree):
-            if isinstance(node, ast.Call) and _call_name(node) == TARGET:
+            if isinstance(node, ast.Call) and _call_name(node) == target:
                 key = _rel(path)
                 sites[key] = sites.get(key, 0) + 1
     return sites
@@ -150,3 +160,50 @@ def test_member_login_lookup_policy_is_still_registered() -> None:
     rls_source = (APP_ROOT / "tenant" / "rls.py").read_text(encoding="utf-8")
     assert "member_login_lookup" in rls_source
     assert "app.auth_bootstrap" in rls_source
+
+
+# --------------------------------------------------- 发货引导（第二处鸡生蛋）
+
+
+def test_deliver_bootstrap_definition_still_exists() -> None:
+    """护栏非空洞：``rls.py`` 里必须仍有 ``set_deliver_bootstrap`` 定义。"""
+    rls_path = APP_ROOT / "tenant" / "rls.py"
+    assert has_function_def(rls_path, DELIVER_TARGET), f"{_rel(rls_path)} 里找不到该定义"
+
+
+def test_deliver_bootstrap_is_called_by_the_callback_endpoint() -> None:
+    """发货回调确实用它（开 / 关各一次：进引导 → 拿租户 → 立刻切回租户模式）。"""
+    sites = collect_call_sites(
+        [APP_ROOT / "api" / "v1" / "entitlement.py"], target=DELIVER_TARGET
+    )
+    assert sites.get("app/api/v1/entitlement.py", 0) >= 2, (
+        "发货引导开关必须既开又关（只开不关 = 事务里一直带着引导开关）"
+    )
+
+
+def test_deliver_bootstrap_is_only_called_from_the_callback_endpoint() -> None:
+    """**核心断言**：``app/`` 下除发货回调端点外没有别的 ``set_deliver_bootstrap`` 调用点。"""
+    sites = collect_call_sites(_iter_python_files(APP_ROOT), target=DELIVER_TARGET)
+    offenders = {
+        path: count
+        for path, count in sites.items()
+        if path not in ALLOWED_DELIVER_CALL_FILES and path not in DEFINITION_FILES
+    }
+    assert offenders == {}, (
+        "发现越权调用 set_deliver_bootstrap（等于随手放开订单表读取）：\n"
+        + "\n".join(f"  {path}: {count} 处" for path, count in sorted(offenders.items()))
+        + "\n允许的调用点：" + ", ".join(sorted(ALLOWED_DELIVER_CALL_FILES))
+    )
+
+
+def test_xpay_deliver_lookup_policy_is_still_registered() -> None:
+    """``xpay_deliver_lookup`` 策略仍在，且用的是**自己的**开关（不与登录共用）。"""
+    rls_source = (APP_ROOT / "tenant" / "rls.py").read_text(encoding="utf-8")
+    assert "xpay_deliver_lookup" in rls_source
+    assert "app.deliver_bootstrap" in rls_source
+
+    policy_block = rls_source.split("def xpay_deliver_lookup_policy_sql")[-1]
+    assert "app.deliver_bootstrap" in policy_block
+    assert "app.auth_bootstrap" not in policy_block, (
+        "发货策略不得复用登录引导开关：共用一个开关等于登录时也能读别人的订单"
+    )

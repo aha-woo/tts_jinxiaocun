@@ -237,6 +237,42 @@ PRD 假设目标 ≥45%，实测 50.0%。**规则表按 intent 语义人工编�
 `OutTradeNo` 幂等（重复 → `E_DELIVER_DUPLICATE`，不重复发）→ 发额度/权益 →
 **绝不写 `usage_ledger`**（发货与扣次是两本账）。`query_order` 兜底走同一个 `deliver_once`。
 
+#### 服务间鉴权：`ServiceDeliverDep`（不进用户态鉴权链）
+
+发货推送是**微信侧的服务调用**，没有用户 JWT，所以**不能**挂在 `AuthContextDep` 后面
+（上一版就是因此每次都 403 `E_TENANT_DENIED`，付了钱的用户拿不到额度）。
+`app/deps.py::require_service_deliver` 是独立的一条链，三道判定：
+
+| 判定 | 结果 |
+|---|---|
+| 服务端未配置 `SERVICE_TOKEN` | **503** + `ERROR` 日志（`reason=service_token_not_configured`）——**绝不默认放行** |
+| `X-Wx-Channel` 不是 `cloudfunc` | **403**（`reason=channel_not_allowed`） |
+| `X-Service-Token` 与配置不一致（`hmac.compare_digest`，bytes 比较） | **403**（`reason=service_token_mismatch`）；缺令牌与错令牌同码同文案 |
+
+> 403 用的是契约里本就是 403 的 `E_TENANT_DENIED`（不新造错误码，改契约要走文档流程）；
+> 503 用 `E_INTERNAL` + `http_status=503` 覆盖。**未配置是服务端问题**，
+> 必须表现为「功能不可用，请重试/告警」，而不是「谁都能发额度」。
+
+#### 租户从哪来：`xpay_deliver_lookup` 策略（**不用 `bypass_scope`**）
+
+推送里只有 `out_trade_no`，而所有业务写入都受 RLS `tenant_id = current_setting('app.tenant_id')`
+约束——这与「登录时 openid → tenant_id」是同一个鸡生蛋问题，解法同构：
+
+```
+开 app.deliver_bootstrap（事务级，is_local=true）
+  → 按 out_trade_no 精确查 virtual_order（策略只给 SELECT，且要求 app.tenant_id 为空）
+  → 立刻 set_tenant_guc(tenant_id) + set_deliver_bootstrap(False)
+  → 业务写入全程走正常 RLS 过滤
+```
+
+- 策略总数：32 条租户隔离 + 2 条引导反查（`member_login_lookup` / `xpay_deliver_lookup`）
+  = `config.EXPECTED_RLS_POLICIES`（34），迁移、DDL 断言、`/readyz.isolation.rls_policies_expected`
+  **共用这一个常量**；
+- 两个引导开关**互相独立**（`app.auth_bootstrap` ≠ `app.deliver_bootstrap`），
+  共用一个开关会让「登录那一刻」也能读别人的订单；
+- 单号不全球唯一（`UNIQUE(tenant_id, out_trade_no)`）：查不到 → 404，查到多租户 → 422
+  要求云函数带 `X-Tenant-Id` 消歧，**绝不猜租户**。
+
 ### 静态护栏
 
 `tests/test_auth_bootstrap_guard.py`：用 `ast` 扫全仓，断言 `set_auth_bootstrap`
@@ -370,6 +406,8 @@ assert original_doc.status == "reversed"          # 撤销后原单仍在、状�
 assert _count(database, UsageQuota) == 1          # 发货后额度行真的多了一条
 ```
 
-参考实现：`tests/test_write_end_state.py`（15 条）、`tests/test_deliver_callback_http.py`（4 条）。
-后者还额外要求：**发货、回调这类端点必须走 TestClient 打真实 HTTP 路径**，
+参考实现：`tests/test_write_end_state.py`（15 条）、`tests/test_deliver_callback_http.py`（9 条）。
+后者覆盖「正确令牌 → 权益真到账（贴着 `select(Entitlement)` 的实际值断言）／缺令牌·错令牌·错通道 → 403
+且 `deliver_event` 0 行、额度没动／服务端未配令牌 → 503 + ERROR 告警／重复推送 → 1402 只加一次」，
+并额外要求：**发货、回调这类端点必须走 TestClient 打真实 HTTP 路径**，
 不要只测 service（上一轮的 403 就是「只测 service 绕过装配」漏掉的）。

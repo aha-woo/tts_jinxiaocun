@@ -27,6 +27,14 @@ MIN_ERROR_CODES = 20
 #: 数据层表数（架构 §4.3.2 有 33 行清单，其中 template_rule/template_candidate 同一行 → 34 张表）
 EXPECTED_TABLES = 34
 
+#: PG 上的 RLS 策略总数（单一来源，迁移与 ``/readyz`` 都读它）
+#:
+#: 组成：32 张租户表 × 1 条 ``*_tenant_isolation``
+#: + 2 条「鸡生蛋」引导策略（``member_login_lookup`` / ``xpay_deliver_lookup``）= 34。
+#: 上次这个数字散落在两处（``rls.py`` 与 DDL 断言），加策略时只改了一处；
+#: 现在统一收在这里，DDL 断言直接 import，避免再次漂移。
+EXPECTED_RLS_POLICIES = 34
+
 #: 单一真相源所在的仓库相对路径（server/app/config.py -> 仓库根）
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 _SHARED_ROOT = _REPO_ROOT / "packages" / "shared"

@@ -9,6 +9,7 @@
 - 34 张表是否都建出来（含 tenant_id 列）；
 - 32 张租户表是否都有 ``ENABLE`` + **``FORCE``** + ``CREATE POLICY`` 三件套
   （缺 ``FORCE`` 时表 owner 会绕过 RLS，是最常见的假隔离）；
+- 策略总数是否等于 ``config.EXPECTED_RLS_POLICIES``（32 条租户隔离 + 2 条引导反查 = 34）；
 - 策略表达式是否引用 ``current_setting('app.tenant_id'``；
 - 平台级表（``goods_item`` / ``clarifier_templates``）是否**豁免**；
 - 可空 tenant 的三层表是否用 ``tenant_id IS NULL OR ...`` 放行平台层行；
@@ -31,7 +32,7 @@ from alembic import command
 from alembic.config import Config
 
 import app.models  # noqa: F401  - 必须在模块导入期完成模型注册（parametrize 依赖它）
-from app.config import EXPECTED_TABLES
+from app.config import EXPECTED_RLS_POLICIES, EXPECTED_TABLES
 from app.db.base import NULLABLE_TENANT_TABLES, PLATFORM_TABLES, Base
 
 SERVER_ROOT = Path(__file__).resolve().parents[1]
@@ -138,10 +139,13 @@ def test_each_tenant_table_has_rls_triplet(pg_sql: str, table_name: str) -> None
     policies = [line for line in statements if line.startswith("CREATE POLICY")]
     isolation = [line for line in policies if f"CREATE POLICY {table_name}_tenant_isolation" in line]
     assert len(isolation) == 1, f"{table_name} 期望恰好 1 条租户隔离策略，实际 {policies}"
-    # 唯一允许的额外策略：member 上的登录引导反查（见 test_member_login_lookup_policy_exists）
+    # 唯一允许的额外策略：两张「鸡生蛋」引导表各一条只读反查策略
+    # （member → member_login_lookup；virtual_order → xpay_deliver_lookup）
     extras = [line for line in policies if line not in isolation]
     if table_name == "member":
         assert len(extras) == 1 and "member_login_lookup" in extras[0], extras
+    elif table_name == "virtual_order":
+        assert len(extras) == 1 and "xpay_deliver_lookup" in extras[0], extras
     else:
         assert extras == [], f"{table_name} 出现未预期的额外策略: {extras}"
 
@@ -152,10 +156,15 @@ def test_each_tenant_table_has_rls_triplet(pg_sql: str, table_name: str) -> None
 
 
 def test_rls_triplet_counts(pg_sql: str) -> None:
-    """32 张表 × 2 条 ALTER + 32 条租户策略 + 1 条登录引导策略。"""
+    """32 张表 × 2 条 ALTER + 32 条租户策略 + 2 条引导策略 = EXPECTED_RLS_POLICIES。"""
     assert len(re.findall(r"ENABLE ROW LEVEL SECURITY;", pg_sql)) == 32
     assert len(re.findall(r"FORCE ROW LEVEL SECURITY;", pg_sql)) == 32
-    assert len(re.findall(r"^CREATE POLICY", pg_sql, re.M)) == 33
+    policy_count = len(re.findall(r"^CREATE POLICY", pg_sql, re.M))
+    assert policy_count == EXPECTED_RLS_POLICIES, (
+        f"策略总数 {policy_count} ≠ EXPECTED_RLS_POLICIES={EXPECTED_RLS_POLICIES}"
+        "（加策略时必须同步改 config.py 的那一个常量，别只改迁移）"
+    )
+    assert policy_count == 34, "32 条租户隔离 + member_login_lookup + xpay_deliver_lookup"
 
 
 def test_platform_tables_are_exempt_from_rls(pg_sql: str) -> None:
@@ -184,6 +193,29 @@ def test_member_login_lookup_policy_exists(pg_sql: str) -> None:
     # 不能顺手放开写权限
     assert "member_login_lookup ON member FOR INSERT" not in pg_sql
     assert "member_login_lookup ON member FOR ALL" not in pg_sql
+
+
+def test_xpay_deliver_lookup_policy_exists(pg_sql: str) -> None:
+    """RLS 鸡生蛋（第二处）：out_trade_no -> tenant_id 反查有专用只读策略。
+
+    发货推送没有用户 JWT，必须先按单号找到租户才能写额度；这条策略就是那一步的
+    唯一入口。它必须同时满足「无租户上下文」+「``app.deliver_bootstrap = on``」，
+    且只授 SELECT —— 否则发货路径会变成一个可以读别人订单的后门。
+    """
+    assert "CREATE POLICY xpay_deliver_lookup ON virtual_order FOR SELECT" in pg_sql, (
+        "发货推送的租户反查策略缺失：PG 上将查不到任何订单，发货必然 404"
+    )
+    assert "current_setting('app.deliver_bootstrap', true) = 'on'" in pg_sql
+    # 与登录引导是**两个独立开关**：发货策略里不允许出现 auth_bootstrap
+    deliver_policy = next(
+        line for line in pg_sql.splitlines() if "xpay_deliver_lookup ON virtual_order" in line
+    )
+    assert "app.deliver_bootstrap" in deliver_policy
+    assert "app.auth_bootstrap" not in deliver_policy
+    # 只读：不得放开写权限
+    assert "xpay_deliver_lookup ON virtual_order FOR INSERT" not in pg_sql
+    assert "xpay_deliver_lookup ON virtual_order FOR ALL" not in pg_sql
+    assert "xpay_deliver_lookup ON virtual_order FOR UPDATE" not in pg_sql
 
 
 # ------------------------------------------------------------------ 唯一约束/索引
