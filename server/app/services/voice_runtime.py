@@ -338,7 +338,7 @@ def lines_of_result(
             unit = str(getattr(item, "unit", "") or "")
             amount_fen = int(getattr(item, "total_fen", 0) or 0)
             unit_price_fen = getattr(item, "unit_price_fen", None)
-            qty_base = _qty_base_of(product, quantity, unit)
+            qty_base, ratio_resolved = _qty_base_of(product, quantity, unit)
             lines.append(
                 LedgerLine(
                     product_id=None if product is None else product.product_id,
@@ -355,7 +355,9 @@ def lines_of_result(
                         if unit_price_fen is None
                         else f"{quantity}{unit}×{unit_price_fen}分={amount_fen}分"
                     ),
-                    pending=product is None or quantity is None,
+                    # 缺换算系数也算「待确认」：qty_base 此时按 1:1 记，
+                    # 而 1 箱 ≠ 1 瓶——不标 pending 就会把 5 箱记成 5 瓶
+                    pending=product is None or quantity is None or not ratio_resolved,
                 )
             )
         if lines:
@@ -369,7 +371,7 @@ def lines_of_result(
     if amount_fen == 0 and result.slots.get("UP") is not None and quantity is not None:
         amount_fen = int(result.slots["UP"]) * int(quantity)
     up = result.slots.get("UP")
-    qty_base = _qty_base_of(product, quantity, unit)
+    qty_base, ratio_resolved = _qty_base_of(product, quantity, unit)
     return [
         LedgerLine(
             product_id=None if product is None else product.product_id,
@@ -384,7 +386,8 @@ def lines_of_result(
             calc_trace=result.calc_traces[0] if result.calc_traces else None,
             pending=product_slot is None
             or result.source.get("P") == "pending"
-            or product is None,
+            or product is None
+            or not ratio_resolved,
         )
     ]
 
@@ -426,15 +429,27 @@ def _label_of(product: ProductEntry | None, fallback: Any) -> str:
     return f"{product.name} {product.spec}".strip()
 
 
-def _qty_base_of(product: ProductEntry | None, quantity: Any, unit: str) -> Decimal:
-    """折算到 base_unit（**缺系数不臆造**：按 1:1 处理并标 pending）。"""
+def _qty_base_of(
+    product: ProductEntry | None, quantity: Any, unit: str
+) -> tuple[Decimal, bool]:
+    """折算到 base_unit：返回 ``(折算数量, 是否已解析出换算系数)``。
+
+    **缺系数不臆造**（契约 C3：绝不猜「一箱 24 瓶」）。
+    但「不臆造」不等于「静默按 1:1 记账」——上一版就是只 ``return qty``：
+    「进了五箱矿泉水」→ ``qty_base=5``（瓶），库存少记 115 瓶，卡片还不标待补。
+    所以这里把「有没有真正解析出系数」一并返回，调用方据此标 ``pending``，
+    由 confirm 的 pending 守卫拦住，**不落账**。
+    """
     qty = _as_decimal(quantity)
-    if product is None or not unit or unit == product.base_unit:
-        return qty
+    if product is None:
+        return qty, False
+    if not unit or unit == product.base_unit:
+        # 说的就是基本单位（5 瓶），不需要系数
+        return qty, True
     ratio = product.ratios.get(unit)
     if ratio is None:
-        return qty
-    return qty * Decimal(str(ratio))
+        return qty, False
+    return qty * Decimal(str(ratio)), True
 
 
 def _as_decimal(value: Any) -> Decimal:

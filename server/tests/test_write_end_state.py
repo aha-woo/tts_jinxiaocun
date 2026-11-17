@@ -311,3 +311,51 @@ def test_revived_card_view_carries_the_real_card_id(shop: Seed) -> None:
             button_fallback=True,
         )
     assert outcome.confirmed, outcome.as_dict()
+
+
+# ---------------------------------------------------------------- P1-6 同商品多行
+def test_two_lines_of_same_product_confirm_without_version_conflict(shop: Seed) -> None:
+    """「两箱可乐，三箱可乐」：同一门店同一商品两行 → 合并成一次 CAS，**不能永久 1202**。"""
+    rows = lines_for(shop, quantity=2, qty_base=48) + [
+        {**lines_for(shop, quantity=3, qty_base=72)[0]}
+    ]
+    _, outcome = _confirm(shop, intent_id="purchase.create", lines=rows)
+
+    assert outcome.confirmed, outcome.as_dict()
+    assert _qty_of_seed_product(shop) == SEED_QTY + Decimal("48") + Decimal("72")
+
+
+# ---------------------------------------------------------------- P1-5 缺换算系数
+def test_missing_unit_ratio_marks_line_pending() -> None:
+    """缺「1 箱=?瓶」时，``_qty_base_of`` 必须报告「未解析」，由调用方标 pending。"""
+    from app.services.voice_runtime import _qty_base_of
+
+    class _Product:
+        base_unit = "瓶"
+        ratios: dict = {}
+
+    qty_base, resolved = _qty_base_of(_Product(), 5, "箱")
+    assert qty_base == Decimal("5")  # 不臆造系数
+    assert resolved is False, "缺系数却报告已解析 → 5 箱会被当成 5 瓶落账"
+
+    # 同上，说的就是基本单位时不需要系数，视为已解析
+    qty_base, resolved = _qty_base_of(_Product(), 5, "瓶")
+    assert (qty_base, resolved) == (Decimal("5"), True)
+
+
+# ---------------------------------------------------------------- P1-8 负数
+def test_negative_marker_blocks_write_intent() -> None:
+    """「进了负两箱可乐」必须被 C7 拦住（数字解析会把符号丢掉）。"""
+    from app.voice.conflict_detector import ConflictContext, detect
+
+    conflicts = detect(
+        ConflictContext(
+            text="进了负两箱可乐",
+            intent_id="purchase.create",
+            slots={"P": "可乐", "Q": 2, "U": "箱"},
+            source={},
+        )
+    )
+    codes = {conflict.code for conflict in conflicts}
+    assert "C7" in codes, f"负数标记没被拦住，conflicts={sorted(codes)}"
+    assert any(conflict.code == "C7" and conflict.blocked for conflict in conflicts)

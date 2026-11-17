@@ -140,6 +140,9 @@ _SNAPSHOT_MARKERS: tuple[str, ...] = ("还剩", "剩下", "剩", "还有", "数�
 _INCREMENT_MARKERS: tuple[str, ...] = ("再入", "再进", "又进", "又到", "补了", "补货", "新增", "加了", "又拿", "再来")
 _RETURN_MARKERS: tuple[str, ...] = ("退", "换货", "退回")
 _REVERSAL_MARKERS: tuple[str, ...] = ("撤销", "撤回", "不要了", "作废", "反做", "删掉")
+#: 负数/减号标记（数字解析会把符号丢掉，只能在原文上找）。
+#: 「减」单独一个字也收：口语里「减两箱」就是减库存，绝不能记成正向进货。
+_NEGATIVE_MARKERS: tuple[str, ...] = ("负", "-", "－", "减", "少了两", "退掉")
 _STALE_PRICE_MARKERS: tuple[str, ...] = ("老价", "老规矩", "按老", "上次那个价", "原价", "还是那个价", "照旧")
 _STORE_MARKERS: tuple[str, ...] = ("店", "门市", "仓库", "分仓", "总仓")
 _COLLOQUIAL_NUMBER = ("一百二", "两百三", "三百五", "一千二", "一万二", "两百五", "三百二")
@@ -297,7 +300,14 @@ def _detect_fuzzy_date(ctx: ConflictContext) -> Conflict | None:
 
 
 def _detect_negative_or_reversal(ctx: ConflictContext) -> Conflict | None:
-    """C7：负数 / 撤销语义不得进正常写链路。"""
+    """C7：负数 / 撤销语义不得进正常写链路。
+
+    两道判据缺一不可：
+    1. ``Q < 0``——只有上游把符号带下来才看得到；
+    2. **原话里有「负 / - / 减」这类标记**——``number_normalizer`` 会把符号丢掉，
+       只靠 ``Q < 0`` 就会把「进了负两箱可乐」解析成 +2 箱（**用户想减，系统加**）。
+       实测过：「进了-2箱可乐」→ ``Q=2``、``qty_base=48``、``conflicts=[]``。
+    """
     text = ctx.text or ""
     qty = ctx.slots.get("Q")
     if isinstance(qty, (int, float)) and qty < 0:
@@ -306,6 +316,14 @@ def _detect_negative_or_reversal(ctx: ConflictContext) -> Conflict | None:
             severity=SEVERITY_HIGH,
             message=f"数量为负数（{qty}）",
             resolution="负数不是入库方式，改走撤销 / 反做单",
+            blocked=True,
+        )
+    if ctx.intent_id in _WRITE_INTENTS and any(marker in text for marker in _NEGATIVE_MARKERS):
+        return Conflict(
+            code="C7",
+            severity=SEVERITY_HIGH,
+            message=f"原话含负数标记（{_first_hit(text, _NEGATIVE_MARKERS)}）",
+            resolution="不能把数量记成负数/减号：减库存请走退货或撤销（sys.undo），不得反向记账",
             blocked=True,
         )
     if ctx.intent_id in _WRITE_INTENTS and any(marker in text for marker in _REVERSAL_MARKERS):

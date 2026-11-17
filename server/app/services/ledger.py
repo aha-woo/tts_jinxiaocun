@@ -30,7 +30,7 @@ from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 from typing import Any, Mapping, Sequence
 
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -499,6 +499,14 @@ class LedgerService:
         payload = StoredCardPayload.from_json(card.slots)
         spec = self._registry.require(payload.intent_id)
 
+        # R0：只读意图不该有卡片（create_card 已拦），但**唯一写入口**不能只靠上游保证
+        if spec.is_readonly:
+            raise AppError(
+                "E_VALIDATION",
+                message=f"{spec.intent_id} 是 R0 只读：任何时候都不写库、不扣次",
+                data={"intent_id": spec.intent_id, "reason": "readonly_intent"},
+            )
+
         # R3：任何路径都不允许直写（卡片本就不该存在，出现了也拦住）
         if spec.whitelist_blocked:
             raise AppError(
@@ -591,7 +599,45 @@ class LedgerService:
                 },
             )
 
-        # ④ CAS 落账（单据 / 反做单 / 实体三种形态之一）
+        # ④ 抢占：把卡片从 active/expired **原子地**改成 confirmed。
+        #
+        # 为什么需要：并发双击（或用户点了两次）时，两个请求都读到 status=='active'，
+        # 于是都去 `_apply_side_effects` → **写两张单**。
+        # `with_for_update()` 在 SQLite 上不可用，而「先查后改」在任何库上都不是原子操作；
+        # 所以用 UPDATE 的 affected-rows 做 CAS：只有一个请求能把 active 改成 confirmed。
+        # 放在这里（TTL/C2/pending 三道守卫之后、写库之前）是因为：
+        # 前面那些分支都要**原样返回、不能改状态**；而写库失败时整个事务回滚，
+        # 状态会跟着回到 active，所以「先标记再写」不会留下脏状态。
+        claimed = self._session.execute(
+            update(ConfirmCard)
+            .where(
+                ConfirmCard.tenant_id == tenant_id,
+                ConfirmCard.card_id == card.card_id,
+                ConfirmCard.status.in_(["active", "expired"]),
+            )
+            .values(status="confirmed")
+        )
+        if claimed.rowcount == 0:
+            # 没抢到：说明另一个请求已经抢先确认或已处理完 → 幂等返回，**不重复写单**
+            self._session.expire(card)
+            fresh = self._load_card(tenant_id, card.card_id)
+            if str(fresh.status) == "confirmed":
+                existing_doc = self._doc_of_card(tenant_id, fresh.card_id)
+                return ConfirmOutcome(
+                    card_id=str(fresh.card_id),
+                    doc_id=str(existing_doc.doc_id) if existing_doc else None,
+                    doc_no=str(existing_doc.doc_no) if existing_doc else None,
+                    card_status="confirmed",
+                    total_amount_fen=int(existing_doc.total_amount_fen) if existing_doc else 0,
+                    detail="同一张卡片已被处理过（并发重复点击）：幂等返回首次结果，不重复写单",
+                )
+            raise AppError(
+                "E_VALIDATION",
+                message=f"卡片不在可确认状态（{fresh.status}），请刷新后再操作",
+                data={"card_status": str(fresh.status)},
+            )
+
+        # ⑤ 落账（单据 / 反做单 / 实体三种形态之一）
         outcome = self._apply_side_effects(
             tenant_id=tenant_id,
             store_id=store_id,
@@ -1182,7 +1228,10 @@ class LedgerService:
         payment_status = str(payload.slots.get("PS") or "已结")
 
         line_drafts: list[DocLineDraft] = []
-        inv_deltas: list[InventoryDelta] = []
+        # 同一张卡里同一个商品可能出现多行（「两箱可乐，三箱可乐」是两个 item）。
+        # 若每行各做一次 CAS，第二行时库里 version 已 +1 → **永久 1202**，
+        # 用户怎么重试都不成。所以先按 product_id 合并数量，只做一次 CAS。
+        inv_deltas_by_product: dict[uuid.UUID, InventoryDelta] = {}
         ar_deltas: list[ArApDelta] = []
 
         for line in payload.lines:
@@ -1213,14 +1262,21 @@ class LedgerService:
             mode = str(side_effect.get("inventory_delta") or "none")
             if mode in {"increase", "decrease", "snapshot"}:
                 sign = -1 if mode == "decrease" else 1
-                inv_deltas.append(
-                    InventoryDelta(
+                merged = inv_deltas_by_product.get(product_id)
+                if merged is None:
+                    inv_deltas_by_product[product_id] = InventoryDelta(
                         product_id=product_id,
                         qty_base_delta=qty_base * sign,
                         expected_version=versions.get(str(product_id)),
                         snapshot=mode == "snapshot",
                     )
-                )
+                else:
+                    inv_deltas_by_product[product_id] = InventoryDelta(
+                        product_id=product_id,
+                        qty_base_delta=merged.qty_base_delta + qty_base * sign,
+                        expected_version=merged.expected_version,
+                        snapshot=merged.snapshot or mode == "snapshot",
+                    )
 
             ar_mode = str(side_effect.get("ar_ap_delta") or "none")
             partner_id = _as_uuid(line.get("partner_id") or payload.slots.get("C") or payload.slots.get("S"))
@@ -1236,6 +1292,7 @@ class LedgerService:
                     )
                 )
 
+        inv_deltas = list(inv_deltas_by_product.values())
         try:
             if inv_deltas:
                 InventoryService(self._session).apply(
