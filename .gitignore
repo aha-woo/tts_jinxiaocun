@@ -10,6 +10,11 @@ __pycache__/
 .env.local
 project.private.config.json
 
+# 仓库根目录的开发者工具配置：本项目的小程序工程根是 miniprogram/，
+# 根目录一旦被微信开发者工具打开就会自动吐出一份 useCompilerPlugins:false 的
+# 配置，把 TypeScript 编译插件关掉、指向错误的工程根。它不该存在，也不该入库。
+/project.config.json
+
 # 构建与测试产物
 .pytest_cache/
 .ruff_cache/
