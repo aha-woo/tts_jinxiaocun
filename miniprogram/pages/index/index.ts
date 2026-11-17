@@ -18,8 +18,7 @@ import {
   usage,
   type ParsePayload,
 } from '../../services/api';
-import { AudioGate, type GateState, type RecordingResult } from '../../services/audio-gate';
-import { uploadAudio } from '../../services/upload';
+import { SPEECH_UNAVAILABLE_HINT, SpeechGate, type SpeechGateState } from '../../services/speech';
 import { isDuplicateText } from '../../utils/dedupe';
 import { formatDateTime } from '../../utils/format';
 
@@ -98,6 +97,8 @@ interface IndexData {
   mode: 'hold' | 'tap';
   talkingText: string;
   errorText: string;
+  /** 同声传译插件是否可用（不可用时降级为键盘录入，大按钮仍可点、只给提示） */
+  speechReady: boolean;
   recent: { id: string; text: string; intent: string; at: string; ok: boolean }[];
   wide: boolean;
   selfCheckOpen: boolean;
@@ -118,6 +119,7 @@ Page<IndexData, WechatMiniprogram.Page.CustomOption>({
     mode: 'hold',
     talkingText: '',
     errorText: '',
+    speechReady: true,
     recent: [],
     wide: false,
     selfCheckOpen: false,
@@ -125,19 +127,26 @@ Page<IndexData, WechatMiniprogram.Page.CustomOption>({
     loginOk: false,
   },
 
-  gate: null as AudioGate | null,
+  gate: null as SpeechGate | null,
 
   onLoad() {
     // 用局部变量接住，避免 `Page({})` 的 `this` 推断不到具体类型时把回调参数退化成 any。
-    const gate: AudioGate = new AudioGate();
+    const gate: SpeechGate = new SpeechGate();
     this.gate = gate;
-    gate.onState((state: GateState) => {
+    gate.onState((state: SpeechGateState) => {
       this.setData({
         recording: state.recording,
         durationMs: state.durationMs,
         bars: state.bars,
         softLimit: state.softLimitReached,
+        // 插件的中间结果只用来做「正在说：…」的实时反馈，不参与任何落账判断
+        talkingText: state.recording && state.partialText !== '' ? `正在说：${state.partialText}` : '',
       });
+    });
+    // 插件没配好：**不崩不白屏**，只是把语音降级成键盘（大按钮仍可点，点了给同一句提示）
+    this.setData({
+      speechReady: gate.available,
+      errorText: gate.available ? '' : SPEECH_UNAVAILABLE_HINT,
     });
     void this.bootstrap();
   },
@@ -154,7 +163,8 @@ Page<IndexData, WechatMiniprogram.Page.CustomOption>({
 
   /** 登录 + 健康检查 + 额度（三件事都失败也不阻塞录入，只提示）。 */
   async bootstrap(): Promise<void> {
-    this.setData({ loading: true, errorText: '' });
+    // 不清掉「语音未启用」这句：它由 onLoad 按插件可用性设定，清掉就等于骗用户「能说」
+    this.setData({ loading: true, errorText: this.data.speechReady ? '' : SPEECH_UNAVAILABLE_HINT });
     try {
       await this.doLogin();
       const payload = await health();
@@ -196,8 +206,13 @@ Page<IndexData, WechatMiniprogram.Page.CustomOption>({
     }
   },
 
-  /** 大按钮：开始录音。 */
+  /** 大按钮：开始说话。 */
   onStart(): void {
+    if (!this.data.speechReady) {
+      // 插件没配好：按钮**仍可点**，点了给一句能照做的提示（不崩、不白屏、不静默）
+      wx.showToast({ title: SPEECH_UNAVAILABLE_HINT, icon: 'none' });
+      return;
+    }
     if (!this.data.degrade.canVoice) {
       wx.showToast({ title: '只读模式下不能记账', icon: 'none' });
       return;
@@ -209,28 +224,28 @@ Page<IndexData, WechatMiniprogram.Page.CustomOption>({
     this.gate.start();
   },
 
-  /** 大按钮：结束录音 → 直传 → 解析。 */
+  /** 大按钮：结束说话 → 端侧已转成文字 → 建会话 → 只把文字发给后端解析。 */
   async onStop(): Promise<void> {
     if (this.gate === null) {
       return;
     }
-    const recording: RecordingResult | null = await this.gate.stop();
-    if (recording === null) {
-      return; // 被门禁丢弃（太短/静音），不发请求、不扣次
+    const said = await this.gate.stop();
+    if (said === null) {
+      return; // 被门禁丢弃（太短/没听到/插件没给文字），不发请求、不扣次
     }
     this.setData({ loading: true, talkingText: '识别中…' });
     try {
-      // ① 建会话拿上传票据 → ② 音频直传（只回引用）→ ③ 解析只传引用
+      // ① 建会话（拿会话 id 与令牌桶额度）→ ② 解析：只传文字，音频不出手机
       const session = await createVoiceSession({
-        duration_ms: recording.durationMs,
+        duration_ms: said.durationMs,
         mode: this.data.mode,
       });
-      const uploaded = await uploadAudio(recording.tempFilePath, recording.durationMs, session.upload_ticket);
       const parsed = await parseSession(session.session_id, {
-        audio_object_ref: uploaded.audioObjectRef,
-        duration_ms: uploaded.durationMs,
+        asr_text: said.text,
+        duration_ms: said.durationMs,
       });
-      this.handleParsed(parsed, '');
+      // 传**真实文字**（不再是空串）：60 秒内重复说同一句才会被 isDuplicateText 拦下
+      this.handleParsed(parsed, said.text);
     } catch (error) {
       this.setData({ errorText: this.messageOf(error) });
       await this.refreshUsage();
