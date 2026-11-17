@@ -124,41 +124,43 @@ alembic upgrade head --sql > schema.sql                            # 离线渲�
 > 不防同 VPC 内的中间人。**内网直连可以接受**（可用 `require`）；一旦退成「公网 + 白名单」，
 > 必须换成 `sslmode=verify-full` + `sslrootcert`，否则等于裸奔。
 
-**② 必须在云开发环境里实测的四项（Q25，逐条给命令，别只看控制台）**
+**② 必须在云开发环境里实测的四项（Q25）**
 
-在**云托管容器内**（不是本机）跑，任一失败就要按「退路」处理：
+在**云托管容器内**跑。注意：应用镜像是 `python:3.11-slim`，**没有装 `psql`**
+（见 `server/Dockerfile`），所以下面用**已装好的 `psycopg`** 做探针，别写 `psql` 命令——
+写了也跑不起来，只会浪费时间。
 
 ```bash
-# Q25-1 内网连通（是否真的同 VPC / 端口是否放通）
-getent hosts "$PGHOST"                       # 期望解析到内网地址（10.x/172.16-31.x），不是公网 IP
+# 先把云开发控制台给的 PG* 变量与 DATABASE_URL 都注入容器，然后：
 python - <<'PY'
-import os, psycopg
+import os, socket, psycopg
+
+# Q25-1 内网连通：期望解析到内网地址（10.x / 172.16-31.x），不是公网 IP
+host = os.environ["PGHOST"]
+print("Q25-1 resolve:", host, "->", socket.gethostbyname(host))
+
 dsn = ("host=%s port=%s dbname=%s user=%s password=%s sslmode=require connect_timeout=5"
-       % (os.environ["PGHOST"], os.environ.get("PGPORT", "5432"), os.environ["PGDATABASE"],
+       % (host, os.environ.get("PGPORT", "5432"), os.environ["PGDATABASE"],
           os.environ["PGUSER"], os.environ["PGPASSWORD"]))
 with psycopg.connect(dsn) as conn:
-    print("connected", conn.execute("select version()").fetchone()[0])
+    q = lambda sql: conn.execute(sql).fetchall()
+    print("Q25-2 version  :", q("show server_version")[0][0])          # 主版本号
+    print("Q25-3 max_conn :", q("show max_connections")[0][0])         # 对上 15×实例数
+    print("Q25-3 in_use   :", q("select count(*) from pg_stat_activity")[0][0])
+    print("Q25-4 available:", [r[0] for r in q(
+        "select name from pg_available_extensions where name in ('pg_trgm','pgcrypto')")])
+    print("Q25-4 installed:", [r[0] for r in q("select extname from pg_extension")])
+    print("Q25-5 role     :", q(
+        "select current_user, usesuper, usebypassrls from pg_user where usename = current_user"))
+    print("Q25-6 can create schema:", q("select has_database_privilege(current_user, current_database(), 'CREATE')")[0][0])
 PY
-
-# Q25-2 主版本号（决定 FORCE RLS / jsonb / psycopg3 是否需要降级写法）
-psql "$DATABASE_URL" -Atc "show server_version"
-
-# Q25-3 连接数上限（对上表 15×实例数 的预算）
-psql "$DATABASE_URL" -Atc "show max_connections"
-psql "$DATABASE_URL" -Atc \
-  "select count(*) from pg_stat_activity" # 与 usename 分组一起看，确认应用账号配额
-
-# Q25-4 扩展可用性（代码不依赖，但先问清楚免得以后想加索引时才发现没权限）
-psql "$DATABASE_URL" -Atc "select name from pg_available_extensions where name in ('pg_trgm','pgcrypto')"
-psql "$DATABASE_URL" -Atc "select extname from pg_extension"
-
-# Q25-5 应用账号不是超级用户、也不能 BYPASSRLS（这是 FORCE 之外的第二重保证）
-psql "$DATABASE_URL" -Atc \
-  "select current_user, usesuper, usebypassrls from pg_user where usename = current_user"
 ```
 
-- **内网不通** → 先按架构 Q25 的退路办：改「公网 + 白名单」（此时**必须** `sslmode=verify-full`），
-  或退方案 B；**不要**先动手改迁移。
+- `Q25-5` 必须是 `usesuper=False, usebypassrls=False`（`FORCE RLS` 之外的第二重保证）；
+  若是 superuser 或 BYPASSRLS，RLS 等于不存在，**必须先换应用账号**。
+- `Q25-6` 直接回答 Q26 的前置未知：应用账号能不能自己建 `vil` schema。
+- **内网不通** → 先按架构 Q25 的退路办：改「公网 + 白名单」（此时**必须** `sslmode=verify-full`
+  + `sslrootcert`），或退方案 B；**不要**先动手改迁移。
 - 实测通过后，把 `PG_TEST_URL` 注入 CI，`tests/test_rls_cross_tenant.py` 的 5 条会从 `skip` 变成真跑。
 
 **③ Q26：业务表放哪个 schema —— 我的结论与理由（等架构确认后我改迁移）**
@@ -186,7 +188,7 @@ psql "$DATABASE_URL" -Atc \
   是**在跑第一个 revision 之前**建的。所以 `vil` schema 必须在 `context.run_migrations()`
   **之前**存在（`CREATE SCHEMA IF NOT EXISTS` 要放在 env.py 的 online 分支里，而不是放在
   `0001_initial.py` 里）。放错位置的后果不是报错，而是**建出第二套表**或「以为升级过了」。
-- ⚠️ **两个前置未知**：① 云开发 PG 模式下应用账号**有没有 `CREATE SCHEMA` 权限**（与 Q25-5 同批测）；
+- ⚠️ **两个前置未知**：① 云开发 PG 模式下应用账号**有没有 `CREATE SCHEMA` 权限**（探针 `Q25-6` 直接回答）；
   ② 若没有，得由控制台/DBA 预建 `vil` 并 `GRANT USAGE`。这两条**未实测**，所以：**Q26 的迁移改动
   等 Q25 实测回来再落地**，现在不动 `migrations/`。
 
@@ -511,6 +513,16 @@ docker run --rm -p 8000:80 voice-inventory-lite:local
   - PG 上的只读预演（`SET TRANSACTION READ ONLY`）与真并发 CAS 冲突（需 `PG_TEST_URL`）。
 - 运维：把 PG 的**应用账号**建成非 `BYPASSRLS`、非表 owner（`FORCE` 之外的第二重保证），
   并用 `tests/test_rls_cross_tenant.py` 在真库上复核一次
+- **数据层口径（v1.1.1，必须先做，会卡住 T02 收尾）**：
+  - **Q25 四项全部未实测**（本机无 PG、无云环境凭证）：内网连通 / 连接数上限 / PG 主版本 /
+    扩展可用性。命令见上文「Q25 实测四项」，**必须在云托管容器内跑**；未通过前不改迁移。
+  - **Q26 schema 归属**：我的结论是「独立 schema，但命名 `vil` 而非 `app`」（理由与 4 个触点见
+    上文）。**等架构确认 + `CREATE SCHEMA` 权限实测回来再动 `migrations/`**——
+    顺序陷阱：`CREATE SCHEMA` 必须放在 `env.py` 的 online 分支、`run_migrations()` 之前。
+  - 生产环境变量只认 `DATABASE_URL`，**PG\* 那套不生效**（见上文）。
+- 迁移机制遗留（QA Round 3 实测）：`0001_initial.py` 用 `Base.metadata.create_all()`，
+  它**只建缺的表、不补列**。所以**上线后第一次加列必须手写 `op.add_column` 的独立 revision**，
+  不能指望 `create_all` 或 `alembic upgrade head` 自动补（`card_id` 列那次就会踩）。
 
 
 ## 测试约定：写操作必须断言**业务终态**
