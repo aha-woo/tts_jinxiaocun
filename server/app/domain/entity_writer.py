@@ -298,7 +298,16 @@ class EntityWriter:
         slots: Mapping[str, Any],
         source: Mapping[str, str],
     ) -> EntityWriteResult:
-        """``product.alias.add``：给商品加一个个人叫法。"""
+        """``product.alias.add``：给商品加一个个人叫法。
+
+        同时写两处（缺一处「教说法」就只是一半生效）：
+
+        - ``product_alias``：**解析词表真正读的是这张表**（``load_product_lexicon``），
+          不写它 → 说了等于没说，下一句照样识别不出来；
+        - ``personal_dict``：``sys.teach`` 契约里的落点（``entities=[dict_personal]``）。
+
+        两张表都是 ``member`` 维度、都有唯一约束，重复教同一句不会写两条。
+        """
         del store_id, source
         product = self._require_product(tenant_id, _text(slots.get("P")), intent="product.alias.add")
         alias_text = _text(slots.get("ALIAS"))
@@ -309,6 +318,13 @@ class EntityWriter:
             member_id=member_id,
             product_id=product.product_id,
             alias_text=alias_text,
+        )
+        self._add_personal_dict(
+            tenant_id=tenant_id,
+            member_id=member_id,
+            raw_text=alias_text,
+            mapped_type="product",
+            mapped_id=product.product_id,
         )
         return EntityWriteResult(
             intent_id="product.alias.add",
@@ -620,16 +636,29 @@ class EntityWriter:
         return product, True
 
     def _find_product_by_name(self, tenant_id: uuid.UUID, name: str) -> Product | None:
-        """按名字查商品（tenant 条件由 ORM 全局 scope + 显式 where 双重保证）。"""
+        """按名字查商品（**兼容规则层填进来的「展示名」**）。
+
+        为什么不能只按全名查：规则层把 ``P`` 填成 ``display_name()``
+        （``"可乐 500ml"``，见 ``template_engine``），而档案里 ``Product.name``
+        只有 ``"可乐"``。只比全名 → 别名/改价/改名这些意图的卡片**一出生就 422**，
+        提示还写着「没有找到商品 可乐 500ml」——用户看着商品明明在，会以为系统坏了。
+
+        所以按「全名 → 去掉规格后的名字」两段查，先全名后短名（全名唯一性更高）。
+        tenant 条件由 ORM 全局 scope + 显式 where 双重保证。
+        """
         target = (name or "").strip()
         if not target:
             return None
-        return self._session.execute(
-            select(Product)
-            .where(Product.tenant_id == tenant_id, Product.name == target)
-            .order_by(Product.status.asc())
-            .limit(1)
-        ).scalar_one_or_none()
+        for candidate in _name_candidates(target):
+            found = self._session.execute(
+                select(Product)
+                .where(Product.tenant_id == tenant_id, Product.name == candidate)
+                .order_by(Product.status.asc())
+                .limit(1)
+            ).scalar_one_or_none()
+            if found is not None:
+                return found
+        return None
 
     def _require_product(self, tenant_id: uuid.UUID, name: str, *, intent: str) -> Product:
         """取商品；不存在就报错（不自动建 —— 「改价」不该顺手建一个新商品）。"""
@@ -771,6 +800,27 @@ class EntityWriter:
 # ---------------------------------------------------------------------------
 # 工具（全部纯函数，便于单测）
 # ---------------------------------------------------------------------------
+#: 展示名里「名称」与「规格」之间的分隔符（``display_name()`` 用的是半角空格，
+#: 但用户/LLM 偶尔会给全角空格或斜杠）
+_NAME_SEPARATORS: tuple[str, ...] = (" ", "\u3000", "/", "／", "|", "｜")
+
+
+def _name_candidates(target: str) -> tuple[str, ...]:
+    """``"可乐 500ml"`` → ``("可乐 500ml", "可乐")``（**全名优先**）。
+
+    纯粹做「去掉规格」的候选展开，不做模糊匹配——查不到就是查不到，
+    交给上层的澄清/报错去问用户，不在这里猜。
+    """
+    candidates: list[str] = [target]
+    for separator in _NAME_SEPARATORS:
+        if separator not in target:
+            continue
+        head = target.split(separator, 1)[0].strip()
+        if head and head not in candidates:
+            candidates.append(head)
+    return tuple(candidates)
+
+
 def _text(value: Any) -> str:
     """槽位值转成去空白的字符串（``None`` → ``""``）。"""
     if value is None:

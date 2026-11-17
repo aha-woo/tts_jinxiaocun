@@ -200,6 +200,9 @@ class WriteOutcome:
     detail: str = ""
     entity_result: EntityWriteResult | None = None
     reversal: ReversalOutcome | None = None
+    #: 落账之后**还需要用户做一步**时带出的结构化指引（目前只有 ``sys.correct``：
+    #: 反做完成 → 等用户重说一句正确的）。``None`` = 一句话就办完了。
+    follow_up: dict[str, Any] | None = None
 
 
 @dataclass(frozen=True)
@@ -224,6 +227,8 @@ class ConfirmOutcome:
     #: 反做单（``sys.undo``）：原单保留，这里是反做单 id/号
     reversal_doc_id: str | None = None
     reversal_doc_no: str | None = None
+    #: 还需要用户接着做的一步（``sys.correct``：反做已完成 → 请重说一句正确的）
+    follow_up: dict[str, Any] | None = None
 
     @property
     def confirmed(self) -> bool:
@@ -246,6 +251,7 @@ class ConfirmOutcome:
             ),
             "reversal_doc_id": self.reversal_doc_id,
             "reversal_doc_no": self.reversal_doc_no,
+            "follow_up": dict(self.follow_up) if self.follow_up else None,
             "expired": self.expired,
             "needs_second_voice": self.needs_second_voice,
             "error_code": self.error_code,
@@ -721,6 +727,7 @@ class LedgerService:
             summary=outcome.entity_result.summary if outcome.entity_result else "",
             reversal_doc_id=outcome.reversal.reversal_doc_id if outcome.reversal else None,
             reversal_doc_no=outcome.reversal.reversal_doc_no if outcome.reversal else None,
+            follow_up=outcome.follow_up,
         )
 
     # ------------------------------------------------------------------ 取消 / 超时 / 复活
@@ -1148,28 +1155,28 @@ class LedgerService:
     ) -> WriteOutcome:
         """``sys.undo`` / ``sys.correct``：**生成反做单，原单保留**。
 
-        - ``sys.undo``：定位原单 → :meth:`ReversalService.reverse`
-          （窗口超时 ``E_REVERSAL_WINDOW_CLOSED``、被引用 ``E_DOC_REFERENCED``
-          都按契约原样抛出，不吞）；
-        - ``sys.correct``：需要「撤销 + 按新值重新落一张单」。后者要用户确认过
-          新的金额与数量，而卡片里只有 ``DOC/TV/P/Q/TF`` 这几个槽位，凑不出可信的
-          明细行——**宁可明确拒绝，也不生成一笔用户没确认过的金额**。
+        两者共用「反做」这一步，差别只在**做完之后**：
+
+        - ``sys.undo``：反做完成，这件事就结束了；
+        - ``sys.correct``：反做只是第一步（契约 ``name_zh`` 写的就是「反做 + 重记」）。
+          第二步的「重记」**必须由用户重新说一句**——卡片里只有 ``DOC/TV``
+          这类槽位，凑不出可信的明细行，替他猜一个金额就是记一笔他没确认过的账。
+          所以这里返回 ``follow_up``，让回执直接告诉他下一句该怎么说。
+
+        上一版在 ``sys.correct`` 分支**直接抛错**，结果是：卡照样建出来、确认 100%
+        失败（38 个意图里有 2 个是这种卡）。反做本来就是可执行的第一步，先做掉。
         """
-        if spec_intent == "sys.correct":
-            raise AppError(
-                "E_VALIDATION",
-                message=(
-                    "更正需要两步：先「撤销上一单」把原单反做掉，再重新录一句正确的。"
-                    "我不会替你猜新金额（猜错就是一笔你没确认过的账）"
-                ),
-                data={"reason": "correct_requires_rerecord", "intent_id": spec_intent},
-            )
+        is_correct = spec_intent == "sys.correct"
 
         target = self._resolve_target_doc(tenant_id=tenant_id, raw_ref=payload.slots.get("DOC"))
         if target is None:
             raise AppError(
                 "E_VALIDATION",
-                message="没找到要撤销的单据；请说清单号，或直接说「撤销上一单」",
+                message=(
+                    "没找到要撤销的单据；请说清单号，或直接说「撤销上一单」"
+                    if not is_correct
+                    else "没找到要更正的原始单据；请说清单号，或直接说「更正上一单」"
+                ),
                 data={"reason": "reversal_target_not_found", "doc_ref": str(payload.slots.get("DOC") or "")},
             )
         if target.biz_date != biz_date:
@@ -1185,18 +1192,62 @@ class LedgerService:
             store_id=store_id,
             doc_id=target.doc_id,
             member_id=member_id,
-            reason="语音撤销（sys.undo）",
+            reason="语音撤销（sys.undo）" if not is_correct else "语音更正第一步：反做原单（sys.correct）",
         )
+        detail = (
+            f"已撤销 {target.doc_no}：原单保留且标记为「已撤销」，"
+            f"另生成反做单 {reversal.reversal_doc_no}（两笔都可查、可导出）"
+        )
+        follow_up: dict[str, Any] | None = None
+        if is_correct:
+            # 用户说了「改成 80」时，``TV`` 是**他的意图**，不是可以替他落账的新金额。
+            # 原样带进下一步指引：重记时他照着说，账才记得准。
+            raw_target = payload.slots.get("TV")
+            target_amount_fen = (
+                int(raw_target)
+                if isinstance(raw_target, int) and not isinstance(raw_target, bool)
+                else None
+            )
+            hint = f"{target.doc_no} 已撤销。请重新说一句正确的，比如「进了三箱可乐，一件三十五」"
+            if target_amount_fen:
+                hint = (
+                    f"{target.doc_no} 已撤销。你说要改成 {target_amount_fen / 100:.2f} 元；"
+                    "请重说一句带商品和数量的（比如「进了三箱可乐，一件三十五」），"
+                    "我照着新的话记，不替你猜"
+                )
+            detail = (
+                f"更正第一步完成：{target.doc_no} 已反做（反做单 {reversal.reversal_doc_no}）。"
+                "现在请重说一句正确的（要说清商品和数量）"
+            )
+            follow_up = {
+                "action": "rerecord",
+                "step": 2,
+                "total_steps": 2,
+                "hint_zh": hint,
+                "examples": ["进了三箱可乐，一件三十五", "卖了三瓶可乐，一瓶两块五"],
+                "reverted_doc_no": str(target.doc_no),
+                "reversal_doc_no": str(reversal.reversal_doc_no),
+                "target_amount_fen": target_amount_fen,
+            }
         return WriteOutcome(
             doc_id=uuid.UUID(str(reversal.reversal_doc_id)),
             doc_no=str(reversal.reversal_doc_no),
             total_amount_fen=int(target.total_amount_fen),
-            detail=(
-                f"已撤销 {target.doc_no}：原单保留且标记为「已撤销」，"
-                f"另生成反做单 {reversal.reversal_doc_no}（两笔都可查、可导出）"
-            ),
+            detail=detail,
             reversal=reversal,
+            follow_up=follow_up,
         )
+
+    def resolve_reversal_target(
+        self, *, tenant_id: uuid.UUID, raw_ref: Any
+    ) -> DocHeader | None:
+        """公开的「这句话能不能反做」预判（**只读**，不写库、不建卡）。
+
+        路由层用它做一件事：**定位不到原单就不建卡**。
+        否则用户会拿到一张「确认更正 / 确认撤销」的卡，点下去必 422——
+        卡片是承诺，承诺做不到就别给。
+        """
+        return self._resolve_target_doc(tenant_id=tenant_id, raw_ref=raw_ref)
 
     def _resolve_target_doc(
         self, *, tenant_id: uuid.UUID, raw_ref: Any

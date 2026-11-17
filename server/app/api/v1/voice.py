@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import date, datetime, timezone
+from decimal import Decimal
 from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, Request
@@ -30,6 +31,7 @@ from app.common.envelope import ok
 from app.common.errors import AppError
 from app.config import Settings
 from app.deps import AuthContextDep, SettingsDep, TenantSessionDep, get_database
+from app.domain.doc_service import DocService
 from app.domain.report_service import ReportService
 from app.models.voice import VoiceSession
 from app.services.degrade import DegradeController
@@ -38,16 +40,17 @@ from app.services.ledger import LedgerService
 from app.services.pending_task import PendingTaskService
 from app.services.quota import QuotaService
 from app.services.upload_ticket import UploadTicketRequest, UploadTicketService
-from app.services.voice_runtime import lines_of_result
+from app.services.voice_runtime import LedgerLine, lines_of_result
 from app.voice.gate import Gate
 from app.voice.impact_preview import ImpactPreviewService, build_deltas
-from app.voice.output_schema import SOURCE_VALUES
+from app.voice.output_schema import SOURCE_VALUES, ClarifyPrompt
 from app.voice.pipeline import PipelineResult
 from app.voice.routing import (
     ROUTE_ANSWER,
     ROUTE_PENDING_TASK,
     route_of_spec,
 )
+from app.voice.teach import TeachPlan, clarify_options, plan_teach
 
 router = APIRouter(prefix="/voice", tags=["voice"])
 
@@ -62,6 +65,86 @@ STATE_PENDING_TASK = "PENDING_TASK"
 STATE_CLOSED_READ = "CLOSED_READ"
 STATE_REJECTED = "REJECTED"
 STATE_FAILED = "FAILED"
+
+#: 走「反做原单」这条路的意图（确认时需要定位到一张真实单据）
+_REVERSAL_INTENTS: frozenset[str] = frozenset({"sys.undo", "sys.correct"})
+
+
+def _bump_round(current: Any) -> int:
+    """澄清轮数 +1（``None`` 视为 0；不越过 ``max_rounds=2``）。"""
+    try:
+        value = int(current or 0)
+    except (TypeError, ValueError):  # pragma: no cover - 脏数据兜底
+        value = 0
+    return min(value + 1, 2)
+
+
+def _json_number(value: Any) -> Any:
+    """``Decimal`` → JSON 友好的数字（整数保持整数，免得界面上出现 ``2.0000``）。"""
+    try:
+        number = value if isinstance(value, Decimal) else Decimal(str(value))
+    except (ArithmeticError, TypeError, ValueError):  # pragma: no cover - 脏数据兜底
+        return value
+    return int(number) if number == number.to_integral_value() else float(number)
+
+
+def _reversal_lines(
+    session: Any, *, tenant_id: uuid.UUID, target: Any, runtime: Any
+) -> list[Any]:
+    """撤销/更正卡片的明细：**来自原单**（这次要反做的就是它）。
+
+    为什么不能沿用「本次解析出的明细」：``sys.undo`` / ``sys.correct`` 的槽位里
+    没有商品和数量，硬凑只会得到一行 ``pending=True`` 的空明细 →
+    卡片一整片黄、确认被行级 pending 守卫拦下（**又是一张建得出、点下去必失败的卡**）。
+    反做卡的明细本来就该是「原单那几行」，原样展示，用户才知道自己要撤的是什么。
+    """
+    rows = DocService(session).lines_of(tenant_id=tenant_id, doc_id=target.doc_id)
+    lines: list[Any] = []
+    for row in rows:
+        entry = runtime.products.lexicon.lookup(str(row.product_id))
+        lines.append(
+            LedgerLine(
+                product_id=str(row.product_id),
+                product_label=entry.display_name() if entry is not None else str(row.product_id)[:8],
+                # 卡片载荷要落 JSON 列，``Decimal`` 直接塞会 500（不是 JSON 可序列化）
+                quantity=_json_number(row.qty),
+                unit=str(row.unit),
+                qty_base=row.qty_base,
+                unit_price_fen=int(row.unit_price_fen),
+                amount_fen=int(row.amount_fen),
+                calc_trace=f"原单 {target.doc_no} 的明细（按原样反做）",
+                pending=False,
+            )
+        )
+    return lines
+
+
+def _teach_clarify(plan: TeachPlan) -> ClarifyPrompt:
+    """把「教说法」问不出结果的情况，翻成一次标准追问（2~3 个可点选项）。"""
+    if plan.reason == "no_alias":
+        return ClarifyPrompt(
+            slot="ALIAS",
+            question="要把哪句话记成一个商品？照这个说：「以后我说『快乐水』就是可乐」",
+            options=clarify_options(plan.candidates, fallback="再教一次"),
+        )
+    if plan.reason == "no_target":
+        return ClarifyPrompt(
+            slot="P",
+            question=f"「{plan.alias}」要记成哪个商品？",
+            options=clarify_options(plan.candidates, fallback="先不教了"),
+        )
+    if plan.reason == "ambiguous":
+        return ClarifyPrompt(
+            slot="P",
+            question=f"「{plan.alias}」记成哪一个？（它现在的说法能对上好几个商品）",
+            options=clarify_options(plan.candidates, fallback="先不教了"),
+        )
+    return ClarifyPrompt(
+        slot="P",
+        question=f"没找到「{plan.target_text or ''}」这个商品；「{plan.alias}」要记成哪个？",
+        options=clarify_options(plan.candidates, fallback="先建这个商品"),
+    )
+
 
 
 class SessionCreateRequest(BaseModel):
@@ -392,6 +475,95 @@ def parse_session(
             ),
         )
 
+    # ---- ⑥.4 撤销/更正：**定位不到原单就不建卡**（建了必 422）
+    #
+    # 「卡片」是给用户的承诺。撤销/更正卡确认时要先把 ``DOC`` 解析成一张真实单据，
+    # 定位不到就 422 —— 那就是一张「建得出来、点下去必失败」的卡。
+    # 所以这里先做一次**只读预判**，定位不到就当场说清楚，转澄清让他补单号。
+    reversal_target: Any = None
+    if spec is not None and spec.intent_id in _REVERSAL_INTENTS and result.parse is not None:
+        ledger = LedgerService(session, card_ttl_seconds=settings.card_ttl_seconds)
+        reversal_target = ledger.resolve_reversal_target(
+            tenant_id=ids.tenant_id, raw_ref=result.parse.slots.get("DOC")
+        )
+        if reversal_target is None:
+            is_correct = spec.intent_id == "sys.correct"
+            prompt = ClarifyPrompt(
+                slot="DOC",
+                question=(
+                    "没找到要更正的原始单据（今天还没记过，或者那张已经撤销过了）。要更正哪一单？"
+                    if is_correct
+                    else "没找到可以撤销的单据（今天还没记过，或者已经撤销过了）。要撤销哪一单？"
+                ),
+                options=["我说个单号", "先记一单", "算了"],
+            )
+            voice_session.state = STATE_CLARIFYING
+            voice_session.clarify_round = _bump_round(voice_session.clarify_round)
+            session.flush()
+            return JSONResponse(
+                status_code=200,
+                content=ok(
+                    {
+                        **base,
+                        "route": "clarify",
+                        "clarify": prompt.model_dump(),
+                        "max_rounds": 2,
+                    }
+                ),
+            )
+
+    # ---- ⑥.5 教说法（sys.teach）：**先补「指向对象」**
+    #
+    # 契约里 ``sys.teach`` 只有 ``ALIAS``，没有指向对象；而落库必须有 ``mapped_id``。
+    # 上一版让人带着这个缺口一路走到确认，结果卡建出来、确认必报
+    # 「要指向哪个商品」。这里当场把话拆成（说法, 指向）：
+    # - 指向唯一命中 → **改写成 ``product.alias.add``**（它才有 P + ALIAS 两个槽位），
+    #   走正常卡片 → 确认 → 写真别名，下一句立刻生效；
+    # - 拆不出/歧义 → 澄清（2~3 个可点候选），**不建卡**。
+    if spec is not None and spec.intent_id == "sys.teach" and result.parse is not None:
+        plan = plan_teach(text=text, resolver=runtime.products)
+        if not plan.ok:
+            prompt = _teach_clarify(plan)
+            voice_session.state = STATE_CLARIFYING
+            voice_session.clarify_round = _bump_round(voice_session.clarify_round)
+            session.flush()
+            return JSONResponse(
+                status_code=200,
+                content=ok(
+                    {
+                        **base,
+                        "route": "clarify",
+                        "clarify": prompt.model_dump(),
+                        "max_rounds": 2,
+                        "teach": {
+                            "reason": plan.reason,
+                            "alias": plan.alias,
+                            "candidates": list(plan.candidates),
+                        },
+                    }
+                ),
+            )
+        assert plan.target is not None  # plan.ok 已保证
+        result.parse.intent = "product.alias.add"
+        result.parse.slots = {"P": plan.target.product_name, "ALIAS": plan.alias}
+        result.parse.source = {
+            "P": "alias" if plan.target.from_alias else "asr",
+            "ALIAS": "asr",
+        }
+        spec = runtime.registry.require("product.alias.add")
+        base["parse_result"] = result.parse.model_dump()
+        base["teach"] = {
+            "original_intent": "sys.teach",
+            "alias": plan.alias,
+            "product": plan.target.product_name,
+            "written_as": "product.alias.add",
+            "note_zh": (
+                "教说法落成商品别名（同时进个人词表）："
+                "确认后下一句就能用这个说法"
+            ),
+        }
+        session.flush()
+
     # ---- ⑦ 出卡片：影响预演（只读）→ 建卡 → 同一事务扣 1 次
     if result.parse is None:
         voice_session.state = STATE_FAILED
@@ -411,8 +583,15 @@ def parse_session(
         )
 
     items = result.template.items if result.template is not None else ()
-    lines = lines_of_result(
-        result.parse, runtime=runtime, items=items, partner_id=payload.partner_id
+    # 反做卡（撤销/更正）的明细必须来自**原单**，不能来自本次解析：
+    # 这类意图的槽位里没有商品和数量，硬凑就是一行 pending 空明细，
+    # 卡一片黄、确认必被行级守卫拦下（「建得出、点下去必失败」的老毛病）。
+    lines = (
+        _reversal_lines(session, tenant_id=ids.tenant_id, target=reversal_target, runtime=runtime)
+        if reversal_target is not None and spec.intent_id in _REVERSAL_INTENTS
+        else lines_of_result(
+            result.parse, runtime=runtime, items=items, partner_id=payload.partner_id
+        )
     )
     side_effect = dict(spec.side_effect or {})
     deltas = build_deltas(
@@ -447,18 +626,23 @@ def parse_session(
     voice_session.state = STATE_AWAIT_CONFIRM
     session.flush()
 
-    return JSONResponse(
-        status_code=200,
-        content=ok(
-            {
-                **base,
-                "route": "card",
-                "card": creation.as_dict(),
-                "credit_consumed": creation.billed,
-                "billing_note": "卡片生成成功才扣 1 次；确认/取消/超时都不再扣",
-            }
-        ),
-    )
+    body: dict[str, Any] = {
+        **base,
+        "route": "card",
+        "card": creation.as_dict(),
+        "credit_consumed": creation.billed,
+        "billing_note": "卡片生成成功才扣 1 次；确认/取消/超时都不再扣",
+    }
+    if spec.intent_id == "sys.correct":
+        # 更正 = 反做 + 重记两步，第一步在卡上，第二步靠用户再开口。
+        # 必须在**确认之前**就说清楚：确认后账上会先少一单，不是马上就改好了。
+        body["next_step_zh"] = (
+            "确认后我会先把这个单子反做掉（原单保留、可查）；"
+            "然后你再重说一句正确的，比如「进了三箱可乐，一件三十五」。"
+            "我不会替你猜新金额——猜错就是一笔你没确认过的账。"
+        )
+
+    return JSONResponse(status_code=200, content=ok(body))
 
 
 def _read_only_answer(

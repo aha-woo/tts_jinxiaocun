@@ -1230,7 +1230,7 @@
         "ar_ap_delta": "none",
         "affects_report": true,
         "entities": ["doc", "reversal_doc"],
-        "note": "反做原单 + 生成更正单，原单保留"
+        "note": "反做原单（第一步，可执行）；更正单由用户重说一句后按正常录入重新落账——卡片槽位里没有可信的新明细，替用户猜新金额就是记一笔他没确认过的账"
       },
       "reversal": {
         "allowed": true,
@@ -1328,7 +1328,8 @@
         "inventory_delta": "none",
         "ar_ap_delta": "none",
         "affects_report": false,
-        "entities": ["dict_personal"]
+        "entities": ["alias", "dict_personal"],
+        "note": "教说法落成「商品别名 + 个人词表」：解析词表真正读的是 product_alias，只写个人词表等于教了不生效。指向对象由路由层从原话里拆（A 就是 B / X 别名叫 Y），拆不出就转澄清，不猜"
       },
       "reversal": {
         "allowed": true,

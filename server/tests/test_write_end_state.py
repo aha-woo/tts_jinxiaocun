@@ -125,17 +125,38 @@ def test_sys_undo_reverses_original_and_adds_no_positive_doc(shop: Seed) -> None
     assert undo.reversal_doc_no and undo.reversal_doc_no != purchase.doc_no
 
 
-def test_sys_correct_refuses_instead_of_writing_a_guessed_amount(shop: Seed) -> None:
-    """``sys.correct`` 做不到「先撤再按新值重录」→ 明确拒绝，不猜金额。"""
-    _confirm(shop, intent_id="purchase.create")
-    docs_before = count_rows(shop.database, DocHeader)
+def test_sys_correct_reverses_first_then_asks_for_rerecord(shop: Seed) -> None:
+    """``sys.correct`` = 反做 + 重记：**第一步必须真的做成**，且不猜新金额。
 
-    with pytest.raises(AppError) as excinfo:
-        _confirm(shop, intent_id="sys.correct", confirm_type="voice2", spoken_text="确认")
+    上一版这里直接抛 ``E_VALIDATION`` —— 卡建出来了、确认 100% 失败。
+    反做本来是可执行的第一步（契约 ``name_zh`` 写的就是「反做 + 重记」），
+    所以正确行为是：原单 reversed、生成反做单、回执里带 ``follow_up=rerecord``；
+    **不额外写一张「更正单」**（那需要新明细，猜出来就是一笔用户没确认过的账）。
+    """
+    _, purchase = _confirm(shop, intent_id="purchase.create")
+    docs_after_purchase = count_rows(shop.database, DocHeader)
+    qty_after_purchase = _qty_of_seed_product(shop)
 
-    assert excinfo.value.resolved_code == "E_VALIDATION"
-    assert "更正" in excinfo.value.resolved_message
-    assert count_rows(shop.database, DocHeader) == docs_before, "拒绝的同时还写了单"
+    _, correct = _confirm(shop, intent_id="sys.correct", confirm_type="voice2", spoken_text="确认")
+
+    assert correct.confirmed, correct.as_dict()
+    # ① 反做真的发生了：库存回退 + 原单 reversed
+    assert qty_after_purchase == SEED_QTY + Decimal("48")
+    assert _qty_of_seed_product(shop) == SEED_QTY, (
+        f"反做后库存应回到 {SEED_QTY}，实际 {_qty_of_seed_product(shop)}"
+    )
+    with shop.database.session(context=shop.context) as session:
+        original = session.execute(
+            select(DocHeader).where(DocHeader.doc_no == str(purchase.doc_no))
+        ).scalar_one()
+        assert str(original.status) == "reversed", "更正第一步没把原单标记为已撤销"
+    # ② 只多了**一张反做单**，没有凭 TV 猜出来的「更正单」
+    assert count_rows(shop.database, DocHeader) == docs_after_purchase + 1
+    # ③ 回执明确告诉用户「还有第二步：重说一句」
+    assert correct.follow_up is not None, "没有下一步指引，用户以为已经改好了"
+    assert correct.follow_up["action"] == "rerecord"
+    assert correct.follow_up["step"] == 2
+    assert str(purchase.doc_no) in str(correct.follow_up["hint_zh"])
 
 
 # ---------------------------------------------------------------- P0-2 实体
