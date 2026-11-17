@@ -1013,6 +1013,7 @@ class LedgerService:
         asr_text: str,
         asr_confidence: float,
         parse_channel: str,
+        parse_result: Mapping[str, Any] | None = None,
     ) -> None:
         """写 ASR 留痕（**只存文本，不存音频**；一会话一行）。"""
         existing = self._session.execute(
@@ -1022,6 +1023,8 @@ class LedgerService:
         ).scalar_one_or_none()
         if existing is not None:
             existing.asr_text = asr_text
+            if parse_result is not None:
+                existing.parse_result = dict(parse_result)
             self._session.flush()
             return
         self._session.add(
@@ -1032,9 +1035,72 @@ class LedgerService:
                 asr_text=asr_text,
                 asr_confidence=Decimal(str(round(min(max(asr_confidence, 0.0), 1.0), 3))),
                 parse_channel=parse_channel if parse_channel in {"template", "llm", "filtered"} else "template",
+                parse_result=dict(parse_result) if parse_result is not None else None,
             )
         )
         self._session.flush()
+
+    def record_parse(
+        self,
+        *,
+        tenant_id: uuid.UUID,
+        store_id: uuid.UUID,
+        session_id: uuid.UUID,
+        asr_text: str,
+        asr_confidence: float,
+        parse_channel: str,
+        parse_result: Mapping[str, Any] | None = None,
+    ) -> None:
+        """记一次解析：ASR 留痕 + **解析结果快照**（``voice_log.parse_result``）。
+
+        为什么要有快照
+        --------------
+        ``route=clarify`` 这条分支**不建卡**（澄清前不该占一张卡、不该扣次），
+        而 ``POST /voice/sessions/{id}/clarify`` 原来只从**卡片载荷**里取
+        ``intent_id``——没卡就取不到 → 直接 422，用户点了选项什么也不会发生，
+        「说不全」这条支线整条走不通（PRD 写的「最多问 2 句」实际一句都问不成）。
+
+        快照落在 ``voice_log.parse_result`` 这个**早就存在但从来没人写过**的 JSON 列上：
+        **不新增列、不新增表、不动迁移**，也不碰 34 张表的契约。
+
+        Args:
+            tenant_id: 租户。
+            store_id: 门店。
+            session_id: 语音会话。
+            asr_text: ASR 原文。
+            asr_confidence: 置信度。
+            parse_channel: ``template`` / ``llm`` / ``filtered``。
+            parse_result: 解析结果快照（``intent`` / ``slots`` / ``source`` / ``confidence``）。
+        """
+        self._write_voice_log(
+            tenant_id=tenant_id,
+            store_id=store_id,
+            session_id=session_id,
+            asr_text=asr_text,
+            asr_confidence=asr_confidence,
+            parse_channel=parse_channel,
+            parse_result=parse_result,
+        )
+
+    def parse_snapshot(
+        self, *, tenant_id: uuid.UUID, session_id: uuid.UUID
+    ) -> dict[str, Any] | None:
+        """取这个会话的解析快照（没有则 ``None``）。
+
+        一会话一行（``_write_voice_log`` 是 upsert），所以不存在「取到旧那条」的问题。
+        """
+        row = self._session.execute(
+            select(VoiceLog)
+            .where(VoiceLog.tenant_id == tenant_id, VoiceLog.session_id == session_id)
+            .limit(1)
+        ).scalar_one_or_none()
+        if row is None or not row.parse_result:
+            return None
+        snapshot = dict(row.parse_result)
+        # 原文与置信度也带上：澄清补齐后要建卡，卡片上得回显「你当时说了什么」
+        snapshot.setdefault("asr_text", row.asr_text or "")
+        snapshot.setdefault("asr_confidence", float(row.asr_confidence or 0.0))
+        return snapshot
 
     def _apply_side_effects(
         self,

@@ -41,6 +41,8 @@ from app.services.pending_task import PendingTaskService
 from app.services.quota import QuotaService
 from app.services.upload_ticket import UploadTicketRequest, UploadTicketService
 from app.services.voice_runtime import LedgerLine, lines_of_result
+from app.voice.card_builder import CardBuildError
+from app.voice.clarifier_templates import build_clarify, pick_slot_to_ask
 from app.voice.gate import Gate
 from app.voice.impact_preview import ImpactPreviewService, build_deltas
 from app.voice.output_schema import SOURCE_VALUES, ClarifyPrompt
@@ -86,6 +88,23 @@ def _json_number(value: Any) -> Any:
     except (ArithmeticError, TypeError, ValueError):  # pragma: no cover - 脏数据兜底
         return value
     return int(number) if number == number.to_integral_value() else float(number)
+
+
+def _json_safe(value: Any) -> Any:
+    """把任意槽位值洗成**能进 JSON 列**的样子（``Decimal`` 是头号杀手）。
+
+    快照要写进 ``voice_log.parse_result``（JSON 列）。``Decimal`` 直接塞进去
+    会 ``StatementError``（不是 JSON 可序列化），而槽位里恰恰最爱出现金额。
+    """
+    if isinstance(value, Decimal):
+        return _json_number(value)
+    if isinstance(value, dict):
+        return {str(key): _json_safe(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_json_safe(item) for item in value]
+    if isinstance(value, (str, int, float, bool)) or value is None:
+        return value
+    return str(value)
 
 
 def _reversal_lines(
@@ -143,6 +162,131 @@ def _teach_clarify(plan: TeachPlan) -> ClarifyPrompt:
         slot="P",
         question=f"没找到「{plan.target_text or ''}」这个商品；「{plan.alias}」要记成哪个？",
         options=clarify_options(plan.candidates, fallback="先建这个商品"),
+    )
+
+
+def build_card_after_clarify(
+    *,
+    session: Any,
+    request: Request,
+    settings: Settings,
+    context: Any,
+    ids: Any,
+    session_id: uuid.UUID,
+    parse: Any,
+    asr_text: str,
+    asr_confidence: float,
+) -> Any | None:
+    """澄清补齐槽位后**当场建卡**（返回 ``CardCreation``；建不出来返回 ``None``）。
+
+    为什么必须在这里建卡
+    ------------------
+    ``route=clarify`` 分支**不建卡**（澄清前不该占一张卡、不该扣次），
+    所以澄清完成的那一刻，**手上确实还没有卡**。不在这里补建的话，
+    用户点完选项只会拿到一句 ``resolved``，什么都没有 —— 澄清等于白做，
+    「说不全」这条支线整条断掉。
+
+    补建的卡走**同一条** ``LedgerService.create_card``，
+    所以「卡片生成成功才扣 1 次」的口径完全不变（澄清阶段不扣次）。
+
+    Returns:
+        ``CardCreation``；建不出来（``CardBuildError``）时返回 ``None``。
+    """
+    runtime = runtime_for(session, settings, context)
+    spec = runtime.registry.require(parse.intent)
+    lines = lines_of_result(parse, runtime=runtime, items=(), partner_id=None)
+    side_effect = dict(spec.side_effect or {})
+    deltas = build_deltas(
+        intent_id=spec.intent_id,
+        side_effect=side_effect,
+        lines=[line.as_dict() for line in lines if line.product_id],
+    )
+    preview_service = ImpactPreviewService(get_database(request))
+    bundle = preview_service.preview(
+        tenant_id=ids.tenant_id,
+        store_id=ids.store_id,
+        deltas=deltas,
+        session=None if preview_service.dialect != "sqlite" else session,
+    )
+    try:
+        return LedgerService(
+            session,
+            card_ttl_seconds=settings.card_ttl_seconds,
+        ).create_card(
+            tenant_id=ids.tenant_id,
+            store_id=ids.store_id,
+            member_id=ids.member_id,
+            session_id=session_id,
+            parse=parse,
+            asr_text=asr_text,
+            asr_confidence=asr_confidence,
+            lines=[line.as_dict() for line in lines],
+            preview=bundle,
+            conflicts=(),
+        )
+    except CardBuildError:
+        # 还是建不出来（槽位没补齐、或结构性错误）→ 交给调用方切键盘补录
+        return None
+
+
+def _card_build_failure_response(
+    *,
+    session: Any,
+    voice_session: Any,
+    spec: Any,
+    error: CardBuildError,
+    base: dict[str, Any],
+) -> JSONResponse:
+    """建卡失败时的**结构化**响应（**绝不 500**）。
+
+    分两条路，唯一的依据是 ``error.missing``（缺了哪些必填槽位）：
+
+    - **缺必填槽位** → 缺的是**单个信息**（用户说「进了点可乐」没数量，
+      模型只抽到 ``P``）→ **追问一句**再出卡。这是「说不全」的常态，不是故障。
+    - **结构性错误**（缺区块 / ``source`` 标注违规）→ 追问用户也补不上
+      → 平滑切**数字键盘补录**（``route=manual``）。
+
+    两条路都**不扣次**：卡没建出来就没有消耗（计费口径是「卡片生成成功才扣 1 次」）。
+    """
+    missing = list(error.missing)
+    if missing:
+        slot = pick_slot_to_ask(missing, spec=spec)
+        prompt = build_clarify(spec.intent_id, slot) if slot is not None else None
+        if prompt is not None:
+            voice_session.state = STATE_CLARIFYING
+            voice_session.clarify_round = 0
+            session.flush()
+            return JSONResponse(
+                status_code=200,
+                content=ok(
+                    {
+                        **base,
+                        "route": "clarify",
+                        "clarify": prompt.model_dump(),
+                        "max_rounds": 2,
+                        "error_code": "E_LOW_CONFIDENCE",
+                        "missing_slots": missing,
+                        "credit_consumed": False,
+                        "detail": "这句话没说全，先补一个信息再出卡；补完才扣次",
+                    }
+                ),
+            )
+    voice_session.state = STATE_MANUAL
+    voice_session.error_code = "E_CLARIFY_LIMIT"
+    session.flush()
+    return JSONResponse(
+        status_code=200,
+        content=ok(
+            {
+                **base,
+                "route": "manual",
+                "manual_entry_required": True,
+                "error_code": "E_CLARIFY_LIMIT",
+                "message_zh": "没太听清，切到键盘补一下，点两下就好。",
+                "credit_consumed": False,
+                "detail": f"这条没能建卡（{error}），已切键盘补录；不扣次",
+            }
+        ),
     )
 
 
@@ -359,6 +503,30 @@ def parse_session(
         tenant_id=str(ids.tenant_id),
         skip_gate=True,
     )
+
+    # 解析结果快照（写进 `voice_log.parse_result`）。
+    #
+    # 为什么**每条 route 都写**：澄清分支（`route=clarify`）**不建卡**，
+    # 而 `POST /voice/sessions/{id}/clarify` 只从卡片载荷里取 `intent_id`——
+    # 没卡就取不到 → 422，「说不全」这条支线整条走不通。
+    # 快照落在早就存在却从来没人写过的 JSON 列上：不新增列、不新增表、不动迁移。
+    if result.parse is not None:
+        LedgerService(session).record_parse(
+            tenant_id=ids.tenant_id,
+            store_id=ids.store_id,
+            session_id=session_id,
+            asr_text=result.asr_text or text,
+            asr_confidence=result.asr_confidence,
+            parse_channel=result.parse.channel or "template",
+            parse_result={
+                "intent": result.parse.intent,
+                "slots": _json_safe(dict(result.parse.slots)),
+                "source": {str(k): str(v) for k, v in result.parse.source.items()},
+                "confidence": float(result.parse.confidence),
+                "calc_traces": list(result.parse.calc_traces),
+                "route": result.route,
+            },
+        )
 
     base = {
         "session_id": str(session_id),
@@ -608,21 +776,32 @@ def parse_session(
     )
 
     conflicts = tuple(result.template.conflicts) if result.template is not None else ()
-    creation = LedgerService(
-        session,
-        card_ttl_seconds=settings.card_ttl_seconds,
-    ).create_card(
-        tenant_id=ids.tenant_id,
-        store_id=ids.store_id,
-        member_id=ids.member_id,
-        session_id=session_id,
-        parse=result.parse,
-        asr_text=result.asr_text or text,
-        asr_confidence=result.asr_confidence,
-        lines=[line.as_dict() for line in lines],
-        preview=bundle,
-        conflicts=conflicts,
-    )
+    try:
+        creation = LedgerService(
+            session,
+            card_ttl_seconds=settings.card_ttl_seconds,
+        ).create_card(
+            tenant_id=ids.tenant_id,
+            store_id=ids.store_id,
+            member_id=ids.member_id,
+            session_id=session_id,
+            parse=result.parse,
+            asr_text=result.asr_text or text,
+            asr_confidence=result.asr_confidence,
+            lines=[line.as_dict() for line in lines],
+            preview=bundle,
+            conflicts=conflicts,
+        )
+    except CardBuildError as build_error:
+        # 建卡失败**绝不能变成 500**：用户看到「Internal Server Error」既看不懂也不会重试，
+        # 对一个「不识字的商户」产品等于没报错（而且包络全丢，前端连 error_code 都拿不到）。
+        return _card_build_failure_response(
+            session=session,
+            voice_session=voice_session,
+            spec=spec,
+            error=build_error,
+            base=base,
+        )
     voice_session.state = STATE_AWAIT_CONFIRM
     session.flush()
 

@@ -310,7 +310,7 @@ class EntityWriter:
         """
         del store_id, source
         product = self._require_product(tenant_id, _text(slots.get("P")), intent="product.alias.add")
-        alias_text = _text(slots.get("ALIAS"))
+        alias_text = _strip_alias_cue(_text(slots.get("ALIAS")), product_name=product.name)
         if not alias_text:
             raise _missing("product.alias.add", "别名")
         created = self._add_product_alias(
@@ -826,6 +826,40 @@ def _text(value: Any) -> str:
     if value is None:
         return ""
     return str(value).strip()
+
+
+#: 别名前缀里的连接词/系动词（**长的在前**，先匹配「叫做」再匹配「叫」）。
+#:
+#: 为什么要在意：LLM 抽槽位时经常把连接词一起吐出来——「可乐别名叫快乐水」
+#: 会抽出 ``ALIAS='叫快乐水'``。不清掉的话，用户以后说「快乐水」解析不到
+#: （词表里躺的是「叫快乐水」），**教了等于没教**；脏别名还会长期留在词表里。
+_ALIAS_LEAD_CUES: tuple[str, ...] = ("叫做", "就是", "称为", "叫作", "叫", "是", "为", "成")
+
+
+def _strip_alias_cue(text: str, *, product_name: str = "") -> str:
+    """剥掉别名前面的连接词（只剥一次，剥完还是空就当没剥）。
+
+    有一条保护：**商品名本身就以这个词开头时不动**（叫花鸡、成为…），
+    否则会把别名的本体吃掉，把「叫花鸡」教成「花鸡」。
+
+    Args:
+        text: 原始别名。
+        product_name: 商品真名（用来做上面那条保护）。
+
+    Returns:
+        剥掉连接词后的别名。
+    """
+    value = text.strip()
+    for cue in _ALIAS_LEAD_CUES:
+        if not value.startswith(cue):
+            continue
+        rest = value[len(cue) :].strip()
+        if not rest:
+            continue
+        if product_name.startswith(cue):
+            continue
+        return rest
+    return value
 
 
 def _money_fen(value: Any) -> int | None:

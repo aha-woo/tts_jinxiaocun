@@ -67,6 +67,43 @@ export function isDuplicateText(text: string, nowMs = Date.now()): boolean {
   return hit;
 }
 
+/**
+ * **只查不记**：这句话在窗口内说过吗？
+ *
+ * 为什么要有「只查」这一档
+ * ----------------------
+ * ``isDuplicateText`` 是「查 + 记」合一的：如果拿它做**发请求前**的判重，
+ * 用户在弹窗里点了「不记了」，这句话也已经被记进窗口了——
+ * 于是他 60 秒内再说一遍同样的真话，会**再次**被当成重复拦一次。
+ *
+ * 所以判重拆成两段：先用 {@link wasSaidRecently} 查，**确定要发了**再用
+ * {@link rememberSpokenText} 记。
+ */
+export function wasSaidRecently(text: string, nowMs = Date.now()): boolean {
+  const normalized = normalizeText(text);
+  if (normalized === '') {
+    return false;
+  }
+  const records = readRecords().filter((record) => nowMs - record.at < DEDUPE_WINDOW_MS);
+  return records.some((record) => record.text === normalized);
+}
+
+/**
+ * **只记不查**：把这句话写进去重窗口（**发请求之前**才调）。
+ *
+ * 记了之后，60 秒内再有人说同一句，就会走「是又记了一笔，还是刚才点重了？」的追问，
+ * 而不是**静默吞掉**——真实重复的生意不能被悄悄吃掉。
+ */
+export function rememberSpokenText(text: string, nowMs = Date.now()): void {
+  const normalized = normalizeText(text);
+  if (normalized === '') {
+    return;
+  }
+  const records = readRecords().filter((record) => nowMs - record.at < DEDUPE_WINDOW_MS);
+  records.push({ text: normalized, at: nowMs });
+  writeRecords(records);
+}
+
 let lastScope = '';
 let lastWindow = 0;
 let lastKey = '';

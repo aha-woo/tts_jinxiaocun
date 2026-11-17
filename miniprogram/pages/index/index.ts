@@ -19,7 +19,7 @@ import {
   type ParsePayload,
 } from '../../services/api';
 import { SPEECH_UNAVAILABLE_HINT, SpeechGate, type SpeechGateState } from '../../services/speech';
-import { isDuplicateText } from '../../utils/dedupe';
+import { rememberSpokenText, wasSaidRecently } from '../../utils/dedupe';
 import { formatDateTime } from '../../utils/format';
 
 /** 降级态（L0 正常 → L4 只读）：UI 上必须**看得出来差别**，不能只写进配置。 */
@@ -233,6 +233,14 @@ Page<IndexData, WechatMiniprogram.Page.CustomOption>({
     if (said === null) {
       return; // 被门禁丢弃（太短/没听到/插件没给文字），不发请求、不扣次
     }
+    // 60 秒内说过同一句 → **先问再发**，别静默吞掉。
+    // 此时还没建会话、还没扣额度：用户点「不记了」是零代价的。
+    if (wasSaidRecently(said.text) && !(await this.confirmRealRepeat())) {
+      this.setData({ talkingText: '' });
+      return;
+    }
+    // 确认要发了才记进去（用户取消的那次不占窗口）
+    rememberSpokenText(said.text);
     this.setData({ loading: true, talkingText: '识别中…' });
     try {
       // ① 建会话（拿会话 id 与令牌桶额度）→ ② 解析：只传文字，音频不出手机
@@ -244,8 +252,7 @@ Page<IndexData, WechatMiniprogram.Page.CustomOption>({
         asr_text: said.text,
         duration_ms: said.durationMs,
       });
-      // 传**真实文字**（不再是空串）：60 秒内重复说同一句才会被 isDuplicateText 拦下
-      this.handleParsed(parsed, said.text);
+      this.handleParsed(parsed);
     } catch (error) {
       this.setData({ errorText: this.messageOf(error) });
       await this.refreshUsage();
@@ -254,17 +261,38 @@ Page<IndexData, WechatMiniprogram.Page.CustomOption>({
     }
   },
 
+  /**
+   * 「刚才这句话刚说过」时的追问。
+   *
+   * 真实重复的生意（老板确实要连记两笔同样的）**不能被静默吃掉**——那等于凭空丢一单。
+   * 所以这里不直接拦，而是让用户自己选：
+   * - 「是，再记一笔」→ 返回 true，照常发请求；
+   * 「不记了」/ 关闭弹窗 → 返回 false，一请求都不发（没建会话、没扣额度）。
+   */
+  confirmRealRepeat(): Promise<boolean> {
+    return new Promise<boolean>((resolve) => {
+      wx.showModal({
+        title: '刚才记过一句一样的',
+        content: '是又记了一笔，还是刚才点重了？',
+        confirmText: '是，再记一笔',
+        cancelText: '不记了',
+        success: (res) => {
+          resolve(Boolean(res.confirm));
+        },
+        fail: () => {
+          resolve(false);
+        },
+      });
+    });
+  },
+
   /** 切换触发模式。 */
   onModeChange(event: WechatMiniprogram.CustomEvent<{ mode: 'hold' | 'tap' }>): void {
     this.setData({ mode: event.detail.mode });
   },
 
   /** 一句话处理完：出卡 → 跳卡片页；要澄清 → 跳卡片页（带澄清）；否则提示。 */
-  handleParsed(parsed: ParsePayload, text: string): void {
-    if (text !== '' && isDuplicateText(text)) {
-      wx.showToast({ title: '这句刚记过', icon: 'none' });
-      return;
-    }
+  handleParsed(parsed: ParsePayload): void {
     if (parsed.route === 'card' && parsed.card !== null && parsed.card !== undefined) {
       this.pushRecent(parsed.asr_text, parsed.parse_result?.intent ?? '交易', true);
       wx.navigateTo({ url: `/pages/card/index?cardId=${parsed.card.meta.card_id}` });

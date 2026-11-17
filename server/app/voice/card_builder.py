@@ -82,7 +82,22 @@ _PRIMARY_VERBS: Mapping[str, str] = {
 
 
 class CardBuildError(RuntimeError):
-    """卡片构造失败（R0/R3 不该出卡片、区块缺失等）。"""
+    """卡片构造失败（R0/R3 不该出卡片、区块缺失等）。
+
+    ``missing``：缺了哪些**必填槽位**。这个字段是「能不能追问用户」的唯一依据：
+
+    - 非空 → 缺的是**单个信息**（比如只说了「进了点可乐」没数量），
+      可以追问一句再出卡；
+    - 为空 → 是**结构性**问题（缺区块 / ``source`` 标注违规），
+      追问用户也补不上，只能切数字键盘补录。
+
+    没有这个字段的话，调用方只能靠字符串匹配去猜，猜错就会把结构性错误
+    也拿去问用户——用户答了还是错。
+    """
+
+    def __init__(self, message: str, *, missing: Sequence[str] = ()) -> None:
+        super().__init__(message)
+        self.missing: tuple[str, ...] = tuple(missing)
 
 
 @dataclass(frozen=True)
@@ -358,7 +373,10 @@ class ConfirmCardBuilder:
             )
         missing = [code for code in spec.required_slots if code not in parse.slots]
         if missing:
-            raise CardBuildError(f"{spec.intent_id} 缺必填槽位 {missing}，不得出写卡")
+            raise CardBuildError(
+                f"{spec.intent_id} 缺必填槽位 {missing}，不得出写卡",
+                missing=missing,
+            )
 
         bundle = impact if impact is not None else PreviewBundle()
         slot_views = self._slot_views(parse, spec)
