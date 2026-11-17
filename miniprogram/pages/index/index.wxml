@@ -81,6 +81,7 @@
           <view class="kv"><text>契约</text><text>{{contractText}}</text></view>
           <view class="kv"><text>登录态</text><text>{{loginOk ? '已登录' : '未登录（dev 联调可忽略）'}}</text></view>
           <view class="kv"><text>语音识别</text><text>{{speechReady ? '同声传译插件已就绪' : '未启用（走键盘）'}}</text></view>
+          <view class="kv" wx:if="{{speechReason}}"><text>不可用原因</text><text>{{speechReason}}</text></view>
         </view>
       </view>
     </view>

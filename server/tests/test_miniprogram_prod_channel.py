@@ -413,6 +413,105 @@ def test_app_json_is_resizable_for_pc_wechat() -> None:
     assert data.get("resizable") is True
 
 
+# ---------------------------------------------------------------------------
+# 六·五、同声传译插件配置（2026-11-17 · 官方文档核实后补）
+#
+# 为什么这组断言必须存在
+# ----------------------
+# 「语音 → 文字」这段**全靠这个插件**。它有三个「编译期不报错、只在真机上炸」的坑：
+#
+# 1. ``plugins.WechatSI.version`` **必须**与 mp 后台「插件管理 → 详情」里的版本号
+#    **完全一致**。写错 → 真机报「插件不存在」→ 现象是「按大按钮一点反应都没有」；
+# 2. mp 后台「用户隐私保护指引」**必须**声明「访问你的麦克风」。
+#    插件内部要调 ``wx.getRecorderManager``，不声明 → 官方直接禁用该接口
+#    （errno 112）→ 同样是「按了没反应」；
+# 3. ``permission.scope.record.desc`` 不能是空串（官方上限 30 字），
+#    空串 → 真机拒绝拉起授权弹窗。
+#
+# 这三件事**都不在代码里**，但都会让核心卖点「说不了话」。所以代码侧至少要做到：
+# 插件配置本身合法（有确定性检查），且**不可用时给出具体原因**（不让人瞎猜）。
+# ---------------------------------------------------------------------------
+WECHATSI_PROVIDER = "wx069ba97219f66d99"
+INVALID_PLUGIN_VERSIONS = {"latest", "*", "", "0"}
+
+
+def test_app_json_declares_wechatsi_plugin_with_concrete_version() -> None:
+    """``plugins.WechatSI`` 必须声明，且 ``version`` 是**具体版本号**。
+
+    ``latest`` / ``*`` / 空串这类值微信**不解析**，运行时会直接报「插件不存在」——
+    比写错一个具体版本号更难排查（连「版本对不上」这条线索都没有）。
+    """
+    data = json.loads(_read(MP_ROOT / "app.json"))
+    plugins = data.get("plugins")
+    assert isinstance(plugins, dict), "app.json 缺 plugins 段"
+    si = plugins.get("WechatSI")
+    assert isinstance(si, dict), "app.json 缺 plugins.WechatSI（语音功能不可能工作）"
+
+    assert si.get("provider") == WECHATSI_PROVIDER, (
+        f"插件 provider 应是微信同声传译官方 AppID {WECHATSI_PROVIDER}"
+    )
+    version = str(si.get("version", ""))
+    assert version.lower() not in INVALID_PLUGIN_VERSIONS, (
+        f"version 是 {version!r} —— 微信不解析这种值，运行时会报「插件不存在」"
+    )
+    assert re.match(r"^\d+\.\d+\.\d+$", version), (
+        f"version 应形如 0.3.5，实际 {version!r}（必须与后台「详情」页显示的完全一致）"
+    )
+
+
+def test_app_json_declares_microphone_purpose() -> None:
+    """``permission.scope.record.desc`` 必须有内容且 ≤30 字（官方限制）。"""
+    data = json.loads(_read(MP_ROOT / "app.json"))
+    record = (data.get("permission") or {}).get("scope.record")
+    assert isinstance(record, dict), "app.json 缺 permission.scope.record"
+    desc = str(record.get("desc", ""))
+    assert desc.strip() != "", "scope.record.desc 不能是空串（真机会拒绝拉起授权弹窗）"
+    assert len(desc) <= 30, f"scope.record.desc 有 {len(desc)} 字，官方上限 30 字"
+
+
+def test_speech_gate_checks_privacy_before_recording() -> None:
+    """**录音之前**必须先过隐私授权（否则「按了没反应」且用户不知道原因）。"""
+    gate = strip_comments(_read(MP_ROOT / "services" / "speech.ts"))
+    privacy = strip_comments(_read(MP_ROOT / "services" / "privacy.ts"))
+    assert "ensurePrivacyAuthorized" in gate, "语音门禁必须调用隐私授权"
+    assert "ensurePrivacyAuthorized" in privacy
+    # 隐私模块必须真的调官方接口（不是自己糊一个标志位）
+    assert "wx.getPrivacySetting" in privacy or "getPrivacySetting" in privacy
+    assert "requirePrivacyAuthorize" in privacy
+
+
+def test_speech_unavailable_reason_is_exposed_to_self_check() -> None:
+    """插件不可用时**必须给出具体原因**，不能只说「未启用」。
+
+    「点大按钮没反应」有五种完全不同的原因（版本号 / 后台审核 / 隐私声明 / 微信版本），
+    修法也完全不同。只给一句「未启用」，开发者只能反复试。
+    """
+    gate = strip_comments(_read(MP_ROOT / "services" / "speech.ts"))
+    page = strip_comments(_read(MP_ROOT / "pages" / "index" / "index.ts"))
+    wxml = strip_wxml_comments(_read(MP_ROOT / "pages" / "index" / "index.wxml"))
+
+    assert "SpeechUnavailableReason" in gate, "必须定义不可用原因的类型"
+    assert "speechReasonText" in gate, "必须把原因码翻成人话"
+    assert "unavailableReason" in gate, "门禁必须持有原因码"
+    # 页面要把它显示出来（自检面板）
+    assert "speechReason" in page, "页面必须持有原因文本"
+    assert "speechReason" in wxml, "自检面板必须显示原因（否则用户看不到）"
+    assert "unavailableReason" in page, "页面必须把门禁的原因传出来"
+
+
+def test_plugin_config_check_script_exists_and_catches_version_mismatch() -> None:
+    """插件配置校验脚本必须存在，且**真的能抓到版本号不一致**。
+
+    没有它的话，「app.json 的 version 与后台对不上」这件事只有真机能发现——
+    而真机上的现象是「没反应」，开发者根本联想不到版本号。
+    """
+    script = MP_ROOT / "scripts" / "check-plugin-config.py"
+    assert script.is_file(), "缺插件配置校验脚本"
+    source = _read(script)
+    assert "WECHATSI_VERSION" in source, "脚本必须支持与后台版本号比对"
+    assert "plugins" in source and "WechatSI" in source
+
+
 def test_degrade_levels_visibly_differ_in_ui() -> None:
     """L0~L4 **在 UI 上真的能看到差别**（不是只写进配置）。"""
     page = strip_comments(_read(MP_ROOT / "pages" / "index" / "index.ts"))

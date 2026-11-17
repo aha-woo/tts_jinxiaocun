@@ -83,3 +83,18 @@ jobs:
       - name: Typecheck
         working-directory: miniprogram
         run: npm run typecheck
+
+  plugin-config:
+    name: 小程序 · 同声传译插件配置
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      # 校验 app.json 里 plugins.WechatSI 的 provider / version / scope.record.desc。
+      # ⚠️ 这**抓不到**「版本号与后台不一致」——后台没有开放 API 读版本号，
+      # 只能人工看一眼「插件管理 → 详情」。发布前请本地跑一次：
+      #     WECHATSI_VERSION=<后台详情页的版本号> python miniprogram/scripts/check-plugin-config.py
+      - name: Check plugin config
+        run: python miniprogram/scripts/check-plugin-config.py

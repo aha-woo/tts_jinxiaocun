@@ -13,9 +13,20 @@
  * 1. ``app.json`` 必须声明插件别名 ``WechatSI``：
  *    ``"plugins": { "WechatSI": { "version": "0.3.5", "provider": "wx069ba97219f66d99" } }``；
  * 2. ``version`` **必须**与 mp 后台「设置 → 第三方服务 → 插件管理」里**实际添加的版本号**
- *    完全一致，写错会报「插件不存在」，且是**运行时**才报；
+ *    完全一致，写错会报「插件不存在」，且是**运行时**才报。
+ *    ⚠️ 官方文档示例写的是 ``0.0.7``，社区教程普遍写 ``0.3.5`` —— **以自己后台
+ *    「详情」页显示的版本号为准**，不要照抄任何一篇文章（含本文件的注释）。
  * 3. 插件要先用小程序 AppID（``project.config.json`` 的 ``appid``）在后台添加并等待通过，
- *    否则 ``requirePlugin`` 抛错——本文件对此**已经做了兜底**（见构造函数）。
+ *    否则 ``requirePlugin`` 抛错——本文件对此**已经做了兜底**（见构造函数），
+ *    并把**失败原因**记下来给自检面板看（不然用户只知道「不能用」，不知道该改哪）。
+ * 4. 隐私侧另有一道门：插件内部要调 ``wx.getRecorderManager``，所以 mp 后台
+ *    「用户隐私保护指引」**必须**声明「访问你的麦克风」，否则真机上按下大按钮
+ *    **一点反应都没有**。见 ``services/privacy.ts``。
+ *
+ * ⚠️ **不要**把 ``WechatSI`` 写进 ``project.config.json`` 的 ``useCompilerPlugins``——
+ * 那个字段是**编译插件**（本项目用的是 ``typescript``），与**运行时插件**（app.json 的
+ * ``plugins``）是两套东西。网上有文章让人加，那是错的，加了反而会让开发者工具
+ * 去找一个不存在的编译插件。
  *
  * 两个必须记住的坑
  * ---------------
@@ -27,6 +38,7 @@
  */
 
 import { GATE, judgeRecording, type GateState } from './audio-gate';
+import { ensurePrivacyAuthorized, type PrivacyOutcome } from './privacy';
 
 /** 一次语音转写的结果（**只有文字**，没有音频路径）。 */
 export interface SpeechResult {
@@ -79,6 +91,38 @@ interface WechatSiPlugin {
 export const SPEECH_UNAVAILABLE_HINT = '语音识别未启用（插件未配置好），可以先用「手动记账」';
 
 /**
+ * 插件不可用的**具体原因**（给自检面板看，别让用户去猜）。
+ *
+ * 为什么要有这个
+ * --------------
+ * 「点大按钮没反应」有五种完全不同的原因（版本号写错 / 后台没添加 / 后台没通过 /
+ * 隐私没声明麦克风 / 基础库过低），而它们的**修法在完全不同的地方**。
+ * 只给一句「未启用」，用户和开发者都无从下手——只能反复试。
+ * 所以这里把原因码原样暴露出去，自检面板逐条显示。
+ */
+export type SpeechUnavailableReason =
+  | 'plugin_load_failed'
+  | 'privacy_denied'
+  | 'privacy_not_declared'
+  | 'not_supported';
+
+/** 把不可用原因翻成人话（自检面板直接显示）。 */
+export function speechReasonText(reason: SpeechUnavailableReason | ''): string {
+  switch (reason) {
+    case 'plugin_load_failed':
+      return '插件加载失败（检查 app.json 的 version 是否与后台「详情」页一致）';
+    case 'privacy_denied':
+      return '用户未同意隐私协议（需后台声明「访问你的麦克风」）';
+    case 'privacy_not_declared':
+      return '后台未声明「访问你的麦克风」（设置 → 服务内容声明 → 用户隐私保护指引）';
+    case 'not_supported':
+      return '当前微信版本不支持语音插件（需升级微信）';
+    default:
+      return '未知原因';
+  }
+}
+
+/**
  * 生成 4~7 根柱子的节律序列（**视觉占位，不是真实能量**）。
  *
  * 插件不提供逐帧能量，所以这里用「已经说了多久 + 有没有收到过中间结果」合成一个
@@ -117,6 +161,12 @@ export class SpeechGate {
   /** 插件是否可用（构造期一次性判定；页面用它决定是否显示降级提示） */
   readonly available: boolean;
 
+  /** 不可用的具体原因（``available === true`` 时是空串） */
+  unavailableReason: SpeechUnavailableReason | '';
+
+  /** 最近一次隐私授权的结果（页面可据此提示用户去哪儿开） */
+  privacy: PrivacyOutcome = { granted: true };
+
   private manager: RecordRecognitionManager | null = null;
 
   private listener: SpeechListener | null = null;
@@ -134,8 +184,17 @@ export class SpeechGate {
 
   private resolver: ((result: SpeechResult | null) => void) | null = null;
 
+  /**
+   * 正在进行的启动流程（隐私授权 → 开始录音）。
+   *
+   * 存在的原因：「按住说」模式下，用户可能在隐私弹窗还没点完时就抬手了。
+   * {@link stop} 靠它判断「要不要等启动完成再停」，避免把用户已经说出口的话丢掉。
+   */
+  private startPromise: Promise<PrivacyOutcome> | null = null;
+
   constructor() {
     let manager: RecordRecognitionManager | null = null;
+    let reason: SpeechUnavailableReason | '' = 'not_supported';
     try {
       // requirePlugin 在「后台没添加插件 / 版本号写错 / 基础库过低」时都会抛
       const plugin = requirePlugin('WechatSI') as WechatSiPlugin;
@@ -144,9 +203,11 @@ export class SpeechGate {
       // 这里**不能抛**：抛出去就是首页白屏，用户连「手动记账」都点不到
       console.warn('[speech] 同声传译插件不可用，降级为键盘录入', error);
       manager = null;
+      reason = 'plugin_load_failed';
     }
     this.manager = manager;
     this.available = manager !== null;
+    this.unavailableReason = manager === null ? reason : '';
     if (manager !== null) {
       this.bind(manager);
     }
@@ -162,16 +223,44 @@ export class SpeechGate {
     return this.recording;
   }
 
-  /** 开始说话（已在说话中则忽略）。 */
-  start(): void {
-    const manager = this.manager;
+  /**
+   * 开始说话。
+   *
+   * 顺序是刻意的：**先过隐私授权，再调插件**。
+   * 反过来的话，用户在没授权的情况下按下按钮 → 插件内部调
+   * ``wx.getRecorderManager`` 报 errno 112 → 表现为「按了没反应」，
+   * 而用户完全不知道要去哪儿开麦克风。现在是**先拦下来、明确告诉他**。
+   *
+   * @returns 隐私授权结果；``granted=false`` 时**没有开始录音**
+   */
+  async start(): Promise<PrivacyOutcome> {
+    // 已在录音中 → 忽略（重复按）
     if (this.recording) {
-      return;
+      return { granted: true };
     }
+    const manager = this.manager;
     if (manager === null) {
       wx.showToast({ title: SPEECH_UNAVAILABLE_HINT, icon: 'none' });
-      return;
+      return { granted: false, reason: this.unavailableReason, hint: SPEECH_UNAVAILABLE_HINT };
     }
+
+    // 先登记 promise：**在 await 之前**登记，否则「按下后立刻抬手」会漏掉这次启动
+    const pending = this.beginStart(manager);
+    this.startPromise = pending;
+    return pending;
+  }
+
+  /** 真正的启动流程（隐私授权 → 开始录音）。 */
+  private async beginStart(manager: RecordRecognitionManager): Promise<PrivacyOutcome> {
+    // 隐私协议：后台没声明麦克风 → 官方隐私弹窗会拦；用户拒绝 → 明确告知
+    const privacy = await ensurePrivacyAuthorized();
+    this.privacy = privacy;
+    if (!privacy.granted) {
+      wx.showToast({ title: privacy.hint, icon: 'none' });
+      this.startPromise = null;
+      return privacy;
+    }
+
     this.gotSpeech = false;
     this.partialText = '';
     this.startedAt = Date.now();
@@ -179,12 +268,46 @@ export class SpeechGate {
     manager.start({ lang: 'zh_CN', duration: GATE.hardMaxMs });
     this.timer = setInterval(() => this.tick(), 100) as unknown as number;
     this.emit();
+    this.startPromise = null;
+    return { granted: true };
   }
 
-  /** 停止并取文字；返回 `null` 表示被门禁丢弃（**不发请求、不扣次**）。 */
+  /**
+   * 停止并取文字；返回 `null` 表示被门禁丢弃（**不发请求、不扣次**）。
+   *
+   * ⚠️ 「按住说」模式下的**竞态**（必须处理，否则用户会觉得「我说了半天没反应」）
+   * -------------------------------------------------------------------
+   * 按下 → 触发隐私授权（**异步**，可能要弹窗、要等用户点） → 抬手 → 触发 stop。
+   * 如果用户在授权完成**之前**就抬手了，`recording` 还是 false，
+   * 这时直接返回 ``null`` 就等于**把用户已经说出口的那句话丢了**。
+   *
+   * 所以这里记下 {@link startPromise}：stop 时若还在启动中，就**等它启动完再停**。
+   * （隐私被拒 → 根本没开始录 → 返回 null，这个是对的。）
+   */
   stop(): Promise<SpeechResult | null> {
     const manager = this.manager;
-    if (!this.recording || manager === null) {
+    if (manager === null) {
+      return Promise.resolve(null);
+    }
+    const pending = this.startPromise;
+    if (pending !== null) {
+      // 启动还没走完 → 等它走完，再决定要不要停
+      return pending.then((outcome) => {
+        if (!outcome.granted) {
+          return null; // 隐私被拒：压根没开始录
+        }
+        return this.stopNow(manager);
+      });
+    }
+    if (!this.recording) {
+      return Promise.resolve(null);
+    }
+    return this.stopNow(manager);
+  }
+
+  /** 真正执行停止（{@link stop} 处理好竞态后调用）。 */
+  private stopNow(manager: RecordRecognitionManager): Promise<SpeechResult | null> {
+    if (!this.recording) {
       return Promise.resolve(null);
     }
     return new Promise<SpeechResult | null>((resolve) => {

@@ -18,7 +18,7 @@ import {
   usage,
   type ParsePayload,
 } from '../../services/api';
-import { SPEECH_UNAVAILABLE_HINT, SpeechGate, type SpeechGateState } from '../../services/speech';
+import { SPEECH_UNAVAILABLE_HINT, SpeechGate, speechReasonText, type SpeechGateState } from '../../services/speech';
 import { rememberSpokenText, wasSaidRecently } from '../../utils/dedupe';
 import { formatDateTime } from '../../utils/format';
 
@@ -99,6 +99,8 @@ interface IndexData {
   errorText: string;
   /** 同声传译插件是否可用（不可用时降级为键盘录入，大按钮仍可点、只给提示） */
   speechReady: boolean;
+  /** 插件不可用的**具体原因**（自检面板显示；空串 = 可用） */
+  speechReason: string;
   recent: { id: string; text: string; intent: string; at: string; ok: boolean }[];
   wide: boolean;
   selfCheckOpen: boolean;
@@ -120,6 +122,7 @@ Page<IndexData, WechatMiniprogram.Page.CustomOption>({
     talkingText: '',
     errorText: '',
     speechReady: true,
+    speechReason: '',
     recent: [],
     wide: false,
     selfCheckOpen: false,
@@ -146,6 +149,10 @@ Page<IndexData, WechatMiniprogram.Page.CustomOption>({
     // 插件没配好：**不崩不白屏**，只是把语音降级成键盘（大按钮仍可点，点了给同一句提示）
     this.setData({
       speechReady: gate.available,
+      // 把**具体原因**也带出来：「点大按钮没反应」有好几种完全不同的原因，
+      // 修法也完全不同（版本号 / 后台审核 / 隐私声明 / 微信版本），
+      // 只说「未启用」的话，开发者只能反复试。
+      speechReason: gate.available ? '' : speechReasonText(gate.unavailableReason),
       errorText: gate.available ? '' : SPEECH_UNAVAILABLE_HINT,
     });
     void this.bootstrap();
@@ -206,8 +213,14 @@ Page<IndexData, WechatMiniprogram.Page.CustomOption>({
     }
   },
 
-  /** 大按钮：开始说话。 */
-  onStart(): void {
+  /**
+   * 大按钮：开始说话。
+   *
+   * 现在是**异步**的：按下之后要先过隐私授权（可能要弹官方隐私弹窗、等用户点同意），
+   * 通过了才真的开始录音。所以这里返回 Promise，让「按住说」模式能正确处理
+   * 「按下 → 授权中 → 抬手」的时序（见 `SpeechGate.stop` 里的说明）。
+   */
+  async onStart(): Promise<void> {
     if (!this.data.speechReady) {
       // 插件没配好：按钮**仍可点**，点了给一句能照做的提示（不崩、不白屏、不静默）
       wx.showToast({ title: SPEECH_UNAVAILABLE_HINT, icon: 'none' });
@@ -221,7 +234,17 @@ Page<IndexData, WechatMiniprogram.Page.CustomOption>({
       return;
     }
     this.setData({ errorText: '' });
-    this.gate.start();
+    const outcome = await this.gate.start();
+    if (!outcome.granted) {
+      // 隐私被拒 → 把原因与修法写进自检面板，用户和开发者都看得见
+      this.setData({
+        speechReady: false,
+        speechReason: speechReasonText(
+          outcome.reason === 'privacy_denied' ? 'privacy_denied' : 'privacy_not_declared',
+        ),
+        errorText: outcome.hint,
+      });
+    }
   },
 
   /** 大按钮：结束说话 → 端侧已转成文字 → 建会话 → 只把文字发给后端解析。 */

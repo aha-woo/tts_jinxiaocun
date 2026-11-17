@@ -214,6 +214,41 @@ python miniprogram/scripts/check-templates.py --wcc "D:/wechatSDK/resources/app.
 
 当前状态：`WXML 12 + WXSS 13 = 25 个文件，零错误`。
 
+### 3.6 同声传译插件配置校验（**发版前必跑**）
+
+语音识别走微信「同声传译」插件（`WechatSI`，provider `wx069ba97219f66d99`）。
+它的配置有**三个「编译期不报错、真机上才炸」的坑**，现象全都是
+「按下大按钮一点反应都没有」：
+
+| # | 坑 | 后果 |
+|---|---|---|
+| 1 | `app.json` 的 `plugins.WechatSI.version` 与 mp 后台「详情」页版本号不一致 | 真机报「插件不存在」 |
+| 2 | mp 后台「用户隐私保护指引」没声明「**访问你的麦克风**」 | 官方**直接禁用**录音接口（errno 112） |
+| 3 | `permission.scope.record.desc` 是空串 / 超 30 字 | 真机拒绝拉起授权弹窗 |
+
+第 1 条**没有 API 可自动查**（后台不开放读版本号），只能人工核对一眼再传进来：
+
+```bash
+# 基础检查（provider / version 格式 / scope.record.desc 合法性）
+python miniprogram/scripts/check-plugin-config.py
+
+# 与后台「详情」页的版本号逐字比对（把那个版本号填进去）
+WECHATSI_VERSION=0.3.5 python miniprogram/scripts/check-plugin-config.py
+```
+
+版本号写错时的输出：
+
+```text
+✗ 插件配置检查未通过：
+  - 版本号对不上：app.json 写的是 '0.3.5'，而后台详情页显示的是 '0.0.7' —— 真机上会报「插件不存在」
+```
+
+⚠️ **官方文档示例写的是 `0.0.7`，社区教程普遍写 `0.3.5`** —— **以自己后台「详情」页显示的
+版本号为准**，不要照抄任何一篇文章（含本文件）。
+
+这条检查已接进 CI（`infra/ci/lint.yml` 的 `plugin-config` job），但 CI **抓不到第 1 条**
+（没有 API 读后台版本号），所以发版前仍需本地跑一次带 `WECHATSI_VERSION` 的版本。
+
 ---
 
 ## 4. T01 边界（做了什么 / 没做什么）
