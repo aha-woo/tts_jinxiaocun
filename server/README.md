@@ -23,10 +23,13 @@ pytest -q                                 # 契约 + 工具同语义 + 健康检
 `app_scope_only`）；要连真库就注入 `DATABASE_URL` 并先跑迁移：
 
 ```bash
-export DATABASE_URL='postgresql+psycopg://user:pwd@host:5432/vil'   # 方案 A（生产口径）
+export DATABASE_URL='postgresql+psycopg://user:pwd@host:5432/vil?sslmode=require'  # 方案 A′（生产口径）
 alembic upgrade head                                               # 建表 + RLS 三件套 + 种子
 alembic upgrade head --sql > schema.sql                            # 离线渲染（无需连库）
 ```
+
+> 生产环境请注入**完整 `DATABASE_URL`**：云开发的 `PGHOST/PGPORT/PGDATABASE/PGUSER/PGPASSWORD`
+> 这一套本项目当前**不读**（`create_engine` 只吃 URL），只注入 PG* 会静默连到 SQLite 内存库。
 
 ## 接口
 
@@ -70,11 +73,15 @@ alembic upgrade head --sql > schema.sql                            # 离线渲�
 
 ## 数据层与多租户（T02）
 
-### 选型：方案 A 为主、方案 B 可切
+### 选型：方案 A′（云开发 PG 模式环境）为主、方案 B 可切
 
-| | 方案 A（生产，默认） | 方案 B / 本地测试 |
+> **口径变更（架构 v1.1.1）**：数据层从「自己开一台外挂托管 PostgreSQL」改为
+> 「**云开发 PG 模式环境自带的 PostgreSQL**」。T02 的 RLS 代码**一行都没降级**，
+> 变的只是「连到哪台 PG」——不再需要外挂实例。下文所有 RLS/`FORCE`/引导策略照旧成立。
+
+| | 方案 A′（生产，默认） | 方案 B / 本地测试 |
 |---|---|---|
-| 存储 | 外挂托管 PostgreSQL | SQLite / 云开发数据库 |
+| 存储 | **云开发 PG 模式环境自带的 PostgreSQL**（同环境同 VPC，标准 PG 协议直连） | SQLite / 云开发数据库（传统模式） |
 | DB 级隔离 | **RLS**（`ENABLE` + **`FORCE`** + `CREATE POLICY`） | **无** |
 | 代码路径 | 完全一致（`TenantRepository` + ORM 全局 scope） | 完全一致 |
 | `capabilities()["isolation_mode"]` | `db_rls` | `app_scope_only` |
@@ -84,6 +91,104 @@ alembic upgrade head --sql > schema.sql                            # 离线渲�
 `TenantRepository` 强制 scope + ORM 全局 scope + 唯一索引 `tenant_id` 打头 + CI 静态扫描
 + 双租户越权单测。任何代码都不得在 SQLite 上声称 RLS 生效（`/readyz` 会写明
 `strength: reduced_one_layer_less`）。
+
+### ⚠️ 云开发 PG 模式：三条**建环境时定死、事后改不了**的硬约束
+
+顺序错了**只能重建环境**（存量传统模式环境**不支持升级成 PG 模式**）。下单前逐条核对：
+
+| # | 约束 | 错了会怎样 |
+|---|---|---|
+| 1 | 建云开发环境**必须在下单页选 PostgreSQL** | PG 模式**仅新建环境支持**，存量传统模式环境不支持升级 → 只能重建环境、数据全部重灌 |
+| 2 | 地域**必须选上海** | 微信云托管资源在上海，跨地域**不能内网互通** → 只能走公网（延迟 + 出网费 + 白名单运维），或重建 |
+| 3 | 开通云托管**必须选「系统默认配置」** | 只有它才会自动新建 VPC 并**绑定该云开发环境**；**开通后不支持更换网络设置** → 内网不通就只能重建 |
+
+### Q25 / Q26：哪些已核实、哪些**尚未实测**（不要当成已实测写进任何文档）
+
+> **本机现状（可复核）**：`PG_TEST_URL` 未设置、无 Docker / 无 psql / 无本机 PG 实例，
+> 也**没有任何云开发环境凭证**。因此 Q25 的四项**全部未实测**，`tests/test_rls_cross_tenant.py`
+> 的 5 条用例在跑全量时如实 `skip`（skip reason 里写了替代证据）。
+> 下面把「已可验证的代码事实」与「必须在环境里实测的项」分开写，**不混着说**。
+
+**① 已可用代码验证、且会缩小风险的结论（不依赖云环境）**
+
+| 事项 | 结论 | 依据 |
+|---|---|---|
+| `pg_trgm` 是否必须开 | **不必须**。全仓 0 处使用（无 `CREATE EXTENSION`、无 `%>` / `similarity()` / trigram 索引） | `grep -rn "pg_trgm\|CREATE EXTENSION" server/app server/migrations` → 0 命中 |
+| `pgcrypto` 是否必须开 | **不必须**。主键是**客户端生成**的 `uuid4`（`default=uuid.uuid4`），DDL 里没有 `gen_random_uuid()`；`created_at` 用内置 `now()` | `server/app/db/base.py::uuid_pk`（`mapped_column(Uuid, default=...)`，不是 `server_default`） |
+| PG 版本下限（按代码用到的特性推） | **≥ 9.5**（`FORCE ROW LEVEL SECURITY` 是 9.5 才有；`jsonb` 9.4） | `app/tenant/rls.py` 的 `FORCE` + `models/base.py` 的 `JSONB` |
+| 连接数预算 | 每容器实例**峰值 15 条**（`pool_size=5` + `max_overflow=10`）。若云托管最大实例数 10 → 需 **≥150** 可用连接 | `app/db/session.py::create_db_engine` |
+| 生产必须注入 `DATABASE_URL` | **是**。`Settings.database_url` 只读 `DATABASE_URL`，缺省是 SQLite。**云托管的 `PGHOST/PGPORT/PGDATABASE/PGUSER/PGPASSWORD` 这套 libpq 变量本项目当前不读**（`create_engine(url)` 只吃 URL），只注入 PG* 会静默连到 SQLite 内存库 | `app/config.py:85`、`app/db/session.py:49` |
+| 加密口径 | 后端是 **psycopg3（Python）**，不是 Node 的 `pg`。Node 的 `ssl:{rejectUnauthorized:false}` 在 psycopg 里对应的是 **`?sslmode=require`**（加密但**不校验证书**）；要校验证书是 `sslmode=verify-full` + `sslrootcert` | `pyproject.toml` 依赖 `psycopg[binary]` |
+
+> 关于「不校验证书」要说明白：`sslmode=require`（≈ `rejectUnauthorized:false`）只保证**链路加密**，
+> 不防同 VPC 内的中间人。**内网直连可以接受**（可用 `require`）；一旦退成「公网 + 白名单」，
+> 必须换成 `sslmode=verify-full` + `sslrootcert`，否则等于裸奔。
+
+**② 必须在云开发环境里实测的四项（Q25，逐条给命令，别只看控制台）**
+
+在**云托管容器内**（不是本机）跑，任一失败就要按「退路」处理：
+
+```bash
+# Q25-1 内网连通（是否真的同 VPC / 端口是否放通）
+getent hosts "$PGHOST"                       # 期望解析到内网地址（10.x/172.16-31.x），不是公网 IP
+python - <<'PY'
+import os, psycopg
+dsn = ("host=%s port=%s dbname=%s user=%s password=%s sslmode=require connect_timeout=5"
+       % (os.environ["PGHOST"], os.environ.get("PGPORT", "5432"), os.environ["PGDATABASE"],
+          os.environ["PGUSER"], os.environ["PGPASSWORD"]))
+with psycopg.connect(dsn) as conn:
+    print("connected", conn.execute("select version()").fetchone()[0])
+PY
+
+# Q25-2 主版本号（决定 FORCE RLS / jsonb / psycopg3 是否需要降级写法）
+psql "$DATABASE_URL" -Atc "show server_version"
+
+# Q25-3 连接数上限（对上表 15×实例数 的预算）
+psql "$DATABASE_URL" -Atc "show max_connections"
+psql "$DATABASE_URL" -Atc \
+  "select count(*) from pg_stat_activity" # 与 usename 分组一起看，确认应用账号配额
+
+# Q25-4 扩展可用性（代码不依赖，但先问清楚免得以后想加索引时才发现没权限）
+psql "$DATABASE_URL" -Atc "select name from pg_available_extensions where name in ('pg_trgm','pgcrypto')"
+psql "$DATABASE_URL" -Atc "select extname from pg_extension"
+
+# Q25-5 应用账号不是超级用户、也不能 BYPASSRLS（这是 FORCE 之外的第二重保证）
+psql "$DATABASE_URL" -Atc \
+  "select current_user, usesuper, usebypassrls from pg_user where usename = current_user"
+```
+
+- **内网不通** → 先按架构 Q25 的退路办：改「公网 + 白名单」（此时**必须** `sslmode=verify-full`），
+  或退方案 B；**不要**先动手改迁移。
+- 实测通过后，把 `PG_TEST_URL` 注入 CI，`tests/test_rls_cross_tenant.py` 的 5 条会从 `skip` 变成真跑。
+
+**③ Q26：业务表放哪个 schema —— 我的结论与理由（等架构确认后我改迁移）**
+
+- **结论：放独立 schema，但名字不叫 `app`，改叫 `vil`**。
+- **为什么不放 `public`**：PG 模式下 `anon` / `authenticated` 这类角色通常对 `public` 有默认
+  privileges，云开发的数据 API 默认也只暴露 `public`。业务表放 `public` 等于把它们放进
+  数据 API 的可达 schema 里，只能靠 RLS 兜（RLS 仍会挡住，但「看不见」比「看得见但查不出」强一档）。
+  独立 schema 让数据 API **根本枚举不到这 34 张表**。
+- **为什么不叫 `app`（与架构建议的唯一分歧）**：本项目**会话 GUC 的命名空间已经占用了 `app.`**
+  ——`app.tenant_id`、`app.auth_bootstrap`、`app.deliver_bootstrap`。若 schema 也叫 `app`，
+  策略里会出现 `ON app.doc_header USING (tenant_id = current_setting('app.tenant_id')::uuid)`：
+  同一个 `app.` 既指 schema 又指 GUC 前缀，读代码的人和 `grep` 都会错，日后改策略极易改错。
+  **保持不变式：`app.*` 只用于会话配置，`vil` 只用于业务表。**
+- **落地时只有 4 个触点**（models 一行都不改，所以 563 条测试不受影响）：
+
+  | 触点 | 改法 |
+  |---|---|
+  | `migrations/env.py` | PG 在线模式：`context.configure` **之前**先 `exec_driver_sql("CREATE SCHEMA IF NOT EXISTS vil")` + `SET search_path TO vil, public`，再配 `version_table_schema="vil"` |
+  | `migrations/versions/0001_initial.py` | 不需要改（`create_all` 走同一个 search_path，非 schema 前缀写法保持原样） |
+  | `app/db/session.py::create_db_engine` | PG 分支加 `connect_args={"options": "-csearch_path=vil,public"}`，让每条池连接都带 search_path |
+  | `tests/test_migration_rls_ddl.py` | 加断言：离线渲染里有 `CREATE SCHEMA`/`version_table_schema` 装配痕迹；SQLite 分支**不得**出现任何 schema 前缀 |
+
+- ⚠️ **顺序陷阱（必须写在这里，否则第一次部署就会踩）**：Alembic 的 `alembic_version`
+  是**在跑第一个 revision 之前**建的。所以 `vil` schema 必须在 `context.run_migrations()`
+  **之前**存在（`CREATE SCHEMA IF NOT EXISTS` 要放在 env.py 的 online 分支里，而不是放在
+  `0001_initial.py` 里）。放错位置的后果不是报错，而是**建出第二套表**或「以为升级过了」。
+- ⚠️ **两个前置未知**：① 云开发 PG 模式下应用账号**有没有 `CREATE SCHEMA` 权限**（与 Q25-5 同批测）；
+  ② 若没有，得由控制台/DBA 预建 `vil` 并 `GRANT USAGE`。这两条**未实测**，所以：**Q26 的迁移改动
+  等 Q25 实测回来再落地**，现在不动 `migrations/`。
 
 ### 34 张表（架构 §4.3.2 全量）
 
@@ -223,12 +328,18 @@ PRD 假设目标 ≥45%，实测 50.0%。**规则表按 intent 语义人工编�
 
 ### 音频链路（100KiB）
 
+> **现行口径（2026-11-17 起）**：语音在**手机端**由微信「同声传译」插件转成文字，
+> 只把 `asr_text` 发给 `/voice/sessions/{id}/parse`——**音频一个字节都不出手机**，
+> 也不再有「上传票据 → 直传 → 只传引用」这一跳（端侧见 `miniprogram/services/speech.ts`）。
+> 下面的票据链路**保留但降级为 P1 兜底**（真 ASR 接线时用），不是当前主路径。
+
 `callContainer` 请求体有 **文本 100KiB 硬限制**，所以音频**不进请求体**：
 `POST /upload/ticket` 发票据 → 端侧 `wx.cloud.uploadFile` 直传 → `/voice/*` 只收
 `audio_object_ref`。两个入口共用 `upload_ticket.MAX_AUDIO_BYTES` **同一个常量**；
 入参 Schema（`UploadTicketRequest`）**不定义任何音频字段**（`extra="forbid"`），
 从类型层禁掉 base64；`voice_log` 只存 `asr_text`，对象引用在 `voice_session` 上，
-短 TTL + 限期删除（**合规口径需核实**）。
+短 TTL + 限期删除（**合规口径需核实**）。端侧转文字后，「录音不留存」从「靠 TTL 删」
+变成**结构上不可能留存**——这条是插件路线的附带收益。
 
 ### 发货回调（虚拟支付）
 
@@ -384,8 +495,10 @@ docker run --rm -p 8000:80 voice-inventory-lite:local
 ```
 
 生产由**微信云托管**托管（`callContainer` 私有协议，免域名/免 ICP 域名备案/免 HTTPS 证书）；
-云托管内不部署有状态服务，PG/Redis 必须外挂托管（D7/§4.5）。默认公网域名仅供接口测试，
-**不能用于生产**。小程序备案（AppID 备案）与域名备案无关，是上线与开支付的前置。
+云托管内不部署有状态服务：**PostgreSQL 由「云开发 PG 模式环境」自带**（同环境同 VPC 直连，
+不再需要外挂实例），**Redis 仍需外挂托管**（D7/§4.5）。建环境的顺序与硬约束见上文
+「云开发 PG 模式：三条建环境时定死的硬约束」——**顺序错了只能重建环境**。
+默认公网域名仅供接口测试，**不能用于生产**。小程序备案（AppID 备案）与域名备案无关，是上线与开支付的前置。
 
 ## 待办（T05+）
 
