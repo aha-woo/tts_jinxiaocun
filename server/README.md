@@ -163,7 +163,7 @@ PY
   + `sslrootcert`），或退方案 B；**不要**先动手改迁移。
 - 实测通过后，把 `PG_TEST_URL` 注入 CI，`tests/test_rls_cross_tenant.py` 的 5 条会从 `skip` 变成真跑。
 
-**③ Q26：业务表放哪个 schema —— 我的结论与理由（等架构确认后我改迁移）**
+**③ Q26：业务表放哪个 schema —— 候选方案与理由（**尚未实测，不是结论**；等 T01 在真环境验过再定）**
 
 - **结论：放独立 schema，但名字不叫 `app`，改叫 `vil`**。
 - **为什么不放 `public`**：PG 模式下 `anon` / `authenticated` 这类角色通常对 `public` 有默认
