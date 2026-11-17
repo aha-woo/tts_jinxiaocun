@@ -23,6 +23,7 @@ R1/R2 必须卡片；R3 只生成 ``pending_task``，**没有语音直写旁路*
 from __future__ import annotations
 
 import json
+import logging
 import uuid
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta, timezone
@@ -38,6 +39,12 @@ from app.config import ContractBundle, get_contracts
 from app.domain.ar_ap_service import ArApDelta, ArApService, OverSettleBlocked
 from app.domain.ar_ap_service import VersionConflict as ArVersionConflict
 from app.domain.doc_service import DocDraft, DocLineDraft, DocService
+from app.domain.entity_writer import (
+    ENTITY_INTENTS,
+    EntityWriteResult,
+    EntityWriter,
+    UnsupportedSideEffect,
+)
 from app.domain.intent_registry import IntentRegistry, default_registry
 from app.domain.inventory_service import (
     InventoryDelta,
@@ -45,8 +52,10 @@ from app.domain.inventory_service import (
     NegativeStockBlocked,
 )
 from app.domain.inventory_service import VersionConflict as InvVersionConflict
+from app.models.doc import DocHeader
 from app.models.voice import ConfirmCard, VoiceLog
 from app.services.audit import AuditService
+from app.services.reversal import ReversalOutcome, ReversalService
 from app.services.usage_meter import MeterResult, UsageMeter
 from app.voice.card_builder import ConfirmCardBuilder, ConfirmCardView
 from app.voice.conflict_detector import Conflict
@@ -61,6 +70,7 @@ __all__ = [
     "ConfirmOutcome",
     "LedgerService",
     "StoredCardPayload",
+    "WriteOutcome",
 ]
 
 #: 卡片 TTL（秒）：30s 超时不落账（PRD 3.5【假设】）
@@ -71,6 +81,22 @@ CONFIRM_WORDS: tuple[str, ...] = ("确认", "确定", "对", "是的", "没错",
 
 #: 撤销窗口（分钟）【假设】
 REVERSAL_WINDOW_MINUTES = 10
+
+#: 走「反做单」的意图（``side_effect.inventory_delta == "adjust"``）。
+#: 这两个意图**绝不能**走普通单据写入——那会新增一张正数单，账面多出一笔。
+REVERSAL_INTENTS: frozenset[str] = frozenset({"sys.undo", "sys.correct"})
+
+#: 由「单据 + 库存 + 应收」这条既有链路负责的实体。
+#: 不在这个集合、也不在 :data:`REVERSAL_INTENTS` / :data:`ENTITY_INTENTS` 里的实体，
+#: 一律视为「契约声明了但代码没实现」→ 报错，不静默写单。
+_DOC_PATH_ENTITIES: frozenset[str] = frozenset({"doc", "inventory", "ar_ap", "payment"})
+
+#: 说「上一单」这一类指代（``DOC`` 槽位没给出具体单号时按「最近一张未撤销单」解析）
+_LAST_DOC_WORDS: frozenset[str] = frozenset(
+    {"上一单", "上一笔", "上一张", "刚才那单", "刚才那笔", "刚才那张", "刚才的单"}
+)
+
+logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
@@ -159,6 +185,24 @@ class CardCreation:
 
 
 @dataclass(frozen=True)
+class WriteOutcome:
+    """一次确认「到底写了什么」的统一描述。
+
+    三种形态必须用同一个结构描述，否则调用方只能靠 ``doc_id is None`` 猜：
+    - 普通交易意图 → 单据（``doc_id`` + ``doc_no`` + 金额）；
+    - ``sys.undo`` → 反做单（原单保留，返回反做单号）；
+    - 商品/伙伴/价格/词表 → **没有单据**，只有实体（``entity_result``）。
+    """
+
+    doc_id: uuid.UUID | None = None
+    doc_no: str = ""
+    total_amount_fen: int = 0
+    detail: str = ""
+    entity_result: EntityWriteResult | None = None
+    reversal: ReversalOutcome | None = None
+
+
+@dataclass(frozen=True)
 class ConfirmOutcome:
     """确认落账结果。"""
 
@@ -173,11 +217,19 @@ class ConfirmOutcome:
     needs_second_voice: bool = False
     error_code: str | None = None
     detail: str = ""
+    #: 写了实体（商品/伙伴/价格/词表）时的落点——这类意图**不产生单据**
+    entity: str | None = None
+    entity_id: str | None = None
+    summary: str = ""
+    #: 反做单（``sys.undo``）：原单保留，这里是反做单 id/号
+    reversal_doc_id: str | None = None
+    reversal_doc_no: str | None = None
 
     @property
     def confirmed(self) -> bool:
-        """是否真的落了账。"""
-        return self.doc_id is not None and self.error_code is None
+        """是否真的写了东西（单据 **或** 实体；只有卡片没有落库不算）。"""
+        wrote_something = self.doc_id is not None or self.entity_id is not None
+        return wrote_something and self.error_code is None
 
     def as_dict(self) -> dict[str, Any]:
         """JSON 形态。"""
@@ -192,10 +244,15 @@ class ConfirmOutcome:
             "reversal_deadline": (
                 self.reversal_deadline.isoformat() if self.reversal_deadline else None
             ),
+            "reversal_doc_id": self.reversal_doc_id,
+            "reversal_doc_no": self.reversal_doc_no,
             "expired": self.expired,
             "needs_second_voice": self.needs_second_voice,
             "error_code": self.error_code,
             "detail": self.detail,
+            "entity": self.entity,
+            "entity_id": self.entity_id,
+            "summary": self.summary,
         }
 
 
@@ -337,6 +394,21 @@ class LedgerService:
             card.preview_version = preview.preview_version
             card.status = "active"
             self._session.flush()
+            # 复活：卡片 id 是**已存在那一行**的 id，视图必须跟着改。
+            # 否则视图里带着新 uuid4，用户拿它去确认 → 422「卡片不存在」
+            # （同一会话第二次 parse 就必然踩到这条）。
+            if str(card.card_id) != str(card_id):
+                view = self._builder.build(
+                    parse,
+                    card_id=str(card.card_id),
+                    session_id=str(session_id),
+                    asr_text=asr_text,
+                    asr_confidence=asr_confidence,
+                    impact=preview,
+                    lines=lines,
+                    conflicts=conflicts,
+                    expires_at=expires_at,
+                )
 
         self._write_voice_log(
             tenant_id=tenant_id,
@@ -438,6 +510,9 @@ class LedgerService:
         # 已确认：幂等返回首次结果（不重复写单）
         if card.status == "confirmed":
             existing_doc = self._doc_of_card(tenant_id, card.card_id)
+            # 实体的落点存在 card.slots 的**顶层**（与 doc_id 同级），不在 slots 里
+            stored_entity = dict(card.slots or {}).get("entity")
+            entity = dict(stored_entity) if isinstance(stored_entity, Mapping) else {}
             return ConfirmOutcome(
                 card_id=str(card.card_id),
                 doc_id=str(existing_doc.doc_id) if existing_doc else None,
@@ -445,6 +520,9 @@ class LedgerService:
                 card_status="confirmed",
                 total_amount_fen=int(existing_doc.total_amount_fen) if existing_doc else 0,
                 detail="卡片已确认过，幂等返回首次落账结果（不重复写单、不重复扣次）",
+                entity=str(entity.get("entity") or "") or None,
+                entity_id=str(entity.get("entity_id") or "") or None,
+                summary=str(entity.get("summary") or ""),
             )
         if card.status == "cancelled":
             raise AppError("E_VALIDATION", message="卡片已取消，不能确认")
@@ -486,8 +564,35 @@ class LedgerService:
                     ),
                 )
 
-        # ③ CAS 落账
-        doc = self._write_documents(
+        # ③ 待确认的槽位/行：**不得静默落账**
+        #
+        # 卡片自己在 actions 里写着「存在待确认槽位，不得静默落账」，那就必须在
+        # 写库前拦住。两类「待确认」都要看：
+        # - 槽位级：``source[code] == "pending"``（没听清，值可能为空或猜的）；
+        # - 行级：``line["pending"] is True``（例如缺单位换算系数，数量口径不明）。
+        # 典型后果：缺「1 箱 = 24 瓶」时 ``qty_base`` 退化成原数量，
+        # **5 箱会记成 5 瓶**——数字自洽、账面全错，用户还看不到提示。
+        pending_codes = sorted(code for code, src in payload.source.items() if src == "pending")
+        pending_lines = [
+            index for index, line in enumerate(payload.lines, start=1) if line.get("pending")
+        ]
+        if pending_codes or pending_lines:
+            raise AppError(
+                "E_VALIDATION",
+                message=(
+                    "这张卡片还有待确认的内容，不能直接落账："
+                    f"待确认槽位 {pending_codes or '无'}，待确认明细行 {pending_lines or '无'}；"
+                    "请先把缺的单位/换算系数/对象补齐（点「去确认」或补一句），再确认"
+                ),
+                data={
+                    "reason": "pending_slots",
+                    "pending_slots": pending_codes,
+                    "pending_lines": pending_lines,
+                },
+            )
+
+        # ④ CAS 落账（单据 / 反做单 / 实体三种形态之一）
+        outcome = self._apply_side_effects(
             tenant_id=tenant_id,
             store_id=store_id,
             member_id=member_id,
@@ -499,37 +604,62 @@ class LedgerService:
         card.status = "confirmed"
         # 把落账结果写回卡片载荷：重复确认时不用反查审计就能幂等返回
         confirmed_payload = payload.to_json()
-        confirmed_payload["doc_id"] = str(doc.doc_id)
-        confirmed_payload["doc_no"] = str(doc.doc_no)
-        confirmed_payload["total_amount_fen"] = int(doc.total_amount_fen)
+        if outcome.doc_id is not None:
+            confirmed_payload["doc_id"] = str(outcome.doc_id)
+            confirmed_payload["doc_no"] = str(outcome.doc_no)
+            confirmed_payload["total_amount_fen"] = int(outcome.total_amount_fen)
+        if outcome.entity_result is not None:
+            confirmed_payload["entity"] = outcome.entity_result.as_dict()
         card.slots = confirmed_payload
         self._session.flush()
 
         inventory_after = self._inventory_after(tenant_id, store_id, payload)
+        audit_entity_id = (
+            str(outcome.doc_id)
+            if outcome.doc_id is not None
+            else (outcome.entity_result.entity_id if outcome.entity_result else str(card.card_id))
+        )
         self._audit.record(
             tenant_id=tenant_id,
             action="doc.confirm",
-            entity="doc_header",
-            entity_id=str(doc.doc_id),
+            entity="doc_header" if outcome.doc_id is not None else "entity",
+            entity_id=audit_entity_id,
             member_id=member_id,
             detail={
                 "card_id": str(card.card_id),
                 "intent_id": payload.intent_id,
-                "doc_no": str(doc.doc_no),
-                "total_amount_fen": int(doc.total_amount_fen),
+                "doc_no": str(outcome.doc_no),
+                "total_amount_fen": int(outcome.total_amount_fen),
                 "confirm_type": confirm_type,
                 "button_fallback": bool(button_fallback),
+                "entity": outcome.entity_result.as_dict() if outcome.entity_result else None,
+                "reversal_doc_no": outcome.reversal.reversal_doc_no if outcome.reversal else None,
             },
         )
+        if outcome.detail:
+            detail = outcome.detail
+        elif self._reversal_window > 0:
+            detail = f"已记：{payload.intent_id} {outcome.doc_no}；{self._reversal_window} 分钟内可撤销"
+        else:  # pragma: no cover - 撤销窗口关闭时
+            detail = f"已记：{payload.intent_id} {outcome.doc_no}"
         return ConfirmOutcome(
             card_id=str(card.card_id),
-            doc_id=str(doc.doc_id),
-            doc_no=str(doc.doc_no),
+            doc_id=str(outcome.doc_id) if outcome.doc_id is not None else None,
+            doc_no=str(outcome.doc_no) or None,
             card_status="confirmed",
-            total_amount_fen=int(doc.total_amount_fen),
+            total_amount_fen=int(outcome.total_amount_fen),
             inventory_after=inventory_after,
-            reversal_deadline=moment + timedelta(minutes=self._reversal_window),
-            detail=f"已记：{payload.intent_id} {doc.doc_no}；{self._reversal_window} 分钟内可撤销",
+            reversal_deadline=(
+                moment + timedelta(minutes=self._reversal_window)
+                if outcome.reversal is None and outcome.doc_id is not None
+                else None
+            ),
+            detail=detail,
+            entity=outcome.entity_result.entity if outcome.entity_result else None,
+            entity_id=outcome.entity_result.entity_id if outcome.entity_result else None,
+            summary=outcome.entity_result.summary if outcome.entity_result else "",
+            reversal_doc_id=outcome.reversal.reversal_doc_id if outcome.reversal else None,
+            reversal_doc_no=outcome.reversal.reversal_doc_no if outcome.reversal else None,
         )
 
     # ------------------------------------------------------------------ 取消 / 超时 / 复活
@@ -837,6 +967,199 @@ class LedgerService:
             )
         )
         self._session.flush()
+
+    def _apply_side_effects(
+        self,
+        *,
+        tenant_id: uuid.UUID,
+        store_id: uuid.UUID,
+        member_id: uuid.UUID,
+        card: ConfirmCard,
+        payload: StoredCardPayload,
+        spec_intent: str,
+        biz_date: date,
+    ) -> WriteOutcome:
+        """按契约 ``side_effect`` **分派**到三条互不相同的写入路径。
+
+        为什么必须分派（这是本轮修的两类 P0 的共同根因）
+        ------------------------------------------------
+        之前所有意图都走同一个 ``_write_documents``，于是：
+        - ``sys.undo``（``inventory_delta="adjust"``）落成一张**正向单**：
+          用户以为撤销了，账面却多出一笔采购；
+        - 8 个写实体意图落成一张**零金额空单据**：商品/伙伴/价格根本没写入。
+
+        三条路清清楚楚：反做单 / 实体 / 单据+库存+应收。**没实现的必须报错**，
+        绝不静默写单（:class:`UnsupportedSideEffect`）。
+        """
+        spec = self._registry.require(spec_intent)
+        side_effect = dict(spec.side_effect or {})
+        entities = tuple(str(entity) for entity in (side_effect.get("entities") or ()))
+        inventory_mode = str(side_effect.get("inventory_delta") or "none")
+
+        if spec_intent in REVERSAL_INTENTS or inventory_mode == "adjust":
+            return self._write_reversal(
+                tenant_id=tenant_id,
+                store_id=store_id,
+                member_id=member_id,
+                payload=payload,
+                spec_intent=spec_intent,
+                biz_date=biz_date,
+            )
+
+        if spec_intent in ENTITY_INTENTS:
+            return self._write_entity(
+                tenant_id=tenant_id,
+                store_id=store_id,
+                member_id=member_id,
+                payload=payload,
+                spec_intent=spec_intent,
+            )
+
+        unknown = tuple(
+            entity for entity in entities if entity not in _DOC_PATH_ENTITIES
+        )
+        if unknown:
+            # 契约说「要写这些实体」，但没有任何代码实现 → 拒绝，不写空单
+            raise AppError(
+                "E_VALIDATION",
+                message=(
+                    f"{spec_intent} 需要写 {list(unknown)}，但这条链路还没有实现；"
+                    "为避免「看起来记成功了、实际什么都没写」，本次不落账"
+                ),
+                data={"reason": "unsupported_side_effect", "intent_id": spec_intent,
+                      "entities": list(unknown)},
+            )
+
+        doc = self._write_documents(
+            tenant_id=tenant_id,
+            store_id=store_id,
+            member_id=member_id,
+            card=card,
+            payload=payload,
+            spec_intent=spec_intent,
+            biz_date=biz_date,
+        )
+        return WriteOutcome(
+            doc_id=doc.doc_id,
+            doc_no=str(doc.doc_no),
+            total_amount_fen=int(doc.total_amount_fen),
+        )
+
+    def _write_entity(
+        self,
+        *,
+        tenant_id: uuid.UUID,
+        store_id: uuid.UUID,
+        member_id: uuid.UUID,
+        payload: StoredCardPayload,
+        spec_intent: str,
+    ) -> WriteOutcome:
+        """写实体（商品/别名/伙伴/价格/个人词表）——**不产生单据**。"""
+        try:
+            result = EntityWriter(self._session, contracts=self._contracts).apply(
+                intent_id=spec_intent,
+                tenant_id=tenant_id,
+                store_id=store_id,
+                member_id=member_id,
+                slots=payload.slots,
+                source=payload.source,
+            )
+        except UnsupportedSideEffect as exc:
+            raise AppError(
+                "E_VALIDATION",
+                message=f"{spec_intent} 的写入还没有实现，本次不落账（不写空单据）",
+                data={"reason": "unsupported_side_effect", "intent_id": exc.intent_id},
+            ) from exc
+        return WriteOutcome(
+            detail=f"已记：{result.summary}",
+            entity_result=result,
+        )
+
+    def _write_reversal(
+        self,
+        *,
+        tenant_id: uuid.UUID,
+        store_id: uuid.UUID,
+        member_id: uuid.UUID,
+        payload: StoredCardPayload,
+        spec_intent: str,
+        biz_date: date,
+    ) -> WriteOutcome:
+        """``sys.undo`` / ``sys.correct``：**生成反做单，原单保留**。
+
+        - ``sys.undo``：定位原单 → :meth:`ReversalService.reverse`
+          （窗口超时 ``E_REVERSAL_WINDOW_CLOSED``、被引用 ``E_DOC_REFERENCED``
+          都按契约原样抛出，不吞）；
+        - ``sys.correct``：需要「撤销 + 按新值重新落一张单」。后者要用户确认过
+          新的金额与数量，而卡片里只有 ``DOC/TV/P/Q/TF`` 这几个槽位，凑不出可信的
+          明细行——**宁可明确拒绝，也不生成一笔用户没确认过的金额**。
+        """
+        if spec_intent == "sys.correct":
+            raise AppError(
+                "E_VALIDATION",
+                message=(
+                    "更正需要两步：先「撤销上一单」把原单反做掉，再重新录一句正确的。"
+                    "我不会替你猜新金额（猜错就是一笔你没确认过的账）"
+                ),
+                data={"reason": "correct_requires_rerecord", "intent_id": spec_intent},
+            )
+
+        target = self._resolve_target_doc(tenant_id=tenant_id, raw_ref=payload.slots.get("DOC"))
+        if target is None:
+            raise AppError(
+                "E_VALIDATION",
+                message="没找到要撤销的单据；请说清单号，或直接说「撤销上一单」",
+                data={"reason": "reversal_target_not_found", "doc_ref": str(payload.slots.get("DOC") or "")},
+            )
+        if target.biz_date != biz_date:
+            # 不拒绝：撤销的是历史单，biz_date 只是「今天」；但要把差异记进回执
+            logger.debug(
+                "撤销历史单 doc_no=%s biz_date=%s（今天 %s）",
+                target.doc_no,
+                target.biz_date,
+                biz_date,
+            )
+        reversal = ReversalService(self._session, registry=self._registry).reverse(
+            tenant_id=tenant_id,
+            store_id=store_id,
+            doc_id=target.doc_id,
+            member_id=member_id,
+            reason="语音撤销（sys.undo）",
+        )
+        return WriteOutcome(
+            doc_id=uuid.UUID(str(reversal.reversal_doc_id)),
+            doc_no=str(reversal.reversal_doc_no),
+            total_amount_fen=int(target.total_amount_fen),
+            detail=(
+                f"已撤销 {target.doc_no}：原单保留且标记为「已撤销」，"
+                f"另生成反做单 {reversal.reversal_doc_no}（两笔都可查、可导出）"
+            ),
+            reversal=reversal,
+        )
+
+    def _resolve_target_doc(
+        self, *, tenant_id: uuid.UUID, raw_ref: Any
+    ) -> DocHeader | None:
+        """把 ``DOC`` 槽位解析成一张真实单据（id / 单号 / 「上一单」）。"""
+        doc_service = DocService(self._session)
+        as_id = _as_uuid(raw_ref)
+        if as_id is not None:
+            found = doc_service.get(tenant_id=tenant_id, doc_id=as_id)
+            if found is not None:
+                return found
+        text_value = str(raw_ref or "").strip()
+        if text_value and not _LAST_DOC_WORDS.intersection({text_value}):
+            by_no = doc_service.get_by_no(tenant_id=tenant_id, doc_no=text_value)
+            if by_no is not None:
+                return by_no
+        # 「上一单」/ 空：取最近一张**还没被撤销**的单（撤销过的再撤一次没有意义）
+        statement = (
+            select(DocHeader)
+            .where(DocHeader.tenant_id == tenant_id, DocHeader.status == "confirmed")
+            .order_by(DocHeader.created_at.desc())
+            .limit(1)
+        )
+        return self._session.execute(statement).scalar_one_or_none()
 
     def _write_documents(
         self,

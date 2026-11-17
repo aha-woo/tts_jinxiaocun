@@ -214,6 +214,40 @@ def _now_buckets(now: float | None = None) -> tuple[str, str]:
     return stamp, stamp[:8]
 
 
+#: 进程内内存桶（**必须跨请求复用**）。
+#:
+#: 以前 ``from_settings()`` 每次都 ``MemoryQuotaStore()``，于是每个请求都是一个空桶：
+#: 30/min 的限流形同虚设（实测连打 35 次 ``POST /voice/sessions`` 35 次全放行），
+#: 而限流是**成本护栏**——不生效等于把供应商账单交给用户的手速。
+#: 未配置 Redis 时按「桶参数」共用一个内存实现；配置了 Redis 就走 Redis（多实例一致）。
+_MEMORY_STORES: dict[tuple[int, int], "MemoryQuotaStore"] = {}
+_MEMORY_STORES_LOCK = threading.Lock()
+
+
+def shared_memory_store(limits: "QuotaLimits") -> "MemoryQuotaStore":
+    """取（或创建）该桶参数对应的进程内共享存储。
+
+    Args:
+        limits: 桶参数（分钟/日上限）；参数不同 → 不同桶，互不影响。
+
+    Returns:
+        进程内单例 :class:`MemoryQuotaStore`。
+    """
+    key = (int(limits.per_minute), int(limits.per_day))
+    with _MEMORY_STORES_LOCK:
+        store = _MEMORY_STORES.get(key)
+        if store is None:
+            store = MemoryQuotaStore()
+            _MEMORY_STORES[key] = store
+        return store
+
+
+def reset_shared_memory_stores() -> None:
+    """清空共享内存桶（**只给测试用**）。"""
+    with _MEMORY_STORES_LOCK:
+        _MEMORY_STORES.clear()
+
+
 class QuotaService:
     """两层桶门禁：先查日桶再查分钟桶（任一超限即拒）。"""
 
@@ -248,7 +282,7 @@ class QuotaService:
         if redis_client is not None:
             return cls(RedisQuotaStore(redis_client), limits=limits, expected_redis=True)
         expected = bool(getattr(settings, "redis_url", ""))
-        return cls(MemoryQuotaStore(), limits=limits, expected_redis=expected)
+        return cls(shared_memory_store(limits), limits=limits, expected_redis=expected)
 
     # ------------------------------------------------------------------ 判定
     def take(self, tenant_id: str, *, now: float | None = None) -> QuotaDecision:
