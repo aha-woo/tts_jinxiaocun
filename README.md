@@ -4,7 +4,74 @@
 > + 微信云托管容器后端（Python 3.11 / FastAPI / SQLAlchemy 2 / Pydantic v2）+ 小程序虚拟支付 +
 > 云开发云函数接发货推送。
 
-当前进度：**T01 完成**（项目基础设施 + 共享契约）。业务实现见 T02~T05。
+当前进度：**T01~T05 已完成**，并通过三轮独立复验。未闭环项（R3 待办审批后的执行入口、
+换算系数审批）逐条记在 `docs/03-遗留问题.md`，不是「已全部完成」，请照那份清单看。
+
+---
+
+## 0. 五分钟在本地看到效果（最快路径）
+
+不用小程序、不用云托管、不用真实 ASR/大模型。本机没有语音识别和对象存储，
+所以「说话」这一步用命令行代替，**后面全是真链路**（真路由、真建卡、真扣次、真写库、真库存）。
+
+**① 建库（只需一次）**
+
+```bash
+cd server
+export DATABASE_URL="sqlite+pysqlite:///./dev.db"
+export JWT_SECRET="local-dev-only-0123456789abcdef"
+python -m alembic upgrade head          # 34 张表 + 平台种子数据
+```
+
+**② 起后端（这个窗口别关）**
+
+```bash
+cd server
+export DATABASE_URL="sqlite+pysqlite:///./dev.db"
+export JWT_SECRET="local-dev-only-0123456789abcdef"
+python -m uvicorn app.main:app --port 8000
+```
+
+浏览器打开 <http://127.0.0.1:8000/healthz> 和 <http://127.0.0.1:8000/docs>（本地才有的接口文档）。
+
+**③ 另开一个窗口：登录一次 + 准备演示商品**
+
+```bash
+cd server
+export DATABASE_URL="sqlite+pysqlite:///./dev.db"
+curl -s -X POST http://127.0.0.1:8000/api/v1/auth/login \
+     -H "Content-Type: application/json" -d '{"code":"demo"}' > /dev/null
+python scripts/demo_seed.py
+```
+
+`demo_seed.py` 会建「可乐 500ml（瓶，1 箱 = 24 瓶，已审核）」和「矿泉水」。
+**为什么必须跑它**：语音建的商品基本单位默认是「个」，说「两箱」会缺换算系数被拦下，
+而目前换算没有审批入口（`docs/03-遗留问题.md` P1-3b），所以演示前先把换算备好。
+
+**④ 说一句话，看它出卡、确认、落账**
+
+```bash
+python scripts/demo_say.py "进了两箱可乐，一件三十五" --yes   # 自动确认
+python scripts/demo_say.py                                  # 交互模式，一句一句说
+```
+
+能跑通的说法（规则层直接命中，不依赖大模型）：
+
+| 你说 | 会发生什么 |
+|---|---|
+| `进了两箱可乐，一件三十五` | 出确认卡（明细 2 箱 × ¥35 = ¥70，库存 0 → 48），确认后单号 `CG…` |
+| `卖了五瓶可乐，一瓶两块五` | 出确认卡（库存 48 → 43），确认后单号 `XS…` |
+| `今天卖了多少` / `今天赚了多少` | 直接回答采购/销售额，**不出卡、不扣次** |
+| `可乐别名叫'快乐水'` | 出卡，确认后写别名；**紧接着** `进了两箱快乐水，一件三十五` 就能认出来 |
+| `新建商品雪碧` | 出卡，确认后商品档案里真的有「雪碧」 |
+
+本地**跑不通**的说法（会返回 `E_LLM_SCHEMA_INVALID`）：`撤销上一单`、`把上一单更正一下`。
+原因是这两句在契约里 `template_hit=false`，必须靠真实大模型理解，而本机 `LLM_PROVIDER=fake`
+没有模型。**这不是代码坏了**，接上真模型即可；撤销也可以直接调接口验证：
+`POST /api/v1/docs/{doc_id}/reversal`。
+
+> `python` 若不在 PATH，用托管版本：
+> `C:/Users/YHC/.workbuddy/binaries/python/envs/default/Scripts/python.exe`
 
 ---
 
@@ -90,8 +157,14 @@ pytest -q
 4. 基础库需 ≥ 2.23.0（`callContainer` 要求；工程默认 `libVersion: 3.0.0`）；
 5. 编译后首页点「初始化云托管」→ 应显示 `38 / 18 / 5 / 12` 与错误码个数，即端服契约同版本。
 
-本地无云托管时：把 `LOCAL_BASE_URL` 填 `http://127.0.0.1:8000`（并在开发者工具里勾选
-「不校验合法域名」）即可直连本机 uvicorn——**仅开发态**。
+本地无云托管时：把 `services/dev-channel.ts` 的 `DEV_MODE` 改成 `true`
+（它默认 `false`，且 `server/tests/test_miniprogram_prod_channel.py` 会断言默认值——
+**看完界面记得改回 `false`，否则测试会红**），并在开发者工具里勾选
+「详情 → 本地设置 → 不校验合法域名」，即可直连本机 uvicorn——**仅开发态**。
+
+手机端首页的录音链是「录音 → 直传对象存储 → 只传引用」，本机没有云开发对象存储，
+所以**录音那一键在本地点不通**，能看的是页面结构与各页 UI；要说一句话看效果，用
+上面 §0 的 `scripts/demo_say.py`。
 
 ### 3.3 容器（仅本地联调）
 
