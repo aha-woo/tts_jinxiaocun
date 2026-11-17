@@ -54,6 +54,11 @@ def create_db_engine(url: str, *, echo: bool = False) -> Engine:
         pool_size=5,
         max_overflow=10,
         pool_recycle=1800,  # 外挂托管实例常会掐空闲连接，需核实（Q22）
+        # 建连超时：**没有它，DB 不可达时 /readyz 与启动自检会挂几分钟**（Windows 实测
+        # 对关闭端口 SYN 重试可达 90s+；psycopg 默认 connect_timeout=0 表示无限等）。
+        # 5 秒足够内网/公网建连，也让「连不上」快速变成 503 而不是把探针拖死。
+        connect_args={"connect_timeout": 5},
+        pool_timeout=10,
     )
 
 

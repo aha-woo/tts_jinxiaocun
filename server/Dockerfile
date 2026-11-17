@@ -38,5 +38,11 @@ EXPOSE 80
 HEALTHCHECK --interval=30s --timeout=3s --start-period=10s --retries=3 \
     CMD python -c "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:80/healthz', timeout=2).status==200 else 1)"
 
-# 云托管约定：监听 80 端口
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "80", "--proxy-headers", "--forwarded-allow-ips", "*"]
+# 云托管约定：监听 80 端口。
+#
+# 启动前可选跑迁移：**只有注入了 MIGRATION_DATABASE_URL 才会跑**。
+# 为什么不无条件跑：迁移要 DDL / 策略权限（库 owner），而应用账号必须是
+# NOSUPERUSER + NOBYPASSRLS（否则 RLS 白装）——两个账号不能混用。
+# 配了 MIGRATION_DATABASE_URL（owner 账号）→ 部署即自动建表；迁移失败直接退出，
+# 不会带着「表 0 张」去接流量。没配 → 只起服务（迁移需在部署流程里单独跑一次）。
+CMD ["sh", "-c", "if [ -n \"$MIGRATION_DATABASE_URL\" ]; then alembic upgrade head || exit 1; fi; exec uvicorn app.main:app --host 0.0.0.0 --port 80 --proxy-headers --forwarded-allow-ips '*'"]

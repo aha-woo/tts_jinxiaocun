@@ -43,6 +43,7 @@ from app.common.errors import register_exception_handlers
 from app.common.idempotency import IdempotencyMiddleware, build_store
 from app.config import ContractError, Settings, get_contracts, get_settings, load_contracts
 from app.db.session import Database
+from app.tenant import rls
 
 logger = logging.getLogger(__name__)
 
@@ -214,6 +215,46 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         logger.info("服务关闭")
 
 
+def _assert_production_config(settings: Settings, database: Database) -> None:
+    """生产环境自检：**错配就拒绝启动**，不带病上线。
+
+    为什么必须在启动期炸，而不是等用户发现
+    --------------------------------------
+    这三类错配的共同点是「服务能起来、接口也返回 200」，但语义是错的：
+
+    1. ``DATABASE_URL`` 落到 SQLite：没有 RLS（多租户隔离少一层），且内存库重启即丢数据；
+    2. ``WX_PROVIDER=fake``：任何 code 都能换出一个 openid → **任何人可开通租户**；
+    3. ``JWT_SECRET`` 还是默认值：token 可被任意伪造。
+
+    LLM / 支付已经有同构的「生产禁止 fake」保护（``llm_provider`` / ``pay/sign.py``），
+    这里把数据层与登录补齐，保持同一条纪律。
+    """
+    if not settings.is_production():
+        return
+
+    problems: list[str] = []
+    # 只读方言、**不连库**：用 rls.capabilities(engine) 而不是 database.capabilities()，
+    # 后者会去查实际表数（DB 不可达时会等到建连超时，启动自检就被拖死）。
+    dialect = str(rls.capabilities(database.engine).get("dialect") or "")
+    if dialect != "postgresql":
+        problems.append(
+            f"DATABASE_URL 不是 PostgreSQL（dialect={dialect!r}）：生产必须是 PG，"
+            "否则没有 DB 级 RLS、重启还会丢数据"
+        )
+    if (settings.wx_provider or "").strip().lower() != "real":
+        problems.append(
+            f"WX_PROVIDER={settings.wx_provider!r}：生产必须 real，"
+            "fake 会允许任何人用任意 code 开通租户"
+        )
+    if settings.jwt_secret_is_default():
+        problems.append("JWT_SECRET 仍是本地默认值：任何人都能伪造登录凭证")
+
+    if problems:
+        raise RuntimeError(
+            "生产配置自检未通过，拒绝启动：\n- " + "\n- ".join(problems)
+        )
+
+
 def create_app(settings: Settings | None = None) -> FastAPI:
     """构造 FastAPI 应用（测试可注入 Settings）。"""
     resolved = settings if settings is not None else get_settings()
@@ -242,6 +283,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.state.idempotency_store = build_store(resolved)
     # 数据层：PG 走方案 A（RLS），本地/测试可落到 SQLite（无 RLS，capabilities 会如实说明）
     app.state.database = Database.from_url(resolved.database_url, echo=resolved.database_echo)
+    # 生产自检：非 PG / fake 登录 / 默认 JWT 密钥 → 直接拒绝启动（见函数 docstring）
+    _assert_production_config(resolved, app.state.database)
 
     register_exception_handlers(app)
     app.add_middleware(RequestSizeGuardMiddleware, max_bytes=resolved.max_request_body_bytes)

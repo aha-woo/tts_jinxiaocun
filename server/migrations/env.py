@@ -11,8 +11,10 @@
 连接串优先级
 ------------
 1. ``config.attributes["database_url"]``：测试/工具显式注入（最高优先级，便于隔离）；
-2. 环境变量 ``DATABASE_URL``：云托管/CI 注入；
-3. ``alembic.ini`` 的 ``sqlalchemy.url``：本地默认（PG，方案 A）。
+2. 环境变量 ``MIGRATION_DATABASE_URL``：**迁移专用账号**（DDL 需要 owner 权限，
+   与应用运行账号 NOSUPERUSER 是两个账号；容器启动脚本用它跑迁移）；
+3. 环境变量 ``DATABASE_URL``：云托管/CI 注入（应用账号）；
+4. ``alembic.ini`` 的 ``sqlalchemy.url``：本地默认（PG，方案 A）。
 
 **不要**在离线模式下调用 ``create_engine``：``context.configure(url=...)`` 只需要方言。
 """
@@ -50,14 +52,20 @@ SQLITE_FALLBACK_URL = "sqlite+pysqlite:///./vil_local.db"
 
 
 def resolve_database_url() -> str:
-    """按「attributes -> 环境变量 -> ini」优先级解析连接串。"""
+    """按「attributes -> 迁移专用账号 -> 应用账号 -> ini」优先级解析连接串。
+
+    ``MIGRATION_DATABASE_URL`` 存在的唯一理由：迁移要 DDL/策略权限（库 owner），
+    而应用运行账号必须是 NOSUPERUSER + NOBYPASSRLS（否则 RLS 白装）。
+    两个账号分离，容器启动脚本用前者跑 ``alembic upgrade head``、用后者跑 uvicorn。
+    """
     overridden = config.attributes.get("database_url")
     if overridden:
         return str(overridden)
 
-    from_env = os.getenv("DATABASE_URL", "").strip()
-    if from_env:
-        return from_env
+    for env_name in ("MIGRATION_DATABASE_URL", "DATABASE_URL"):
+        from_env = os.getenv(env_name, "").strip()
+        if from_env:
+            return from_env
 
     configured = (config.get_main_option("sqlalchemy.url") or "").strip()
     if configured:

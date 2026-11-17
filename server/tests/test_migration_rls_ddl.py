@@ -97,6 +97,26 @@ def table_statements(sql: str, table_name: str) -> list[str]:
     return [line for line in pattern.findall(sql)]
 
 
+def final_policies(sql: str, table_name: str) -> list[str]:
+    """按策略名取**最后一次** ``CREATE POLICY``（迁移链里后出现的覆盖前面的）。
+
+    为什么需要它：``0003_fix_rls_empty_guc`` 用 DROP + CREATE 修表达式，因此离线渲染
+    出的 SQL 里同一张表会出现两次 ``CREATE POLICY``。断言必须看**最终状态**，
+    而不是"出现过几次"——后者会让"加了修复迁移"误判成"重复建策略"。
+    """
+    latest: dict[str, str] = {}
+    for line in table_statements(sql, table_name):
+        if not line.startswith("CREATE POLICY"):
+            continue
+        latest[line.split()[2]] = line
+    return list(latest.values())
+
+
+def policy_names(sql: str) -> set[str]:
+    """最终状态下的全部策略名（去重后应与 EXPECTED_RLS_POLICIES 相等）。"""
+    return set(re.findall(r"^CREATE POLICY (\w+) ON ", sql, re.M))
+
+
 # --------------------------------------------------------------------------- 表数
 
 
@@ -136,7 +156,7 @@ def test_each_tenant_table_has_rls_triplet(pg_sql: str, table_name: str) -> None
         f"{table_name} 缺 FORCE：表 owner 会绕过 RLS"
     )
 
-    policies = [line for line in statements if line.startswith("CREATE POLICY")]
+    policies = final_policies(pg_sql, table_name)
     isolation = [line for line in policies if f"CREATE POLICY {table_name}_tenant_isolation" in line]
     assert len(isolation) == 1, f"{table_name} 期望恰好 1 条租户隔离策略，实际 {policies}"
     # 唯一允许的额外策略：两张「鸡生蛋」引导表各一条只读反查策略
@@ -153,18 +173,33 @@ def test_each_tenant_table_has_rls_triplet(pg_sql: str, table_name: str) -> None
     assert f"ON {table_name} " in policy
     assert "current_setting('app.tenant_id'" in policy, f"{table_name} 策略未引用租户 GUC"
     assert "WITH CHECK" in policy, f"{table_name} 策略缺 WITH CHECK：写入不受约束"
+    # 回归锁：空串 GUC 必须被 NULLIF 兜住，否则真 PG + 连接池下会
+    # ``invalid input syntax for type uuid: ""``（见 0003 迁移的说明）
+    assert "NULLIF(current_setting('app.tenant_id', true), '')" in policy, (
+        f"{table_name} 的策略没把空串 GUC 当 NULL：连接池复用时会导致 500"
+    )
 
 
 def test_rls_triplet_counts(pg_sql: str) -> None:
-    """32 张表 × 2 条 ALTER + 32 条租户策略 + 2 条引导策略 = EXPECTED_RLS_POLICIES。"""
+    """32 张表 × 2 条 ALTER + 32 条租户策略 + 2 条引导策略 = EXPECTED_RLS_POLICIES。
+
+    注意：``0003`` 用 DROP + CREATE 修表达式，所以 ``CREATE POLICY`` 在渲染文本里
+    会出现 **68 次**（34 条旧 + 34 条新）。断言口径是**最终策略名去重后 34 条**，
+    并额外要求修复迁移的 34 条 ``DROP POLICY IF EXISTS`` 确实存在 —— 否则存量库
+    升级后仍是会 500 的旧表达式。
+    """
     assert len(re.findall(r"ENABLE ROW LEVEL SECURITY;", pg_sql)) == 32
     assert len(re.findall(r"FORCE ROW LEVEL SECURITY;", pg_sql)) == 32
-    policy_count = len(re.findall(r"^CREATE POLICY", pg_sql, re.M))
-    assert policy_count == EXPECTED_RLS_POLICIES, (
-        f"策略总数 {policy_count} ≠ EXPECTED_RLS_POLICIES={EXPECTED_RLS_POLICIES}"
+
+    names = policy_names(pg_sql)
+    assert len(names) == EXPECTED_RLS_POLICIES, (
+        f"最终策略 {len(names)} 条 ≠ EXPECTED_RLS_POLICIES={EXPECTED_RLS_POLICIES}"
         "（加策略时必须同步改 config.py 的那一个常量，别只改迁移）"
     )
-    assert policy_count == 34, "32 条租户隔离 + member_login_lookup + xpay_deliver_lookup"
+    assert len(names) == 34, "32 条租户隔离 + member_login_lookup + xpay_deliver_lookup"
+    assert pg_sql.count("DROP POLICY IF EXISTS") == 34, (
+        "0003 修复迁移必须重建全部 34 条策略（32 隔离 + 2 引导），否则存量库修不干净"
+    )
 
 
 def test_platform_tables_are_exempt_from_rls(pg_sql: str) -> None:
@@ -179,9 +214,9 @@ def test_platform_tables_are_exempt_from_rls(pg_sql: str) -> None:
 def test_nullable_tenant_policies_allow_platform_rows(pg_sql: str) -> None:
     """三层表（平台层 + 租户层并存）策略必须放行 tenant_id IS NULL。"""
     for table_name in sorted(NULLABLE_TENANT_TABLES):
-        policies = [line for line in table_statements(pg_sql, table_name) if line.startswith("CREATE POLICY")]
+        policies = final_policies(pg_sql, table_name)
         assert len(policies) == 1
-        assert "tenant_id IS NULL OR tenant_id = current_setting('app.tenant_id'" in policies[0], (
+        assert "tenant_id IS NULL OR tenant_id = NULLIF(current_setting('app.tenant_id'" in policies[0], (
             f"{table_name} 的策略会挡掉平台层行：{policies[0]}"
         )
 
@@ -212,6 +247,27 @@ def test_xpay_deliver_lookup_policy_exists(pg_sql: str) -> None:
     )
     assert "app.deliver_bootstrap" in deliver_policy
     assert "app.auth_bootstrap" not in deliver_policy
+
+
+def test_empty_string_guc_is_treated_as_no_tenant(pg_sql: str) -> None:
+    """回归锁：**空串 GUC 必须当 NULL**（真 PG + 连接池下的 500 根因）。
+
+    背景：``set_config('app.tenant_id', ..., is_local=true)`` 事务结束后残留 ``''``
+    而不是消失；下一句 ``''::uuid`` 直接抛 ``invalid input syntax for type uuid``。
+    0003 迁移把三处表达式统一改成 ``NULLIF(..., '')``，这里逐条锁住，
+    防止有人"简化"回旧写法（SQLite 上永远发现不了，只有真 PG 会红）。
+    """
+    assert pg_sql.count("NULLIF(current_setting('app.tenant_id', true), '')::uuid") >= 32, (
+        "租户隔离策略必须把空串 GUC 当 NULL（32 张表各一条）"
+    )
+
+    for policy_name in ("member_login_lookup", "xpay_deliver_lookup"):
+        lines = [ln for ln in pg_sql.splitlines() if f"CREATE POLICY {policy_name} " in ln]
+        assert lines, f"{policy_name} 策略缺失"
+        # 取最后一条（0003 重建后的最终状态）
+        assert "NULLIF(current_setting('app.tenant_id', true), '') IS NULL" in lines[-1], (
+            f"{policy_name} 仍用 IS NULL 判上下文：空串会让登录/发货反查失效"
+        )
     # 只读：不得放开写权限
     assert "xpay_deliver_lookup ON virtual_order FOR INSERT" not in pg_sql
     assert "xpay_deliver_lookup ON virtual_order FOR ALL" not in pg_sql
@@ -315,13 +371,17 @@ def test_seed_platform_rows_have_null_tenant_id(pg_sql: str) -> None:
 
 
 def test_migration_files_exist_in_expected_location() -> None:
-    """迁移目录放在 server/migrations（不是 app/migrations），并含两个版本。"""
+    """迁移目录放在 server/migrations（不是 app/migrations），并含全部版本。"""
     versions = SERVER_ROOT / "migrations" / "versions"
     assert (SERVER_ROOT / "alembic.ini").is_file()
     assert (SERVER_ROOT / "migrations" / "env.py").is_file()
     assert (SERVER_ROOT / "migrations" / "script.py.mako").is_file()
     names = sorted(path.name for path in versions.glob("*.py"))
-    assert names == ["0001_initial.py", "0002_seed.py"]
+    assert names == [
+        "0001_initial.py",
+        "0002_seed.py",
+        "0003_fix_rls_empty_guc.py",
+    ], "新增迁移必须在这里登记（否则「迁移链是否完整」没有断言）"
 
 
 def test_upgrade_head_runs_forward_on_sqlite(tmp_path: Path) -> None:

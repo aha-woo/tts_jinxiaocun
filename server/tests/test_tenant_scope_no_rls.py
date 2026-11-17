@@ -367,6 +367,7 @@ def test_tenant_guard_scan_is_clean_and_covers_models() -> None:
     """
     import importlib.util
     import json
+    import os
     import subprocess
     import sys
     from pathlib import Path
@@ -382,6 +383,10 @@ def test_tenant_guard_scan_is_clean_and_covers_models() -> None:
         text=True,
         encoding="utf-8",
         cwd=str(repo_root),
+        # 子进程的输出编码必须显式指定：父进程按 utf-8 解码，而中文 Windows 下
+        # 子进程默认按 ANSI 代码页（cp936）输出 → 解码直接抛 UnicodeDecodeError，
+        # 看起来像「扫描有命中」，其实是测试环境问题（Linux CI 上不会复现）。
+        env={**os.environ, "PYTHONIOENCODING": "utf-8"},
         check=False,
     )
     assert completed.returncode == 0, f"扫描有命中：{completed.stdout}\n{completed.stderr}"

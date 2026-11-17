@@ -192,6 +192,35 @@ PY
   ② 若没有，得由控制台/DBA 预建 `vil` 并 `GRANT USAGE`。这两条**未实测**，所以：**Q26 的迁移改动
   等 Q25 实测回来再落地**，现在不动 `migrations/`。
 
+### 部署自检：一条命令看清「连上了哪个库、隔离是否真的生效」
+
+```bash
+# 在云托管容器内（DATABASE_URL 已注入）：
+python scripts/probe_env.py
+```
+
+输出会逐项判定：`DATABASE_URL` 指向哪个库（密码已脱敏）、PG 版本、当前账号是否超级用户、
+`max_connections`、`alembic_version`、业务表数（期望 34）、RLS 启用/`FORCE` 数（各 32）、
+策略数（34）。**任一项不达标就退出码 1**，可以直接当部署门禁。
+
+**两个必须分开的账号（这轮才踩明白）**：
+
+| 用途 | 账号要求 | 为什么 |
+|---|---|---|
+| `alembic upgrade head`（迁移） | **库 owner** | 策略要 `DROP/CREATE POLICY`、DDL 要建表；非 owner 会 `must be owner of relation` |
+| 应用运行（`DATABASE_URL`） | **`NOSUPERUSER` + `NOBYPASSRLS`** | 超级用户绕过 RLS，`FORCE` 也拦不住（真 PG 实测：跨租户可互看） |
+
+所以部署时：迁移用 owner 账号跑一次，然后**应用**用非超级用户账号连库。
+镜像的 `CMD` 已经支持这件事：
+
+| 环境变量 | 谁用 | 行为 |
+|---|---|---|
+| `MIGRATION_DATABASE_URL` = owner 账号 | 容器启动脚本 | 配了就**先跑** `alembic upgrade head`，失败即退出（不带病接流量） |
+| `DATABASE_URL` = 应用账号 | uvicorn | 只跑业务，无 DDL 权限 |
+
+没配 `MIGRATION_DATABASE_URL` 就只起服务（迁移需在部署流程里单独跑一次）——
+**两种都行，但别把 owner 账号配成 `DATABASE_URL`**，否则 RLS 等于没开。
+
 ### 34 张表（架构 §4.3.2 全量）
 
 | 归属层级 | 表 | 数量 | RLS |
