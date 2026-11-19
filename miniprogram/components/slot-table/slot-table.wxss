@@ -1,33 +1,34 @@
+/* 槽位明细（**只在「解析明细（开发用）」里出现**，不面向终端用户） */
 .table {
-  background: #fff;
-  border-radius: 16rpx;
-  padding: 20rpx 24rpx;
+  background: var(--c-white);
+  border-radius: var(--r-card);
+  padding: var(--s-2) 0;
 }
 
 .table__head {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding-bottom: 12rpx;
-  border-bottom: 1rpx solid #eef1f4;
+  padding-bottom: var(--s-1);
+  border-bottom: 1rpx solid var(--c-line);
 }
 
 .table__title {
-  font-size: 28rpx;
+  font-size: var(--f-small);
   font-weight: 600;
-  color: #1f2328;
+  color: var(--c-ink-2);
 }
 
 .row {
-  padding: 16rpx 0;
-  border-bottom: 1rpx solid #f4f6f8;
+  padding: var(--s-2) 0;
+  border-bottom: 1rpx solid var(--c-line);
 }
 
 .row--highlight {
-  background: #fff8e6;
-  border-radius: 12rpx;
-  padding-left: 12rpx;
-  padding-right: 12rpx;
+  background: var(--c-warn-bg);
+  border-radius: var(--r-btn);
+  padding-left: var(--s-2);
+  padding-right: var(--s-2);
 }
 
 .row__left {
@@ -36,78 +37,78 @@
 }
 
 .row__label {
-  font-size: 28rpx;
-  color: #1f2328;
+  font-size: var(--f-small);
+  color: var(--c-ink-2);
 }
 
 .row__code {
-  margin-left: 10rpx;
+  margin-left: var(--s-1);
   font-size: 20rpx;
-  color: #9aa4ae;
+  color: var(--c-ink-3);
 }
 
 .row__value {
-  margin-top: 8rpx;
+  margin-top: 4rpx;
   display: flex;
   align-items: center;
   flex-wrap: wrap;
 }
 
 .value {
-  font-size: 30rpx;
+  font-size: var(--f-small);
   font-weight: 600;
-  color: #1f2328;
-  margin-right: 12rpx;
+  color: var(--c-ink);
+  margin-right: var(--s-1);
 }
 
 .value--pending {
-  color: #b42318;
+  color: var(--c-danger);
   font-weight: 500;
 }
 
 .tag {
   font-size: 20rpx;
-  padding: 4rpx 12rpx;
-  border-radius: 999rpx;
+  padding: 2rpx var(--s-1);
+  border-radius: var(--r-pill);
 }
 
 .tag--asr {
-  color: #1554b5;
-  background: #e8f0ff;
+  color: var(--c-brand-dark);
+  background: var(--c-brand-soft);
 }
 
 .tag--default {
-  color: #6b7280;
+  color: var(--c-ink-3);
   background: #f1f3f5;
 }
 
 .tag--computed {
-  color: #7a4d00;
-  background: #fff3d6;
+  color: var(--c-warn-ink);
+  background: var(--c-warn-bg);
 }
 
 .tag--alias {
-  color: #0f7b6c;
-  background: #e3f5f1;
+  color: var(--c-brand-dark);
+  background: var(--c-brand-soft);
 }
 
 .tag--pending {
-  color: #b42318;
-  background: #fde8e8;
+  color: var(--c-danger);
+  background: var(--c-danger-soft);
 }
 
 .row__trace {
-  margin-top: 6rpx;
+  margin-top: 4rpx;
 }
 
 .trace {
   font-size: 22rpx;
-  color: #7a4d00;
+  color: var(--c-warn-ink);
 }
 
 .table__empty {
-  padding: 24rpx 0;
-  font-size: 26rpx;
-  color: #9aa4ae;
+  padding: var(--s-2) 0;
+  font-size: var(--f-small);
+  color: var(--c-ink-3);
   text-align: center;
 }

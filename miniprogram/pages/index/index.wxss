@@ -1,39 +1,17 @@
+/* 首页（方案 A）：白卡片 + 微信绿 + 大字号，大按钮固定在底部拇指区 */
 .page {
   min-height: 100vh;
-  background: #f4f6f8;
-  padding: 20rpx;
+  background: var(--c-bg);
+  padding: var(--s-2) var(--s-3);
   box-sizing: border-box;
-  /* 给底部固定的语音按钮留出空间，避免遮住「管理台」等卡片 */
-  padding-bottom: calc(380rpx + env(safe-area-inset-bottom));
-}
-
-/*
-  语音大按钮停靠区：固定屏幕底部 = 单手拇指可达。
-  背景用渐变过渡，让下方内容「淡出」而不是硬切一条边。
-*/
-.voice-dock {
-  position: fixed;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  z-index: 20;
-  padding: 8rpx 20rpx calc(16rpx + env(safe-area-inset-bottom));
-  background: linear-gradient(180deg, rgba(244, 246, 248, 0) 0%, #f4f6f8 45%);
-  box-sizing: border-box;
-}
-
-/* 电脑版微信大屏：不做固定，回到正常文档流（双栏布局里按钮在左栏底部） */
-.page--wide {
-  padding-bottom: 20rpx;
-}
-
-.page--wide .voice-dock {
-  position: static;
-  background: none;
-  padding: 8rpx 24rpx 24rpx;
+  padding-bottom: calc(400rpx + env(safe-area-inset-bottom));
 }
 
 /* 宽屏（电脑版微信 resizable）→ 左录入 / 右动态 双栏 */
+.page--wide {
+  padding-bottom: var(--s-3);
+}
+
 .page--wide .main {
   display: flex;
   align-items: flex-start;
@@ -41,7 +19,7 @@
 
 .page--wide .panel {
   flex: 0 0 520rpx;
-  margin-right: 24rpx;
+  margin-right: var(--s-3);
 }
 
 .page--wide .side {
@@ -49,61 +27,63 @@
   min-width: 0;
 }
 
+/* ------------------------------------------------------------------ 状态条 */
 .banner {
-  border-radius: 16rpx;
-  padding: 20rpx 24rpx;
-  margin-bottom: 20rpx;
+  border-radius: var(--r-card);
+  padding: var(--s-2) var(--s-3);
+  margin-bottom: var(--s-2);
 }
 
 .banner--ok {
-  background: #e6f6ee;
-  color: #0f7b4c;
+  background: var(--c-brand-soft);
+  color: var(--c-brand-dark);
 }
 
 .banner--warn {
-  background: #fff4e5;
-  color: #8a5300;
+  background: var(--c-warn-bg);
+  color: var(--c-warn-ink);
 }
 
 .banner--danger {
-  background: #fde8e8;
-  color: #b42318;
+  background: var(--c-danger-soft);
+  color: var(--c-danger);
 }
 
 .banner__title {
   display: flex;
   align-items: center;
-  font-size: 28rpx;
+  font-size: var(--f-small);
   font-weight: 700;
 }
 
+.banner__level,
+.banner__flag {
+  margin-left: var(--s-1);
+  font-size: 22rpx;
+  padding: 2rpx 14rpx;
+  border-radius: var(--r-pill);
+}
+
 .banner__level {
-  margin-left: 12rpx;
-  font-size: 20rpx;
   border: 1rpx solid currentColor;
-  border-radius: 999rpx;
-  padding: 2rpx 12rpx;
 }
 
 .banner__flag {
-  margin-left: 12rpx;
-  font-size: 20rpx;
   background: rgba(255, 255, 255, 0.7);
-  border-radius: 999rpx;
-  padding: 2rpx 12rpx;
 }
 
 .banner__hint {
-  margin-top: 8rpx;
-  font-size: 24rpx;
+  margin-top: 6rpx;
+  font-size: var(--f-small);
   opacity: 0.9;
 }
 
+/* ------------------------------------------------------------------ 卡片 */
 .panel {
-  background: #fff;
-  border-radius: 16rpx;
-  padding: 24rpx;
-  margin-bottom: 20rpx;
+  background: var(--c-white);
+  border-radius: var(--r-card);
+  padding: var(--s-3);
+  margin-bottom: var(--s-2);
 }
 
 .panel__head {
@@ -113,44 +93,32 @@
 }
 
 .panel__title {
-  font-size: 28rpx;
+  font-size: var(--f-body);
   font-weight: 600;
-  color: #1f2328;
+  color: var(--c-ink);
 }
 
 .panel__more {
-  font-size: 22rpx;
-  color: #1f6feb;
+  font-size: var(--f-small);
+  color: var(--c-brand-dark);
 }
 
-.talking {
-  text-align: center;
-  font-size: 26rpx;
-  color: #1f6feb;
-  margin-bottom: 12rpx;
-}
-
-.error {
-  margin: 8rpx 0 16rpx;
-  padding: 16rpx 20rpx;
-  background: #fff5f5;
-  color: #b42318;
-  border-radius: 12rpx;
-  font-size: 24rpx;
-}
-
+/* ------------------------------------------------------------------ 快捷入口 */
 .shortcuts {
   display: flex;
-  margin-top: 16rpx;
+  margin-top: var(--s-2);
 }
 
 .shortcut {
   flex: 1;
   background: #f7f8fa;
-  border-radius: 12rpx;
-  padding: 20rpx;
-  margin-right: 16rpx;
-  min-height: 88rpx;
+  border-radius: var(--r-btn);
+  padding: var(--s-2) var(--s-3);
+  margin-right: var(--s-2);
+  min-height: 112rpx;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
 }
 
 .shortcut:last-child {
@@ -159,51 +127,92 @@
 
 .shortcut--wide {
   margin-right: 0;
-  margin-top: 16rpx;
+  margin-top: var(--s-2);
 }
 
 .shortcut__title {
   display: block;
-  font-size: 28rpx;
+  font-size: var(--f-body);
   font-weight: 600;
-  color: #1f2328;
+  color: var(--c-ink);
 }
 
 .shortcut__desc {
   display: block;
-  margin-top: 6rpx;
-  font-size: 22rpx;
-  color: #6b7280;
+  margin-top: 4rpx;
+  font-size: var(--f-small);
+  color: var(--c-ink-3);
 }
 
+/* ------------------------------------------------------------------ 最近 */
 .recent__item {
-  padding: 14rpx 0;
-  border-bottom: 1rpx solid #f4f6f8;
+  padding: var(--s-2) 0;
+  border-bottom: 1rpx solid var(--c-line);
 }
 
 .recent__text {
-  font-size: 26rpx;
-  color: #1f2328;
+  font-size: var(--f-body);
+  color: var(--c-ink);
 }
 
 .recent__meta {
   display: block;
   margin-top: 4rpx;
   font-size: 22rpx;
-  color: #9aa4ae;
+  color: var(--c-ink-3);
 }
 
 .recent__empty {
-  padding: 20rpx 0;
-  font-size: 24rpx;
-  color: #9aa4ae;
+  padding: var(--s-3) 0;
+  font-size: var(--f-small);
+  color: var(--c-ink-3);
 }
 
+/* ------------------------------------------------------------------ 自检 */
 .kv {
   display: flex;
   justify-content: space-between;
-  font-size: 24rpx;
-  color: #4b5563;
-  padding: 10rpx 0;
-  border-bottom: 1rpx solid #f4f6f8;
+  font-size: var(--f-small);
+  color: var(--c-ink-2);
+  padding: var(--s-1) 0;
+  border-bottom: 1rpx solid var(--c-line);
+}
+
+.kv:last-child {
+  border-bottom: none;
+}
+
+/* ------------------------------------------------------------------ 提示 */
+.talking {
+  text-align: center;
+  font-size: var(--f-small);
+  color: var(--c-brand-dark);
+  margin-top: var(--s-1);
+}
+
+.error {
+  margin: var(--s-1) 0 0;
+  padding: var(--s-2) var(--s-3);
+  background: var(--c-danger-soft);
+  color: var(--c-danger);
+  border-radius: var(--r-btn);
+  font-size: var(--f-small);
+}
+
+/* ------------------------------------------------------------------ 语音停靠区 */
+.voice-dock {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 20;
+  padding: var(--s-1) var(--s-3) calc(var(--s-2) + env(safe-area-inset-bottom));
+  background: linear-gradient(180deg, rgba(245, 246, 247, 0) 0%, var(--c-bg) 40%);
+  box-sizing: border-box;
+}
+
+.page--wide .voice-dock {
+  position: static;
+  background: none;
+  padding: var(--s-1) 0 0;
 }

@@ -1,19 +1,19 @@
-<!-- 数字键盘 + 常用商品点选：全程可脱离语音完成一次记账 -->
+<!-- 数字键盘 + 常用商品点选：全程可脱离语音完成一次记账（方案 A：大字号/大热区） -->
 <view class="kb">
   <!-- ① 方向：一句话没说也要能选，方向错了账就错了 -->
   <view class="kb__section">
     <view class="kb__label">这是</view>
-    <view class="kb__dirs">
+    <view class="seg">
       <view
-        class="dir {{direction === 'in' ? 'dir--active' : ''}}"
+        class="seg__item {{direction === 'in' ? 'seg__item--active' : ''}}"
         data-direction="in"
         bindtap="onPickDirection"
-      >进货（入库）</view>
+      >进货</view>
       <view
-        class="dir {{direction === 'out' ? 'dir--active' : ''}}"
+        class="seg__item {{direction === 'out' ? 'seg__item--active' : ''}}"
         data-direction="out"
         bindtap="onPickDirection"
-      >卖货（出库）</view>
+      >卖货</view>
     </view>
   </view>
 
@@ -32,25 +32,23 @@
     </view>
   </view>
 
-  <!-- ③ 数量 / 单价 输入（点哪栏，键盘就往哪栏写） -->
-  <view class="kb__section">
-    <view class="inputs">
-      <view
-        class="input {{focus === 'quantity' ? 'input--active' : ''}}"
-        data-focus="quantity"
-        bindtap="onFocus"
-      >
-        <text class="input__label">数量</text>
-        <text class="input__value">{{quantity === '' ? '0' : quantity}}</text>
-      </view>
-      <view
-        class="input {{focus === 'price' ? 'input--active' : ''}}"
-        data-focus="price"
-        bindtap="onFocus"
-      >
-        <text class="input__label">单价（元）</text>
-        <text class="input__value">{{price === '' ? '0' : price}}</text>
-      </view>
+  <!-- ③ 数量 / 单价（点哪栏，键盘就往哪栏写） -->
+  <view class="inputs">
+    <view
+      class="input {{focus === 'quantity' ? 'input--active' : ''}}"
+      data-focus="quantity"
+      bindtap="onFocus"
+    >
+      <text class="input__label">数量</text>
+      <text class="input__value">{{quantity === '' ? '0' : quantity}}</text>
+    </view>
+    <view
+      class="input {{focus === 'price' ? 'input--active' : ''}}"
+      data-focus="price"
+      bindtap="onFocus"
+    >
+      <text class="input__label">单价（元）</text>
+      <text class="input__value">{{price === '' ? '0' : price}}</text>
     </view>
   </view>
 
@@ -59,12 +57,12 @@
     <view
       wx:for="{{keys}}"
       wx:key="*this"
-      class="key {{item === '⌫' || item === '×' ? 'key--fn' : ''}}"
+      class="ui-key {{item === '⌫' || item === '×' ? 'ui-key--fn' : ''}}"
       data-key="{{item}}"
       bindtap="onKey"
     >{{item}}</view>
   </view>
 
-  <button class="submit" bindtap="onSubmit">生成确认卡片</button>
-  <view class="tip">全程不用说话也能记完一单；提交后仍要确认卡片才会落账。</view>
+  <button class="ui-btn ui-btn--primary ui-btn--block kb__submit" bindtap="onSubmit">生成确认卡片</button>
+  <view class="kb__tip">提交后还要在卡片上点一次确认，才会真正记账。</view>
 </view>

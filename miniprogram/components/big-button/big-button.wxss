@@ -1,26 +1,25 @@
-/* 语音大按钮：**拇指热区 176rpx ≈ 88px**（375dp 屏），满足 PRD 3.2 的 ≥88×88px */
+/* 语音大按钮（方案 A）：微信绿实心圆，热区 200rpx（≈100px），单手拇指可及 */
 .wrap {
   display: flex;
   flex-direction: column;
   align-items: center;
-  padding: 24rpx 0;
+  padding: var(--s-1) 0;
 }
 
 .button {
-  /* 热区：88px × 88px 是下限，这里给到 176rpx（≈88px）并由 padding 再放大命中区 */
-  min-width: 88px;
-  min-height: 88px;
-  width: 176rpx;
-  height: 176rpx;
-  padding: 24rpx;
+  width: 200rpx;
+  height: 200rpx;
+  /* 热区下限用 px 表达（200rpx 在不同屏换算不同，这里给一个绝对兜底 100px ≥ 88px 的 PRD 下限） */
+  min-width: 100px;
+  min-height: 100px;
   border-radius: 50%;
-  background: linear-gradient(180deg, #1f6feb 0%, #1554b5 100%);
-  color: #fff;
+  background: var(--c-brand);
+  color: var(--c-white);
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  box-shadow: 0 8rpx 24rpx rgba(31, 111, 235, 0.32);
+  box-shadow: 0 8rpx 24rpx rgba(7, 193, 96, 0.24);
   transition: transform 120ms ease, background 120ms ease;
 }
 
@@ -29,29 +28,31 @@
 }
 
 .button--recording {
-  background: linear-gradient(180deg, #e5484d 0%, #b42318 100%);
-  box-shadow: 0 8rpx 24rpx rgba(229, 72, 77, 0.36);
+  background: var(--c-danger);
+  box-shadow: 0 8rpx 24rpx rgba(217, 48, 37, 0.28);
 }
 
 .button--disabled {
-  background: #c9d1d9;
-  color: #6b7280;
+  background: #d7dbe0;
+  color: var(--c-ink-3);
   box-shadow: none;
 }
 
 .button__icon {
-  font-size: 44rpx;
+  font-size: 56rpx;
   line-height: 1;
 }
 
 .button__text {
-  margin-top: 8rpx;
-  font-size: 24rpx;
+  margin-top: var(--s-1);
+  font-size: var(--f-body);
+  font-weight: 600;
   letter-spacing: 2rpx;
 }
 
+/* 录音中的实时反馈：时长 + 柱状（视觉占位，不参与判定） */
 .meter {
-  margin-top: 20rpx;
+  margin-top: var(--s-2);
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -59,18 +60,18 @@
 }
 
 .meter__time {
-  font-size: 28rpx;
-  color: #1f6feb;
+  font-size: var(--f-body);
+  color: var(--c-brand-dark);
   font-variant-numeric: tabular-nums;
 }
 
 .meter__time--warn {
-  color: #e5484d;
+  color: var(--c-danger);
 }
 
 .meter__bars {
-  margin-top: 12rpx;
-  height: 64rpx;
+  margin-top: var(--s-1);
+  height: 56rpx;
   width: 100%;
   display: flex;
   align-items: flex-end;
@@ -78,22 +79,22 @@
 }
 
 .meter__bar {
-  width: 12rpx;
-  border-radius: 6rpx;
-  background: #1f6feb;
-  opacity: 0.75;
+  width: 14rpx;
+  border-radius: 7rpx;
+  background: var(--c-brand);
+  opacity: 0.8;
   min-height: 6rpx;
 }
 
 .meter__hint {
-  margin-top: 10rpx;
+  margin-top: var(--s-1);
   font-size: 22rpx;
-  color: #b42318;
+  color: var(--c-danger);
 }
 
 .mode {
-  margin-top: 18rpx;
-  font-size: 24rpx;
-  color: #6b7280;
-  padding: 12rpx 20rpx;
+  margin-top: var(--s-1);
+  font-size: var(--f-small);
+  color: var(--c-ink-3);
+  padding: var(--s-1) var(--s-3);
 }

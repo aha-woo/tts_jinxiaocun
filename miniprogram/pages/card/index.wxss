@@ -1,302 +1,145 @@
+/* 确认卡片（方案 A）：白卡片 + 微信绿，首屏只放方向/金额/影响/主按钮 */
 .page {
   min-height: 100vh;
-  background: #f4f6f8;
-  padding: 16rpx 20rpx 40rpx;
+  background: var(--c-bg);
+  padding: var(--s-2) var(--s-3) calc(var(--s-4) + env(safe-area-inset-bottom));
   box-sizing: border-box;
 }
 
-/* 宽屏：左侧看明细、右侧看影响与来源 */
 .page--wide {
   display: block;
 }
 
+/* ---------------------------------------------------------------- 操作条 */
 .actionbar {
   position: sticky;
   top: 0;
   z-index: 10;
   display: flex;
   flex-direction: column;
-  background: #fff;
-  border-radius: 16rpx;
-  padding: 16rpx 20rpx 20rpx;
-  margin-bottom: 16rpx;
-  box-shadow: 0 4rpx 16rpx rgba(15, 23, 42, 0.06);
+  background: var(--c-white);
+  border-radius: var(--r-card);
+  padding: var(--s-3);
+  margin-bottom: var(--s-2);
+  border: 1rpx solid var(--c-line);
 }
 
-/* 第一行：方向 + 金额/倒计时 */
 .actionbar__row {
   display: flex;
   align-items: center;
 }
 
-/* 首屏金额：数字用等宽字形，避免倒计时刷新时整行抖动 */
 .actionbar__main {
   flex: 1;
   min-width: 0;
-  margin-left: 16rpx;
-  display: flex;
-  flex-direction: column;
+  margin-left: var(--s-2);
 }
 
 .actionbar__amount {
-  font-size: 40rpx;
+  font-size: 52rpx;
   font-weight: 800;
-  color: #1f2328;
+  color: var(--c-ink);
   font-variant-numeric: tabular-nums;
   line-height: 1.2;
 }
 
-/* 整宽主按钮：拇指区，避免右侧被挤出去 */
-.btn--block {
-  margin-left: 0;
-  width: 100%;
-  margin-top: 12rpx;
+.actionbar__timer {
+  margin-top: 2rpx;
+  font-size: 22rpx;
+  color: var(--c-ink-3);
+  font-variant-numeric: tabular-nums;
 }
 
+.actionbar__timer--expired {
+  color: var(--c-danger);
+  font-weight: 700;
+}
+
+/* 方向：进货 = 绿，卖货 = 橙，其余 = 中性 */
 .actionbar__dir {
-  padding: 10rpx 20rpx;
-  border-radius: 12rpx;
-  font-size: 30rpx;
-  font-weight: 800;
+  padding: 10rpx var(--s-3);
+  border-radius: var(--r-btn);
+  font-size: var(--f-body);
+  font-weight: 700;
   letter-spacing: 2rpx;
 }
 
-/* 方向：进货 = 蓝（入库），卖货 = 橙（出库），其余 = 灰 */
 .actionbar__dir--purchase {
-  background: #e8f0ff;
-  color: #1554b5;
+  background: var(--c-brand-soft);
+  color: var(--c-brand-dark);
 }
 
 .actionbar__dir--sales {
-  background: #fff3d6;
-  color: #7a4d00;
+  background: var(--c-accent-soft);
+  color: var(--c-accent);
 }
 
 .actionbar__dir--stock,
 .actionbar__dir--query,
 .actionbar__dir--sys {
   background: #f1f3f5;
-  color: #4b5563;
+  color: var(--c-ink-2);
 }
 
-.line {
-  display: flex;
-  align-items: center;
-  padding: 12rpx 0;
-  border-bottom: 1rpx solid #f4f6f8;
-}
-
-.line__name {
-  flex: 1;
-  font-size: 28rpx;
-  color: #1f2328;
-}
-
-.line__qty {
-  width: 160rpx;
-  text-align: right;
-  font-size: 26rpx;
-  color: #4b5563;
-  font-variant-numeric: tabular-nums;
-}
-
-.line__amount {
-  width: 180rpx;
-  text-align: right;
-  font-size: 30rpx;
-  font-weight: 700;
-  color: #1f2328;
-  font-variant-numeric: tabular-nums;
-}
-
-.original {
-  font-size: 30rpx;
-  color: #1f2328;
-  background: #f7f8fa;
-  border-radius: 12rpx;
-  padding: 16rpx 20rpx;
-}
-
-.actionbar__timer {
-  margin-left: 16rpx;
-  font-size: 24rpx;
-  color: #6b7280;
-  font-variant-numeric: tabular-nums;
-}
-
-.actionbar__timer--expired {
-  color: #b42318;
-  font-weight: 700;
-}
-
+/* ---------------------------------------------------------------- 按钮 */
 .btn {
   display: flex;
   align-items: center;
   justify-content: center;
-  border-radius: 16rpx;
-  font-size: 32rpx;
-  font-weight: 600;
   height: 96rpx;
   line-height: normal;
-  padding: 0 28rpx;
+  padding: 0 var(--s-4);
   border: none;
+  border-radius: var(--r-btn);
+  font-size: var(--f-body);
+  font-weight: 600;
 }
 
-/* 小程序原生 button 的默认边框（::after）必须清掉，否则圆角外还有一圈细边 */
 .btn::after {
   border: none;
 }
 
 .btn--primary {
-  background: #1f6feb;
-  color: #fff;
-  margin-left: auto;
-  font-weight: 700;
+  background: var(--c-brand);
+  color: var(--c-white);
+}
+
+.btn--block {
+  width: 100%;
+  margin-top: var(--s-2);
 }
 
 .btn--secondary {
   background: #f1f3f5;
-  color: #4b5563;
+  color: var(--c-ink-2);
 }
 
 .btn--ghost {
-  margin-top: 16rpx;
-  background: #e8f0ff;
-  color: #1554b5;
+  margin-top: var(--s-2);
+  background: var(--c-white);
+  color: var(--c-brand-dark);
+  border: 2rpx solid var(--c-brand);
 }
 
+/* ---------------------------------------------------------------- 卡片 */
 .card {
-  background: #fff;
-  border-radius: 16rpx;
-  padding: 20rpx 24rpx;
-  margin-bottom: 16rpx;
+  background: var(--c-white);
+  border-radius: var(--r-card);
+  padding: var(--s-3) var(--s-4);
+  margin-bottom: var(--s-2);
+  border: 1rpx solid var(--c-line);
 }
 
-.card--risk {
-  background: #fff8e6;
+.card--warn {
+  background: var(--c-warn-bg);
+  border-color: #f3e3bd;
 }
 
 .card__title {
-  font-size: 28rpx;
+  font-size: var(--f-body);
   font-weight: 600;
-  color: #1f2328;
-  margin-bottom: 10rpx;
-}
-
-.amount {
-  font-size: 56rpx;
-  font-weight: 800;
-  color: #1f2328;
-  font-variant-numeric: tabular-nums;
-}
-
-.kv {
-  display: flex;
-  justify-content: space-between;
-  font-size: 26rpx;
-  color: #4b5563;
-  padding: 10rpx 0;
-  border-bottom: 1rpx solid #f4f6f8;
-}
-
-.muted {
-  font-size: 22rpx;
-  color: #6b7280;
-}
-
-.trace {
-  margin-top: 6rpx;
-  font-size: 22rpx;
-  color: #7a4d00;
-}
-
-.risk {
-  font-size: 24rpx;
-  color: #8a5300;
-  padding: 6rpx 0;
-}
-
-.clarify__question {
-  font-size: 30rpx;
-  font-weight: 600;
-  color: #1f2328;
-  margin-bottom: 16rpx;
-}
-
-.clarify__options {
-  display: flex;
-}
-
-.clarify__option {
-  flex: 1;
-  text-align: center;
-  padding: 26rpx 0;
-  border-radius: 12rpx;
-  background: #e8f0ff;
-  color: #1554b5;
-  font-size: 30rpx;
-  font-weight: 600;
-  margin-right: 16rpx;
-  min-height: 88rpx;
-}
-
-.clarify__option:last-child {
-  margin-right: 0;
-}
-
-.error {
-  margin: 8rpx 0 16rpx;
-  padding: 16rpx 20rpx;
-  background: #fde8e8;
-  color: #b42318;
-  border-radius: 12rpx;
-  font-size: 24rpx;
-}
-
-.footer {
-  display: flex;
-  margin-top: 20rpx;
-}
-
-.footer .btn {
-  flex: 1;
-  margin-right: 16rpx;
-}
-
-.footer .btn:last-child {
-  margin-right: 0;
-}
-
-/* ---- 人话版卡片（2026-11-19 重做：去掉槽位代号/风险代号/来源角标） ---- */
-.quote {
-  font-size: 30rpx;
-  color: #1f2328;
-  background: #f7f8fa;
-  border-radius: 12rpx;
-  padding: 16rpx 20rpx;
-  line-height: 1.5;
-}
-
-.lines {
-  margin-top: 4rpx;
-}
-
-.total {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  padding-top: 16rpx;
-  margin-top: 8rpx;
-  border-top: 1rpx solid #eef0f3;
-  font-size: 28rpx;
-  color: #4b5563;
-}
-
-.total__num {
-  font-size: 36rpx;
-  font-weight: 800;
-  color: #1f2328;
-  font-variant-numeric: tabular-nums;
+  color: var(--c-ink);
+  margin-bottom: var(--s-1);
 }
 
 .card__head {
@@ -309,20 +152,162 @@
   margin-bottom: 0;
 }
 
-.link {
-  font-size: 24rpx;
-  color: #1f6feb;
+/* ---------------------------------------------------------------- 内容 */
+.quote {
+  font-size: var(--f-body);
+  color: var(--c-ink);
+  background: #f7f8fa;
+  border-radius: var(--r-btn);
+  padding: var(--s-2) var(--s-3);
+  line-height: 1.5;
+}
+
+.lines {
+  margin-top: 2rpx;
+}
+
+.line {
+  display: flex;
+  align-items: center;
+  min-height: 80rpx;
+  border-bottom: 1rpx solid var(--c-line);
+}
+
+.line:last-child {
+  border-bottom: none;
+}
+
+.line__name {
+  flex: 1;
+  min-width: 0;
+  font-size: var(--f-body);
+  color: var(--c-ink);
+}
+
+.line__qty {
+  width: 160rpx;
+  text-align: right;
+  font-size: var(--f-small);
+  color: var(--c-ink-2);
+  font-variant-numeric: tabular-nums;
+}
+
+.line__amount {
+  width: 180rpx;
+  text-align: right;
+  font-size: var(--f-body);
+  font-weight: 700;
+  color: var(--c-ink);
+  font-variant-numeric: tabular-nums;
+}
+
+.total {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  padding-top: var(--s-2);
+  margin-top: var(--s-1);
+  font-size: var(--f-body);
+  color: var(--c-ink-2);
+}
+
+.total__num {
+  font-size: var(--f-title);
+  font-weight: 800;
+  color: var(--c-ink);
+  font-variant-numeric: tabular-nums;
+}
+
+.kv {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-height: 88rpx;
+  font-size: var(--f-body);
+  color: var(--c-ink-2);
+  border-bottom: 1rpx solid var(--c-line);
+}
+
+.kv:last-child {
+  border-bottom: none;
 }
 
 .hint {
-  margin-top: 8rpx;
-  font-size: 24rpx;
+  margin-top: var(--s-1);
+  font-size: var(--f-small);
+  color: var(--c-ink-2);
   line-height: 1.6;
-  color: #6b7280;
 }
 
-.card--warn {
-  background: #fff8e6;
+.link {
+  font-size: var(--f-small);
+  color: var(--c-brand-dark);
+}
+
+.muted {
+  font-size: var(--f-small);
+  color: var(--c-ink-3);
+}
+
+.trace {
+  margin-top: 4rpx;
+  font-size: 22rpx;
+  color: var(--c-warn-ink);
+}
+
+.risk {
+  font-size: var(--f-small);
+  color: var(--c-warn-ink);
+  padding: 4rpx 0;
+}
+
+/* ---------------------------------------------------------------- 澄清 */
+.clarify__options {
+  display: flex;
+  margin-top: var(--s-2);
+}
+
+.clarify__option {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 96rpx;
+  margin-right: var(--s-2);
+  border-radius: var(--r-btn);
+  background: var(--c-brand-soft);
+  color: var(--c-brand-dark);
+  font-size: var(--f-body);
+  font-weight: 600;
+}
+
+.clarify__option:last-child {
+  margin-right: 0;
+}
+
+/* ---------------------------------------------------------------- 其他 */
+.error {
+  margin: var(--s-2) 0;
+  padding: var(--s-2) var(--s-3);
+  background: var(--c-danger-soft);
+  color: var(--c-danger);
+  border-radius: var(--r-btn);
+  font-size: var(--f-small);
+  line-height: 1.6;
+}
+
+.footer {
+  display: flex;
+  margin-top: var(--s-3);
+}
+
+.footer .btn {
+  flex: 1;
+  margin-right: var(--s-2);
+}
+
+.footer .btn:last-child {
+  margin-right: 0;
 }
 
 .hidden {

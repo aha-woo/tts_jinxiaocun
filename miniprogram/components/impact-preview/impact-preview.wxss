@@ -1,47 +1,53 @@
+/* 影响预览（方案 A）：只读预演，白底 + 绿色「变之后」 */
 .impact {
-  background: #fff;
-  border-radius: 16rpx;
-  padding: 20rpx 24rpx;
+  background: var(--c-white);
+  border-radius: var(--r-card);
+  padding: var(--s-3) var(--s-4);
+  margin-bottom: var(--s-2);
+  border: 1rpx solid var(--c-line);
 }
 
 .impact__head {
   display: flex;
   align-items: baseline;
   justify-content: space-between;
-  padding-bottom: 12rpx;
-  border-bottom: 1rpx solid #eef1f4;
+  padding-bottom: var(--s-1);
 }
 
 .impact__title {
-  font-size: 28rpx;
+  font-size: var(--f-body);
   font-weight: 600;
-  color: #1f2328;
+  color: var(--c-ink);
 }
 
 .impact__version {
-  font-size: 22rpx;
-  color: #1f6feb;
+  font-size: var(--f-small);
+  color: var(--c-ink-3);
 }
 
 .impact__row {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 14rpx 0;
-  border-bottom: 1rpx solid #f4f6f8;
+  min-height: 88rpx;
+  border-bottom: 1rpx solid var(--c-line);
+}
+
+.impact__row:last-child {
+  border-bottom: none;
 }
 
 .impact__row--warn {
-  background: #fff5f5;
-  border-radius: 12rpx;
-  padding-left: 12rpx;
-  padding-right: 12rpx;
+  background: var(--c-danger-soft);
+  border-radius: var(--r-btn);
+  padding: 0 var(--s-2);
 }
 
 .impact__label {
-  font-size: 26rpx;
-  color: #4b5563;
   flex: 1;
+  min-width: 0;
+  font-size: var(--f-small);
+  color: var(--c-ink-2);
 }
 
 .impact__delta {
@@ -50,36 +56,36 @@
 }
 
 .impact__before {
-  font-size: 26rpx;
-  color: #6b7280;
+  font-size: var(--f-small);
+  color: var(--c-ink-3);
   font-variant-numeric: tabular-nums;
 }
 
 .impact__arrow {
-  margin: 0 12rpx;
-  color: #9aa4ae;
+  margin: 0 var(--s-1);
+  color: var(--c-ink-3);
 }
 
 .impact__after {
-  font-size: 30rpx;
+  font-size: var(--f-body);
   font-weight: 700;
-  color: #0f7b6c;
+  color: var(--c-brand-dark);
   font-variant-numeric: tabular-nums;
 }
 
 .impact__after--warn {
-  color: #b42318;
+  color: var(--c-danger);
 }
 
 .impact__note {
-  margin-top: 12rpx;
+  margin-top: var(--s-1);
   font-size: 22rpx;
-  color: #6b7280;
+  color: var(--c-ink-3);
 }
 
 .impact__empty {
-  padding: 24rpx 0;
-  font-size: 26rpx;
-  color: #9aa4ae;
+  padding: var(--s-3) 0;
+  font-size: var(--f-small);
+  color: var(--c-ink-3);
   text-align: center;
 }

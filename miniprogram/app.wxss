@@ -1,14 +1,66 @@
-/* 全局样式：面向 45~50 岁用户，字号偏大、点击热区偏大 */
+/*
+ * 设计规范 v1（方案 A：微信原生 · 大字号）
+ * =====================================
+ * 面向 45~55 岁小微商户：字号偏大、热区偏大、颜色少、层级靠留白而不是阴影。
+ *
+ * 三条硬规则（新增页面必须遵守）：
+ * 1. **颜色只用 token**：`var(--c-*)`，页面里禁止再写 #xxxxxx（本文件除外）；
+ * 2. **尺寸只用 rpx**：禁止 px（1rpx 边框除外）；
+ * 3. **按钮统一 `.ui-btn`**：不许各自写 height/line-height——原生 button 的默认
+ *    padding 会让文字偏上，这正是「生成确认卡片」不对齐的原因。
+ *
+ * 说明：曾拆到 styles/theme.wxss 用 @import 引入，但 wcsc 解析不到该路径
+ * （`path not found`），所以**token 与基础组件统一放在 app.wxss**，页面直接继承。
+ */
+
 page {
-  background: #f4f6f8;
-  color: #1b1f24;
-  font-size: 32rpx;
+  /* 品牌色：微信绿系。主色 #0F7A40 而不是 #07C160——后者配白字对比度约 2.2:1，
+     低于正文 4.5:1 的无障碍下限；#0F7A40 约 5:1，老年用户也读得清。 */
+  --c-brand: #0f7a40;
+  --c-brand-light: #07c160;
+  --c-brand-dark: #0b5f32;
+  --c-brand-soft: #e8f6ee;
+  /* 卖货方向强调色（橙，白字同样达标） */
+  --c-accent: #b45309;
+  --c-accent-soft: #fff1e6;
+  /* 文字：正文对比度 ≥ 4.5:1 */
+  --c-ink: #1b1f24;
+  --c-ink-2: #374151;
+  --c-ink-3: #6b7280;
+  /* 背景与分隔 */
+  --c-bg: #f6f7f8;
+  --c-white: #ffffff;
+  --c-line: #e5e7eb;
+  /* 语义色 */
+  --c-warn-bg: #fff8e6;
+  --c-warn-ink: #8a5300;
+  --c-danger: #b42318;
+  --c-danger-soft: #fdecea;
+  /* 圆角 */
+  --r-card: 20rpx;
+  --r-btn: 16rpx;
+  --r-pill: 999rpx;
+  /* 间距 */
+  --s-1: 8rpx;
+  --s-2: 16rpx;
+  --s-3: 24rpx;
+  --s-4: 32rpx;
+  /* 字号 */
+  --f-small: 26rpx;
+  --f-body: 34rpx;
+  --f-title: 40rpx;
+  --f-h1: 44rpx;
+  --f-amount: 64rpx;
+
+  background: var(--c-bg);
+  color: var(--c-ink);
+  font-size: var(--f-body);
   line-height: 1.6;
   font-family: -apple-system, BlinkMacSystemFont, 'PingFang SC', 'Microsoft YaHei', sans-serif;
 }
 
 .container {
-  padding: 32rpx;
+  padding: var(--s-4);
   box-sizing: border-box;
 }
 
@@ -16,7 +68,7 @@ page {
 .wide-layout {
   display: flex;
   flex-direction: row;
-  gap: 32rpx;
+  gap: var(--s-4);
   align-items: flex-start;
 }
 
@@ -30,77 +82,182 @@ page {
   min-width: 0;
 }
 
-.card {
-  background: #ffffff;
-  border-radius: 20rpx;
-  padding: 28rpx;
-  margin-bottom: 24rpx;
-  box-shadow: 0 4rpx 16rpx rgba(16, 24, 40, 0.06);
+/* ---------------------------------------------------------------- 卡片 */
+.ui-card {
+  background: var(--c-white);
+  border-radius: var(--r-card);
+  padding: var(--s-4);
+  margin-bottom: var(--s-3);
 }
 
-.card__title {
-  font-size: 34rpx;
+.ui-card__title {
+  font-size: var(--f-title);
   font-weight: 600;
-  margin-bottom: 12rpx;
+  color: var(--c-ink);
+  margin-bottom: var(--s-2);
 }
 
-.card__row {
+.ui-card__head {
   display: flex;
+  align-items: center;
   justify-content: space-between;
-  padding: 8rpx 0;
-  font-size: 30rpx;
-  color: #3d4550;
 }
 
-.card__value {
+/* ---------------------------------------------------------------- 表单行 */
+.ui-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-height: 96rpx;
+  font-size: var(--f-body);
+  color: var(--c-ink-2);
+  border-bottom: 1rpx solid var(--c-line);
+}
+
+.ui-row:last-child {
+  border-bottom: none;
+}
+
+.ui-row__value {
+  color: var(--c-ink);
   font-weight: 600;
-  color: #1b1f24;
+  text-align: right;
 }
 
+/* ---------------------------------------------------------------- 文字 */
+.ui-muted {
+  color: var(--c-ink-3);
+  font-size: var(--f-small);
+  line-height: 1.6;
+}
+
+.ui-hint {
+  margin-top: var(--s-1);
+  color: var(--c-ink-2);
+  font-size: var(--f-small);
+  line-height: 1.6;
+}
+
+.ui-link {
+  color: var(--c-brand-dark);
+  font-size: var(--f-small);
+}
+
+/* ---------------------------------------------------------------- 按钮 */
+.ui-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 96rpx;
+  line-height: normal;
+  padding: 0 var(--s-4);
+  border: none;
+  border-radius: var(--r-btn);
+  font-size: var(--f-body);
+  font-weight: 600;
+}
+
+/* 原生 button 的默认描边必须清掉，否则圆角外多一圈细线 */
+.ui-btn::after {
+  border: none;
+}
+
+.ui-btn--primary {
+  background: var(--c-brand);
+  color: var(--c-white);
+}
+
+.ui-btn--ghost {
+  background: var(--c-white);
+  color: var(--c-brand-dark);
+  border: 2rpx solid var(--c-brand);
+}
+
+.ui-btn--soft {
+  background: var(--c-brand-soft);
+  color: var(--c-brand-dark);
+}
+
+.ui-btn--block {
+  width: 100%;
+  margin: 0;
+}
+
+.ui-btn--disabled {
+  background: #d7dbe0;
+  color: var(--c-ink-3);
+}
+
+/* ---------------------------------------------------------------- 徽标 */
+.ui-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 4rpx var(--s-2);
+  border-radius: var(--r-pill);
+  font-size: var(--f-small);
+  line-height: 1.4;
+}
+
+.ui-badge--brand {
+  background: var(--c-brand-soft);
+  color: var(--c-brand-dark);
+}
+
+.ui-badge--warn {
+  background: var(--c-warn-bg);
+  color: var(--c-warn-ink);
+}
+
+.ui-badge--danger {
+  background: var(--c-danger-soft);
+  color: var(--c-danger);
+}
+
+/* ---------------------------------------------------------------- 数字键 */
+.ui-key {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 104rpx;
+  background: var(--c-white);
+  border: 1rpx solid var(--c-line);
+  border-radius: var(--r-btn);
+  font-size: 40rpx;
+  font-weight: 600;
+  color: var(--c-ink);
+}
+
+.ui-key--fn {
+  background: #eef1f4;
+  color: var(--c-ink-2);
+}
+
+.ui-key:active {
+  background: var(--c-brand-soft);
+}
+
+/* ---------------------------------------------------------------- 空态 */
+.ui-empty {
+  padding: var(--s-4);
+  text-align: center;
+  color: var(--c-ink-3);
+  font-size: var(--f-small);
+}
+
+/* 语义色（旧页面在用的类，统一到 token） */
 .text-ok {
-  color: #0f9d58;
+  color: var(--c-brand-dark);
 }
 
 .text-warn {
-  color: #b26a00;
+  color: var(--c-warn-ink);
 }
 
 .text-danger {
-  color: #d93025;
+  color: var(--c-danger);
 }
 
 .muted {
-  color: #6b7280;
-  font-size: 26rpx;
-}
-
-/* 主按钮：热区 >= 96rpx（约 48px；PRD 3.2 的下限是 88px 视觉热区，靠整宽按钮实现） */
-.btn-primary {
-  min-height: 96rpx;
-  line-height: normal;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  background: #1f6feb;
-  color: #ffffff;
-  border-radius: 16rpx;
-  font-size: 32rpx;
-  font-weight: 600;
-  border: none;
-}
-
-.btn-primary::after {
-  border: none;
-}
-
-.btn-ghost {
-  min-height: 88px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  background: #ffffff;
-  color: #1f6feb;
-  border: 2rpx solid #1f6feb;
-  border-radius: 16rpx;
-  font-size: 30rpx;
+  color: var(--c-ink-3);
+  font-size: var(--f-small);
 }

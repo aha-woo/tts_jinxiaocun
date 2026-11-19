@@ -1,4 +1,4 @@
-<!-- 语音大按钮：热区 ≥88×88px，拇指可直接按 -->
+<!-- 语音大按钮：热区 200rpx（≈100px），拇指可直接按；不用 emoji 当图标 -->
 <view class="wrap">
   <view
     class="button {{recording ? 'button--recording' : ''}} {{disabled ? 'button--disabled' : ''}}"
@@ -7,8 +7,7 @@
     bindtouchcancel="onTouchEnd"
     bindtap="onTap"
   >
-    <view class="button__icon">{{recording ? '■' : '🎤'}}</view>
-    <view class="button__text">{{recording ? '松手结束' : '按着说'}}</view>
+    <view class="button__text">{{recording ? '松手结束' : '按住说话'}}</view>
   </view>
 
   <!-- 录音中的实时反馈：时长 + 能量柱（让用户知道系统真的在听） -->
