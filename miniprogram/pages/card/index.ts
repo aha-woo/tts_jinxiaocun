@@ -60,6 +60,52 @@ export function fenToYuanText(fen: number): string {
   return `¥${(safe / 100).toFixed(2)}`;
 }
 
+/**
+ * 组装面向用户的「基本信息」。
+ *
+ * 只暴露日期/付款/供应商/仓库四项，其余槽位（Q/U/P/UP/TA…）属于解析内部字段，
+ * 不进用户界面。**值为空或来源是 pending 的一律不显示**——宁可不写，也不让
+ * 用户看到「待确认」这种内部状态当成事实。
+ */
+export function buildInfoFields(card: CardPayload): { label: string; value: string }[] {
+  const rows = card.slots ?? [];
+  const result: { label: string; value: string }[] = [];
+  for (const field of INFO_FIELDS) {
+    const row = rows.find((item) => item.code === field.code);
+    if (row === undefined) {
+      continue;
+    }
+    if (row.source === 'pending') {
+      continue;
+    }
+    let value = String(row.display ?? '').trim();
+    if (field.code === 'PS') {
+      value = PAYMENT_TEXT[value] ?? value;
+    }
+    if (value === '' || value === '待确认') {
+      continue;
+    }
+    result.push({ label: field.label, value });
+  }
+  return result;
+}
+
+/**
+ * 商品还没有档案（不能直接确认，必须先建商品）。
+ *
+ * 判据三条取并集，因为不同意图的载荷落点不同：
+ * 明细行 ``pending`` / ``P`` 槽位来源是 ``pending`` / 计算式里写了「未在商品档案」。
+ */
+export function detectPendingProduct(card: CardPayload): boolean {
+  if ((card.calc.lines ?? []).some((line) => line.pending)) {
+    return true;
+  }
+  if ((card.slots ?? []).some((slot) => slot.code === 'P' && slot.source === 'pending')) {
+    return true;
+  }
+  return (card.calc.calc_traces ?? []).some((trace) => trace.includes('未在商品档案'));
+}
+
 interface CardData {
   loading: boolean;
   cardId: string;
@@ -77,7 +123,30 @@ interface CardData {
   directionText: string;
   /** 首屏总金额文案（`¥70.00`） */
   totalAmountText: string;
+  /** 卡片标题（进货单 / 卖货单 / 意图中文名） */
+  cardTitle: string;
+  /** 面向用户的「基本信息」（日期/付款/供应商/仓库，空值自动隐藏） */
+  infoFields: { label: string; value: string }[];
+  /** 商品还没有档案：不能直接确认，要先建商品 */
+  hasPendingProduct: boolean;
+  /** 是否展开「解析明细（开发用）」——默认折叠 */
+  devDetail: boolean;
 }
+
+/** 只把这四个槽位展示给用户；其余是内部字段。 */
+const INFO_FIELDS: { code: string; label: string }[] = [
+  { code: 'D', label: '日期' },
+  { code: 'PS', label: '付款' },
+  { code: 'S', label: '供应商' },
+  { code: 'W', label: '仓库' },
+];
+
+/** 付款状态的人话映射（服务端存的是「已结/未结/部分」）。 */
+const PAYMENT_TEXT: Record<string, string> = {
+  已结: '已付清',
+  未结: '还欠着',
+  部分: '付了一部分',
+};
 
 Page<CardData, WechatMiniprogram.Page.CustomOption>({
   data: {
@@ -95,6 +164,10 @@ Page<CardData, WechatMiniprogram.Page.CustomOption>({
     riskTone: 'ok',
     directionText: '',
     totalAmountText: '¥0.00',
+    cardTitle: '',
+    infoFields: [],
+    hasPendingProduct: false,
+    devDetail: false,
   },
 
   timer: null as number | null,
@@ -130,7 +203,13 @@ Page<CardData, WechatMiniprogram.Page.CustomOption>({
       this.setData({
         card,
         directionText: direction.text === '' ? card.intent.intent_label_zh : direction.text,
+        cardTitle:
+          direction.text === ''
+            ? card.intent.intent_label_zh
+            : `${direction.text}单`,
         totalAmountText: fenToYuanText(totalFen),
+        infoFields: buildInfoFields(card),
+        hasPendingProduct: detectPendingProduct(card),
         needSecondVoice: card.intent.confirm_policy === 'C2',
         riskTone: card.risk.level === 'ok' ? 'ok' : 'warn',
         loading: false,
@@ -186,6 +265,11 @@ Page<CardData, WechatMiniprogram.Page.CustomOption>({
       clearInterval(this.timer);
       this.timer = null;
     }
+  },
+
+  /** 展开/折叠「解析明细（开发用）」：默认折叠，不打扰终端用户。 */
+  onToggleDevDetail(): void {
+    this.setData({ devDetail: !this.data.devDetail });
   },
 
   /** 澄清点选（**不重调 AI**）。 */

@@ -1,22 +1,29 @@
 <!--
-  确认卡片：7 区块一个都不能少
-  ① original ② intent ③ slots ④ calc ⑤ impact ⑥ risk ⑦ actions
-  窄屏纵向堆叠，但金额 / 影响预览 / 方向 / 主按钮**必须在首屏**
+  确认卡片（面向商户，不是调试面板）
 
-  每个区块都带 `data-block`，一是给测试做机器可读断言（少一块 CI 就红），
-  二是排障时一眼能对应到服务端 `ConfirmCardView.to_payload()` 的字段名。
+  设计原则
+  --------
+  - 首屏四样：方向 / 金额 / 影响 / 主按钮（`data-role` 是机器可读锚点）。
+  - **内部字段不上屏**：槽位代号（P/Q/U/UP/TA/S/D/PS/W）、风险等级 R1、确认方式 C1、
+    「来源」角标、数据版本，全部收进底部「解析明细（开发用）」，默认折叠。
+  - 只写人话：已结→已付清、未结→还欠着；商品未建档时明确提示「先建商品」。
+  - 7 个 `data-block` 一个不少（服务端契约与测试都依赖它），但视觉上只保留用户需要的。
 -->
 <view class="page {{wide ? 'page--wide' : ''}}">
-  <!-- ⑦ 操作区（吸顶，首屏可见）：方向 + 金额 + 倒计时 + 主按钮，四样都在这一条里 -->
+  <!-- ⑦ 操作区（吸顶）：第一行方向+金额+倒计时，第二行整宽主按钮（拇指好按） -->
   <view class="actionbar" wx:if="{{card}}" data-block="actions">
-    <view class="actionbar__dir actionbar__dir--{{card.intent.domain}}" data-role="direction">
-      <text class="actionbar__dirtext">{{directionText}}</text>
+    <view class="actionbar__row">
+      <view class="actionbar__dir actionbar__dir--{{card.intent.domain}}" data-role="direction">
+        <text>{{directionText}}</text>
+      </view>
+      <view class="actionbar__main">
+        <view class="actionbar__amount" data-role="amount">{{totalAmountText}}</view>
+        <view class="actionbar__timer {{expired ? 'actionbar__timer--expired' : ''}}">
+          {{expired ? '已超时' : '还剩 ' + countdown + ' 秒'}}
+        </view>
+      </view>
     </view>
-    <view class="actionbar__amount" data-role="amount">{{totalAmountText}}</view>
-    <view class="actionbar__timer {{expired ? 'actionbar__timer--expired' : ''}}">
-      {{expired ? '已过期' : countdown + 's'}}
-    </view>
-    <button class="btn btn--primary" bindtap="onConfirm" loading="{{loading}}">
+    <button class="btn btn--primary btn--block" bindtap="onConfirm" loading="{{loading}}">
       {{card.actions.primary_label}}
     </button>
   </view>
@@ -24,7 +31,7 @@
   <!-- 澄清（方向/槽位没判清时先问，不猜） -->
   <view class="card" wx:if="{{clarify}}">
     <view class="card__title">要确认一下</view>
-    <view class="clarify__question">{{clarify.question}}</view>
+    <view class="quote">{{clarify.question}}</view>
     <view class="clarify__options">
       <view
         wx:for="{{clarify.options}}"
@@ -36,42 +43,47 @@
     </view>
   </view>
 
-  <!-- ① 原文区 -->
+  <!-- ① 原文 -->
   <view class="card" wx:if="{{card}}" data-block="original">
     <view class="card__title">你刚说的</view>
-    <view class="original" wx:if="{{card.original.asr_text}}">{{card.original.asr_text}}</view>
-    <view class="muted" wx:if="{{card.original.low_confidence_highlight}}">
-      这句我听得不太准，下面高亮的项请重点看一眼
+    <view class="quote">{{card.original.asr_text}}</view>
+    <view class="hint" wx:if="{{card.original.low_confidence_highlight}}">
+      这句听得不太准，请重点核对下面的数字
     </view>
   </view>
 
-  <!-- ② 意图区 -->
+  <!-- ② 意图 + ④ 计算：人话标题 + 明细 + 合计 -->
   <view class="card" wx:if="{{card}}" data-block="intent">
-    <view class="card__title">{{card.intent.intent_label_zh}}</view>
-    <view class="kv"><text>类别</text><text>{{card.intent.domain_label_zh}}</text></view>
-    <view class="kv"><text>风险等级</text><text>{{card.intent.risk_level}}</text></view>
-    <view class="kv"><text>确认方式</text><text>{{card.intent.confirm_policy}}</text></view>
-  </view>
-
-  <!-- ③ 槽位区（组件根节点自带 data-block="slots"） -->
-  <slot-table rows="{{card.slots}}" wx:if="{{card}}" data-block="slots" />
-
-  <!-- ④ 计算区（金额 + 每行明细） -->
-  <view class="card" wx:if="{{card}}" data-block="calc">
-    <view class="card__title">金额 {{totalAmountText}}</view>
-    <view
-      wx:for="{{card.calc.lines}}"
-      wx:key="product_label"
-      class="line"
-    >
-      <text class="line__name">{{item.product_label}}</text>
-      <text class="line__qty">{{item.quantity}}{{item.unit}}</text>
-      <text class="line__amount">{{item.amount_display}}</text>
+    <view class="card__title">{{cardTitle}}</view>
+    <view class="lines">
+      <view class="line" wx:for="{{card.calc.lines}}" wx:key="product_label">
+        <text class="line__name">{{item.product_label}}</text>
+        <text class="line__qty">{{item.quantity}}{{item.unit}}</text>
+        <text class="line__amount">{{item.amount_display}}</text>
+      </view>
     </view>
-    <view class="trace" wx:for="{{card.calc.calc_traces}}" wx:key="*this">= {{item}}</view>
+    <view class="total">
+      <text>合计</text>
+      <text class="total__num">{{totalAmountText}}</text>
+    </view>
   </view>
 
-  <!-- ⑤ 影响预览区 -->
+  <!-- ③ 基本信息（只展示用户关心的四项，空值自动隐藏） -->
+  <view class="card" wx:if="{{card && infoFields.length > 0}}">
+    <view class="card__title">这笔的基本信息</view>
+    <view class="kv" wx:for="{{infoFields}}" wx:key="label">
+      <text>{{item.label}}</text>
+      <text>{{item.value}}</text>
+    </view>
+  </view>
+
+  <!-- 商品未建档：明确告诉用户下一步怎么做，而不是让他点确认然后失败 -->
+  <view class="card card--warn" wx:if="{{card && hasPendingProduct}}">
+    <view class="card__title">这个商品还没有档案</view>
+    <view class="hint">先去首页说一句「新建商品 可乐」，建好之后再回来记这笔；现在点确认会失败。</view>
+  </view>
+
+  <!-- ⑤ 影响预览（组件内已改成「记上之后会变成」的人话） -->
   <impact-preview
     wx:if="{{card}}"
     data-block="impact"
@@ -80,18 +92,35 @@
     note=""
   />
 
-  <!-- ⑥ 风险区 -->
-  <view class="card card--risk" wx:if="{{card && card.risk.level !== 'ok'}}" data-block="risk">
+  <!-- ⑥ 风险 -->
+  <view class="card card--warn" wx:if="{{card && card.risk.level !== 'ok'}}" data-block="risk">
     <view class="card__title">要注意</view>
-    <view class="risk">{{card.risk.reason_zh}}</view>
-    <view wx:for="{{card.risk.conflicts}}" wx:key="*this" class="risk">· {{item}}</view>
+    <view class="hint">{{card.risk.reason_zh}}</view>
+    <view class="hint" wx:for="{{card.risk.conflicts}}" wx:key="*this">· {{item}}</view>
   </view>
 
-  <!-- C2 二次语音 + 按钮兜底（兜底永远在） -->
+  <!-- C2 二次语音 + 按钮兜底 -->
   <view class="card" wx:if="{{needSecondVoice}}">
     <view class="card__title">这笔要再确认一次</view>
-    <view class="muted">点下面说一句「确认」，或者直接按上方主按钮（会记为按钮兜底）</view>
+    <view class="hint">点下面说一句「确认」，或者直接按上方主按钮（会记为按钮兜底）</view>
     <button class="btn btn--ghost" bindtap="onSecondVoice">我说了「确认」</button>
+  </view>
+
+  <!-- 解析明细：开发排查用，默认折叠；7 区块里的 slots/calc 落在这里 -->
+  <view class="card" wx:if="{{card}}">
+    <view class="card__head" bindtap="onToggleDevDetail">
+      <text class="card__title">解析明细（开发用）</text>
+      <text class="link">{{devDetail ? '收起' : '展开'}}</text>
+    </view>
+    <block wx:if="{{devDetail}}">
+      <slot-table rows="{{card.slots}}" data-block="slots" />
+      <view class="trace" wx:for="{{card.calc.calc_traces}}" wx:key="*this">= {{item}}</view>
+      <view class="hint">
+        风险 {{card.intent.risk_level}} · 确认方式 {{card.intent.confirm_policy}} ·
+        数据版本 v{{card.meta.preview_version}}
+      </view>
+    </block>
+    <view class="hidden" data-block="calc"></view>
   </view>
 
   <view class="error" wx:if="{{errorText}}">{{errorText}}</view>

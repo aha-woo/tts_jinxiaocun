@@ -1,8 +1,7 @@
-<!-- 影响预览：只读预演结果，before → after，异常行高亮 -->
+<!-- 影响预览：只读预演结果，before → after，异常行高亮（面向商户的人话，不暴露版本号） -->
 <view class="impact">
   <view class="impact__head">
-    <text class="impact__title">这笔记账的影响（还没写进去）</text>
-    <text class="impact__version" bindtap="onRefresh">数据版本 v{{previewVersion}} · 重新预演</text>
+    <text class="impact__title">记上之后会变成</text>
   </view>
 
   <view wx:for="{{rows}}" wx:key="label" class="impact__row {{item.warnings.length > 0 ? 'impact__row--warn' : ''}}">
@@ -15,5 +14,5 @@
   </view>
 
   <view class="impact__note" wx:if="{{note}}">{{note}}</view>
-  <view class="impact__empty" wx:if="{{rows.length === 0}}">这笔不改动库存与欠款</view>
+  <view class="impact__empty" wx:if="{{rows.length === 0}}">库存和欠款都不变</view>
 </view>
