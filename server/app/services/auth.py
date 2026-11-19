@@ -186,6 +186,13 @@ class AuthService:
             version=1,
         )
         session.add(tenant)
+        # **必须显式 flush**：SQLAlchemy 的 unit-of-work 在没有 relationship() 时
+        # 不保证按外键顺序发 INSERT。真 PG 上实测过：一次性 add 六个对象再 flush，
+        # 它先插 member，于是 fk_member_tenant_id_tenant 报
+        # "Key is not present in table tenant"。SQLite 默认不校验外键，所以本地测试
+        # 永远发现不了。这里按依赖顺序逐段落库（tenant → store → member → 其余），
+        # 与是否有 relationship 无关。
+        session.flush()
 
         store = Store(
             store_id=uuid.uuid4(),
@@ -205,6 +212,7 @@ class AuthService:
             status="active",
         )
         session.add(member)
+        session.flush()  # member 先于 role（role.member_id 无 FK，但与 member 同批更安全）
 
         role = Role(
             role_id=uuid.uuid4(),

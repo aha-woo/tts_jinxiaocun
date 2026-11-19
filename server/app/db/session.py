@@ -35,7 +35,17 @@ BYPASS_SCOPE_KEY = "vil_bypass_tenant_scope"
 
 
 def create_db_engine(url: str, *, echo: bool = False) -> Engine:
-    """按 URL 创建 Engine（自动适配 SQLite 内存库与 PG 连接池）。"""
+    """按 URL 创建 Engine（自动适配 SQLite 内存库与 PG 连接池）。
+
+    ⚠️ 已知局限（2026-11-19 云上踩到）：SQLite 默认**不校验外键**，而 SQLAlchemy 在
+    没有 ``relationship()`` 时不保证按 FK 顺序发 INSERT。所以「先插子表、父表还没落库」
+    这类错误在本地 SQLite 上永远绿，只有真 PG 才会暴露。
+
+    曾尝试在 SQLite 连接上打开 ``PRAGMA foreign_keys=ON`` 来提前暴露，但现有 100+ 条
+    测试夹具直接伪造 ``tenant_id`` 而不建 ``tenant`` 行，会被全部打断——那是一次独立的
+    夹具清理，不在本次范围。**因此用 PG 专用回归测试兜底**：
+    ``tests/test_provisioning_pg.py``（设置 ``PG_TEST_URL`` 时运行）。
+    """
     if url.startswith("sqlite"):
         kwargs: dict[str, Any] = {
             "echo": echo,
