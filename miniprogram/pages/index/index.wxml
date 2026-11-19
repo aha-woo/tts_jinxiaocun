@@ -4,7 +4,7 @@
   - 状态条：降级态 L0~L4 在 UI 上真的可以看出差别
   - 只有单商户：没有门店切换、没有组织概念
 -->
-<view class="page {{wide ? 'page--wide' : ''}}">
+<view data-ui="v1" class="page {{wide ? 'page--wide' : ''}}">
   <!-- 降级态状态条 -->
   <view class="banner banner--{{degrade.tone}}">
     <view class="banner__title">

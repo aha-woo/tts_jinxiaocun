@@ -1,5 +1,5 @@
 <!-- 手动记账：一次语音都不用，也能完成完整一单（选商品→数量→单价→方向→生成卡片） -->
-<view class="page">
+<view data-ui="v1" class="page">
   <view class="tip">不想说话就点着记。和语音走同一条解析、同一条落账链路，最后还要在卡片上确认。</view>
 
   <num-keyboard

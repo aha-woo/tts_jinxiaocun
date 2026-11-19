@@ -261,3 +261,5 @@ page {
   color: var(--c-ink-3);
   font-size: var(--f-small);
 }
+
+/* ui-v1 2026-11-19T21:4x */

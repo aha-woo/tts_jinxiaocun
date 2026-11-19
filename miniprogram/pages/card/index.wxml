@@ -9,7 +9,7 @@
   - 只写人话：已结→已付清、未结→还欠着；商品未建档时明确提示「先建商品」。
   - 7 个 `data-block` 一个不少（服务端契约与测试都依赖它），但视觉上只保留用户需要的。
 -->
-<view class="page {{wide ? 'page--wide' : ''}}">
+<view data-ui="v1" class="page {{wide ? 'page--wide' : ''}}">
   <!-- ⑦ 操作区（吸顶）：第一行方向+金额+倒计时，第二行整宽主按钮（拇指好按） -->
   <view class="actionbar" wx:if="{{card}}" data-block="actions">
     <view class="actionbar__row">
