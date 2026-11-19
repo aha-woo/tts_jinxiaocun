@@ -1,20 +1,18 @@
-<!-- 套餐与购买：两个口径分开显示，绝不拼成一个进度条 -->
+<!-- 套餐与购买：本月用量（自然月）与 30 天权益分开显示，不拼成一个进度条 -->
 <view class="page">
   <!-- 口径一：自然月用量 -->
   <view class="card">
-    <view class="card__title">本月用量（自然月 {{usage.period}}）</view>
+    <view class="card__title">本月已用</view>
     <view class="stats">
       <text class="stats__num">{{usage.used}}</text>
       <text class="stats__unit">/ {{usage.quota}} 次</text>
     </view>
-    <view class="muted">口径：{{usage.caliber}}</view>
-    <view class="muted">成本：¥{{usage.cost_fen}} 分（内部归因用，不对外展示单价）</view>
-    <view class="level" wx:if="{{usage.degrade_level !== 'L0'}}">当前降级态：{{usage.degrade_level}}</view>
+    <view class="hint">每月 1 号重新计算；超出后仍可手动记账。</view>
   </view>
 
   <!-- 口径二：30 天滚动窗口权益 -->
-  <view class="card card--entitle">
-    <view class="card__title">我的套餐（30 天滚动窗口）</view>
+  <view class="card">
+    <view class="card__title">我的套餐</view>
     <view class="entitle__name">{{entitlement.plan_name}}</view>
     <view class="stats">
       <text class="stats__num">{{entitlement.remaining_quota}}</text>
@@ -22,14 +20,13 @@
       <text class="stats__num stats__num--days">{{entitlement.days_left}}</text>
       <text class="stats__unit">天剩余</text>
     </view>
-    <view class="muted">到期：{{entitlement.valid_until}}</view>
-    <view class="muted">口径：{{entitlement.caliber}}</view>
-    <view class="muted">自动续费：{{entitlement.auto_renew ? '开' : '关（到期靠提醒）'}}</view>
+    <view class="hint">到期：{{entitlement.valid_until}}</view>
+    <view class="hint">到期不会自动扣费，续费靠你自己决定。</view>
   </view>
 
   <!-- 道具（价格由服务端按 goods.json 下发，端上不硬编码） -->
   <view class="card">
-    <view class="card__title">可购买</view>
+    <view class="card__title">可以买</view>
     <view wx:for="{{goods}}" wx:key="goodsId" class="goods">
       <view class="goods__main">
         <text class="goods__name">{{item.name}}</text>
@@ -37,7 +34,7 @@
       </view>
       <view class="goods__desc">{{item.desc}}</view>
       <button
-        class="buy"
+        class="ui-btn ui-btn--primary ui-btn--block goods__buy"
         data-goods="{{item.goodsId}}"
         bindtap="onBuy"
         loading="{{paying === item.goodsId}}"

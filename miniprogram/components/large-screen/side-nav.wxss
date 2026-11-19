@@ -1,52 +1,53 @@
+/* 左导航（方案 A）：白底，选中项绿底绿字，禁用项锁定标记 */
 .nav {
   display: flex;
   flex-direction: column;
   width: 240rpx;
   flex-shrink: 0;
-  background: #fff;
-  border-right: 1rpx solid #eef1f4;
-  padding: 16rpx 0;
+  background: var(--c-white);
+  border-right: 1rpx solid var(--c-line);
+  padding: var(--s-2) 0;
 }
 
-/* 窄屏（窗口变窄）→ 横向标签，仍然保留全部入口 */
+/* 窄屏 → 横向标签，入口一个不少 */
 .nav--narrow {
   width: 100%;
   flex-direction: row;
   overflow-x: auto;
   border-right: none;
-  border-bottom: 1rpx solid #eef1f4;
-  padding: 8rpx 12rpx;
+  border-bottom: 1rpx solid var(--c-line);
+  padding: var(--s-1) var(--s-2);
 }
 
 .item {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 22rpx 24rpx;
-  font-size: 26rpx;
-  color: #4b5563;
+  padding: var(--s-2) var(--s-3);
+  font-size: var(--f-small);
+  color: var(--c-ink-2);
 }
 
 .nav--narrow .item {
-  padding: 16rpx 20rpx;
+  padding: var(--s-2) var(--s-3);
   white-space: nowrap;
 }
 
 .item--active {
-  color: #1f6feb;
+  color: var(--c-brand-dark);
   font-weight: 700;
-  background: #e8f0ff;
+  background: var(--c-brand-soft);
 }
 
 .item--locked {
-  color: #9aa4ae;
+  color: var(--c-ink-3);
 }
 
 .item__lock {
   font-size: 18rpx;
-  color: #9aa4ae;
-  border: 1rpx solid #d5dbe1;
-  border-radius: 999rpx;
+  color: var(--c-ink-3);
+  border: 1rpx solid var(--c-line);
+  border-radius: var(--r-pill);
   padding: 2rpx 10rpx;
-  margin-left: 8rpx;
+  margin-left: var(--s-1);
 }

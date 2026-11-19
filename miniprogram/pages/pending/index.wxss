@@ -1,24 +1,27 @@
+/* 待确认（方案 A）：一张卡一条，金额右对齐，两个整宽等分按钮 */
 .page {
   min-height: 100vh;
-  background: #f4f6f8;
-  padding: 20rpx;
+  background: var(--c-bg);
+  padding: var(--s-3);
   box-sizing: border-box;
 }
 
-.hint {
-  background: #fff8e6;
-  color: #8a5300;
-  border-radius: 12rpx;
-  padding: 16rpx 20rpx;
-  font-size: 24rpx;
-  margin-bottom: 16rpx;
+.tip {
+  background: var(--c-warn-bg);
+  color: var(--c-warn-ink);
+  border-radius: var(--r-btn);
+  padding: var(--s-2) var(--s-3);
+  font-size: var(--f-small);
+  line-height: 1.6;
+  margin-bottom: var(--s-3);
 }
 
 .item {
-  background: #fff;
-  border-radius: 16rpx;
-  padding: 20rpx 24rpx;
-  margin-bottom: 16rpx;
+  background: var(--c-white);
+  border-radius: var(--r-card);
+  padding: var(--s-3) var(--s-4);
+  margin-bottom: var(--s-2);
+  border: 1rpx solid var(--c-line);
 }
 
 .item__main {
@@ -28,83 +31,51 @@
 }
 
 .item__title {
-  font-size: 28rpx;
-  color: #1f2328;
+  flex: 1;
+  min-width: 0;
+  font-size: var(--f-body);
+  color: var(--c-ink);
   font-weight: 600;
 }
 
 .item__amount {
-  font-size: 32rpx;
-  font-weight: 700;
-  color: #1f2328;
+  font-size: var(--f-title);
+  font-weight: 800;
+  color: var(--c-ink);
+  font-variant-numeric: tabular-nums;
 }
 
 .item__meta {
-  display: flex;
-  align-items: center;
-  margin-top: 8rpx;
-}
-
-.badge {
-  font-size: 20rpx;
-  padding: 4rpx 12rpx;
-  border-radius: 999rpx;
-  background: #e8f0ff;
-  color: #1554b5;
-}
-
-.badge--expired {
-  background: #fde8e8;
-  color: #b42318;
-}
-
-.item__version {
-  margin-left: 12rpx;
-  font-size: 20rpx;
-  color: #9aa4ae;
+  margin-top: var(--s-1);
 }
 
 .item__actions {
   display: flex;
-  margin-top: 16rpx;
+  margin-top: var(--s-3);
 }
 
-.btn {
+.item__btn {
   flex: 1;
-  height: 88rpx;
-  line-height: 88rpx;
-  border-radius: 12rpx;
-  font-size: 28rpx;
-  margin-right: 16rpx;
+  margin-right: var(--s-2);
 }
 
-.btn:last-child {
+.item__btn:last-child {
   margin-right: 0;
-}
-
-.btn--primary {
-  background: #1f6feb;
-  color: #fff;
-}
-
-.btn--ghost {
-  background: #f1f3f5;
-  color: #4b5563;
 }
 
 .empty,
 .loading {
-  padding: 48rpx 0;
+  padding: var(--s-4) 0;
   text-align: center;
-  font-size: 26rpx;
-  color: #9aa4ae;
+  font-size: var(--f-small);
+  color: var(--c-ink-3);
 }
 
 .error {
-  margin-top: 16rpx;
-  padding: 16rpx 20rpx;
-  background: #fde8e8;
-  color: #b42318;
-  border-radius: 12rpx;
-  font-size: 24rpx;
+  margin-top: var(--s-2);
+  padding: var(--s-2) var(--s-3);
+  background: var(--c-danger-soft);
+  color: var(--c-danger);
+  border-radius: var(--r-btn);
+  font-size: var(--f-small);
 }

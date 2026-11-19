@@ -8,7 +8,7 @@
 
   <view class="search">
     <input class="search__input" placeholder="商品名 / 客户名（可留空）" value="{{keyword}}" bindinput="onKeyword" />
-    <button class="search__btn" bindtap="reload">查</button>
+    <button class="ui-btn ui-btn--primary search__btn" bindtap="reload">查</button>
   </view>
 
   <view class="loading" wx:if="{{loading}}">查询中…</view>

@@ -69,6 +69,8 @@ interface AdminData {
   narrow: boolean;
   isBoss: boolean;
   roleCode: string;
+  /** 角色中文名（boss→老板），不给用户看代码里的英文枚举 */
+  roleLabel: string;
   loading: boolean;
   errorText: string;
   message: string;
@@ -92,6 +94,18 @@ interface AdminData {
   deliverModes: string[];
 }
 
+/** 角色代码 → 中文（界面不出现 boss / manager 这类英文枚举）。 */
+export function roleLabelOf(code: string): string {
+  const table: Record<string, string> = {
+    boss: '老板',
+    manager: '店长',
+    clerk: '店员',
+    readonly: '只读',
+    accountant: '会计',
+  };
+  return table[code] ?? (code === '' ? '未登录' : code);
+}
+
 function flatten(item: unknown): { text: string } {
   if (item === null || typeof item !== 'object') {
     return { text: String(item) };
@@ -110,6 +124,7 @@ Page<AdminData, WechatMiniprogram.Page.CustomOption>({
     narrow: false,
     isBoss: false,
     roleCode: '',
+    roleLabel: '未登录',
     loading: false,
     errorText: '',
     message: '',
@@ -159,7 +174,11 @@ Page<AdminData, WechatMiniprogram.Page.CustomOption>({
       });
       const session = await login(result.code);
       // 服务端真实字段是 `role`（见 app/api/v1/auth.py），不是 `role_code`
-      this.setData({ isBoss: session.role === 'boss', roleCode: session.role });
+      this.setData({
+        isBoss: session.role === 'boss',
+        roleCode: session.role,
+        roleLabel: roleLabelOf(session.role),
+      });
     } catch (error) {
       this.setData({ errorText: `登录未完成：${this.messageOf(error)}` });
     }
