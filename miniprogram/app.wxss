@@ -218,13 +218,14 @@ page {
   display: flex;
   align-items: center;
   justify-content: center;
-  height: 104rpx;
-  background: var(--c-white);
+  height: 108rpx;
+  background: #f9fafb;
   border: 1rpx solid var(--c-line);
   border-radius: var(--r-btn);
-  font-size: 40rpx;
+  font-size: 42rpx;
   font-weight: 600;
   color: var(--c-ink);
+  font-variant-numeric: tabular-nums;
 }
 
 .ui-key--fn {
@@ -234,6 +235,7 @@ page {
 
 .ui-key:active {
   background: var(--c-brand-soft);
+  border-color: var(--c-brand);
 }
 
 /* ---------------------------------------------------------------- 空态 */
