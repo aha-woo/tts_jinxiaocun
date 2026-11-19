@@ -8,7 +8,7 @@ ENV PYTHONUNBUFFERED=1 \
     PIP_NO_CACHE_DIR=1 \
     APP_ENV=prod \
     CONTRACTS_DIR=/app/packages/shared \
-    PORT=80
+    PORT=8080
 
 WORKDIR /app
 
@@ -34,17 +34,14 @@ COPY packages/shared /app/packages/shared
 RUN useradd --create-home --uid 10001 appuser && chown -R appuser:appuser /app
 USER appuser
 
-EXPOSE 80
+EXPOSE 8080
 
 # 健康检查（云托管可据此探活）
-HEALTHCHECK --interval=30s --timeout=3s --start-period=10s --retries=3 \
-    CMD python -c "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:80/healthz', timeout=2).status==200 else 1)"
+HEALTHCHECK --interval=30s --timeout=3s --start-period=20s --retries=3 \
+    CMD python -c "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8080/healthz', timeout=2).status==200 else 1)"
 
-# 云托管约定：监听 80 端口。
-#
-# 启动前可选跑迁移：**只有注入了 MIGRATION_DATABASE_URL 才会跑**。
-# 为什么不无条件跑：迁移要 DDL / 策略权限（库 owner），而应用账号必须是
-# NOSUPERUSER + NOBYPASSRLS（否则 RLS 白装）——两个账号不能混用。
-# 配了 MIGRATION_DATABASE_URL（owner 账号）→ 部署即自动建表；迁移失败直接退出，
-# 不会带着「表 0 张」去接流量。没配 → 只起服务（迁移需在部署流程里单独跑一次）。
-CMD ["sh", "-c", "if [ -n \"$MIGRATION_DATABASE_URL\" ]; then alembic upgrade head || exit 1; fi; exec uvicorn app.main:app --host 0.0.0.0 --port 80 --proxy-headers --forwarded-allow-ips '*'"]
+# 云托管约定：监听容器端口。**用 8080，不用 80**——容器以非 root（uid 10001）运行，
+# K8s（云托管底层）默认不允许非 root 绑 1024 以下端口，绑 80 会 `Permission denied`
+# 然后 CrashLoop、且错误经常不进「启动日志」。在云托管把「服务端口」配成 8080、
+# 「访问端口」配 80（或都用 8080）即可。
+CMD ["sh", "-c", "if [ -n \"$MIGRATION_DATABASE_URL\" ]; then alembic upgrade head || exit 1; fi; exec uvicorn app.main:app --host 0.0.0.0 --port \"${PORT:-8080}\" --proxy-headers --forwarded-allow-ips '*'"]

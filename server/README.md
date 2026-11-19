@@ -522,8 +522,12 @@ WX_PLATFORM_CERT_SERIAL=<证书序列号>
 ```bash
 # 构建上下文必须是仓库根（镜像需要 packages/shared）
 docker build -f server/Dockerfile -t voice-inventory-lite:local .
-docker run --rm -p 8000:80 voice-inventory-lite:local
+docker run --rm -p 8000:8080 voice-inventory-lite:local
 ```
+
+> 容器监听 **8080**（不是 80）：镜像以非 root 用户运行，K8s/云托管默认不允许
+> 绑 1024 以下端口，绑 80 会 `Permission denied` 并 CrashLoop。云托管里把
+> 「服务端口」填 `8080`、「访问端口」填 `80` 即可（本地 docker run 用 `-p 8000:8080`）。
 
 生产由**微信云托管**托管（`callContainer` 私有协议，免域名/免 ICP 域名备案/免 HTTPS 证书）；
 云托管内不部署有状态服务：**PostgreSQL 由「云开发 PG 模式环境」自带**（同环境同 VPC 直连，
