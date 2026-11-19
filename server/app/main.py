@@ -208,6 +208,13 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         settings.env,
         settings.version,
     )
+    if settings.is_production() and settings.llm_is_fake():
+        # 不拒绝启动（规则层是主路径），但必须显式告知：需要模型的说法会转手动
+        logger.warning(
+            "生产未配置大模型（LLM_PROVIDER=fake）：仅规则层可用 "
+            "（进货/卖货/查询/新建商品/别名）；撤销/更正/教说法会降级为澄清或手动录入。"
+            "要开启模型：LLM_PROVIDER=real + LLM_API_KEY / LLM_BASE_URL"
+        )
     try:
         yield
     finally:

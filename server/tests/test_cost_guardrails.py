@@ -20,7 +20,9 @@ from app.voice.alias_resolver import ProductEntry
 from app.voice.llm_provider import (
     CountingLlmProvider,
     FakeLlmProvider,
+    LlmProviderError,
     RealLlmProvider,
+    UnavailableLlmProvider,
     build_llm_provider,
 )
 from app.voice.prompt_builder import (
@@ -216,12 +218,26 @@ def test_summarize_contexts_truncates_to_budget() -> None:
 
 
 # --------------------------------------------------------------------------- provider 误用
-def test_fake_provider_explodes_in_production() -> None:
-    """``FakeLlmProvider`` 进生产必须**立刻炸**（假结果当真是最坏的事）。"""
+def test_fake_provider_never_used_in_production() -> None:
+    """生产**绝不装配** ``FakeLlmProvider``，但也**不在构造期炸**。
+
+    2026-11-19 线上 500 的根因：`APP_ENV=prod` + 未配 LLM 时，装配运行时直接
+    `RuntimeError: FakeLlmProvider 禁止在生产环境使用`，把「进货可乐」这种
+    **只走规则层**的说法也一起打死了。
+
+    正确语义是：构造期给一个 ``UnavailableLlmProvider``（规则层照常工作），
+    真需要模型时才抛 ``LlmProviderError`` → 由 `LlmFallback` 降级成澄清/手动。
+    它**不返回任何假结果**，所以安全性与原来一致。
+    """
+    # 类本身的护栏保留：直接构造仍然立刻炸
     with pytest.raises(RuntimeError):
         FakeLlmProvider(is_production=True)
-    with pytest.raises(RuntimeError):
-        build_llm_provider(Settings(env="production", llm_provider="fake"))
+
+    provider = build_llm_provider(Settings(env="production", llm_provider="fake"))
+    assert isinstance(provider, CountingLlmProvider)
+    assert isinstance(provider.inner, UnavailableLlmProvider)
+    with pytest.raises(LlmProviderError):
+        provider.parse("随便一句", {})
 
 
 def test_real_provider_requires_credentials_at_construction() -> None:

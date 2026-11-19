@@ -163,6 +163,35 @@ class CountingLlmProvider:
         self.stats = LlmCallStats()
 
 
+class UnavailableLlmProvider:
+    """生产未配置模型时的占位 provider：**构造不报错，调用才报错**。
+
+    为什么不在构造期炸（2026-11-19 线上 500 的根因）
+    ----------------------------------------------
+    本项目是「规则层优先」：进货 / 卖货 / 查询 / 新建商品 / 别名这些高频说法
+    **根本不调模型**。如果构造期就抛，整条主链路会在装配运行时时一起被打死
+    （线上表现：手动记账「进货可乐」→ `POST /parse` 500，
+    `RuntimeError: FakeLlmProvider 禁止在生产环境使用`）。
+
+    改成「调用才抛」之后：
+    - 规则层命中的说法照常工作，零模型成本；
+    - 真需要模型的说法 → `LlmFallback` 捕获 ``LlmProviderError`` → 降级成
+      澄清/手动录入（不扣次），用户拿到能照做的提示而不是 500。
+
+    它**绝不返回任何解析结果**，所以不存在「把假结果当成真解析」。
+    """
+
+    provider_name = "unavailable"
+
+    def parse(self, prompt: str, schema: Mapping[str, Any]) -> dict[str, Any]:
+        """抛 ``LlmProviderError``（由上层降级处理，绝不返回假结果）。"""
+        raise LlmProviderError(
+            "生产环境未配置大模型：进货/卖货/查询/新建商品/别名由规则层直接处理；"
+            "这条说法需要模型理解。可以切「手动记账」，或配置 "
+            "LLM_PROVIDER=real + LLM_API_KEY / LLM_BASE_URL 后重新部署"
+        )
+
+
 class FakeLlmProvider:
     """**仅本地与测试，生产禁用**：从 fixture 返回预置 JSON，永不联网。
 
@@ -326,19 +355,26 @@ def build_llm_provider(
         wrap_counter: 是否套 :class:`CountingLlmProvider`（生产也建议套，便于成本监控）。
 
     Returns:
-        provider 实例。
+        provider 实例。生产 + ``fake`` 时返回 :class:`UnavailableLlmProvider`
+        （规则层照常可用，需要模型时降级，不返回假结果）。
 
     Raises:
         ValueError: 未知 provider 名称。
-        RuntimeError: 生产环境误用 fake。
+        RuntimeError: （仅 ``FakeLlmProvider(is_production=True)`` 直接构造时）
     """
     kind = (getattr(settings, "llm_provider", "") or "fake").strip().lower()
     if kind == "fake":
-        provider: LlmProvider = FakeLlmProvider(
-            fixtures,
-            default=default,
-            is_production=bool(getattr(settings, "is_production", lambda: False)()),
-        )
+        if bool(getattr(settings, "is_production", lambda: False)()):
+            # 生产不装配 FakeLlmProvider（它会返回假结果），但**不能构造期抛**——
+            # 规则层命中的请求不需要模型。改装配 UnavailableLlmProvider：调用才抛，
+            # 由 LlmFallback 降级为澄清/手动录入。
+            provider: LlmProvider = UnavailableLlmProvider()
+        else:
+            provider = FakeLlmProvider(
+                fixtures,
+                default=default,
+                is_production=False,
+            )
     elif kind == "real":
         provider = RealLlmProvider(
             api_key=getattr(settings, "llm_api_key", ""),
