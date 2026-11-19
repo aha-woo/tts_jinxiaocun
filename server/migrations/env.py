@@ -25,6 +25,7 @@ import os
 import sys
 from logging.config import fileConfig
 from pathlib import Path
+from typing import Any
 
 from alembic import context
 from sqlalchemy import create_engine, pool
@@ -92,7 +93,13 @@ def run_migrations_offline() -> None:
 def run_migrations_online() -> None:
     """在线模式：连库执行（本地 SQLite 冒烟 / 生产 PG）。"""
     url = resolve_database_url()
-    connectable = create_engine(url, poolclass=pool.NullPool, future=True)
+    kwargs: dict[str, Any] = {"poolclass": pool.NullPool, "future": True}
+    if not url.startswith("sqlite"):
+        # 建连超时：网络不通时**快速失败**，而不是让容器卡在「等待 pod 就绪」。
+        # 云托管首次部署最容易踩的两种错（VPC 没挂、IP 不可达）都会表现为长时间无输出，
+        # 排查成本极高；5 秒内抛错能把原因直接打进部署日志。
+        kwargs["connect_args"] = {"connect_timeout": 5}
+    connectable = create_engine(url, **kwargs)
     try:
         with connectable.connect() as connection:
             context.configure(
