@@ -63,7 +63,10 @@ class Settings:
     """运行期配置（云托管通过环境变量注入）。"""
 
     app_name: str = "voice-inventory-lite"
-    version: str = "0.1.0-T01"
+    #: 应用版本串。**用环境变量 ``APP_VERSION`` 注入**，方便在系统自检里看出跑的是哪次构建
+    #: （默认值 ``0.1.0-T01`` 是历史常量，容易误以为是「部署版本号」——实际云托管的
+    #: 部署版本是 001/002/…，两者无关。部署时设 ``APP_VERSION=011`` 即可对上）。
+    version: str = os.getenv("APP_VERSION", "0.1.0-T01")
     env: str = os.getenv("APP_ENV", "local")
     contracts_dir: Path = field(
         default_factory=lambda: Path(
