@@ -130,11 +130,21 @@
 }
 
 .btn {
-  border-radius: 12rpx;
-  font-size: 28rpx;
-  height: 88rpx;
-  line-height: 88rpx;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 16rpx;
+  font-size: 32rpx;
+  font-weight: 600;
+  height: 96rpx;
+  line-height: normal;
   padding: 0 28rpx;
+  border: none;
+}
+
+/* 小程序原生 button 的默认边框（::after）必须清掉，否则圆角外还有一圈细边 */
+.btn::after {
+  border: none;
 }
 
 .btn--primary {
