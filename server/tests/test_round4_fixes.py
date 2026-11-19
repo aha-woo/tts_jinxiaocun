@@ -467,3 +467,32 @@ def _store_id_of(database, tenant_id: uuid.UUID) -> uuid.UUID:
         )
     assert store is not None, "登录后应当有主仓"
     return uuid.UUID(str(store.store_id))
+
+
+# --------------------------------------------------- 手动记账不能撞录音门禁（Round 5）
+def test_manual_session_skips_recording_gate(shop: dict[str, Any]) -> None:
+    """手动记账（无音频，``duration_ms=0``）必须跳过录音门禁。
+
+    2026-11-19 线上联调：手动记账页提交时 ``duration_ms`` 只能是 0，而
+    ``POST /voice/sessions`` 先过 G0/G1 门禁 → 判「录音太短」→ ``E_GATE_REJECT``，
+    用户点了「生成确认卡片」什么也拿不到。门禁管的是**录音质量**，手动录入没有音频，
+    不该被它拦；但令牌桶与额度仍然要过（否则手动就成了绕开限流的后门）。
+    """
+    client = shop["client"]
+    headers = shop["headers"]
+
+    manual = client.post(
+        "/api/v1/voice/sessions",
+        json={"duration_ms": 0, "mode": "tap", "source": "manual"},
+        headers=headers,
+    )
+    assert manual.status_code == 200, manual.text
+    assert manual.json()["data"]["session_id"], manual.text
+
+    # 回归保护：语音模式仍要被同一道门禁拦下（别把门禁整个删了）
+    voice = client.post(
+        "/api/v1/voice/sessions",
+        json={"duration_ms": 0, "mode": "tap", "source": "voice"},
+        headers=headers,
+    )
+    assert voice.json()["data"]["error_code"] == "E_GATE_REJECT", voice.text

@@ -89,7 +89,7 @@ Page<ManualData, WechatMiniprogram.Page.CustomOption>({
     }
     this.setData({ submitting: true, errorText: '' });
     try {
-      const session = await createVoiceSession({ duration_ms: 0, mode: 'tap' });
+      const session = await createVoiceSession({ duration_ms: 0, mode: 'tap', source: 'manual' });
       const parsed = await parseSession(session.session_id, {
         asr_text: this.data.preview,
         asr_confidence: 1.0,

@@ -614,6 +614,8 @@ export async function login(code: string): Promise<LoginPayload> {
 export function createVoiceSession(body: {
   duration_ms: number;
   mode: 'tap' | 'hold';
+  /** voice=按住说（过录音门禁）；manual=手动记账（无音频，服务端跳过门禁） */
+  source?: 'voice' | 'manual';
   energy_rms?: number;
   vad_tail_ms?: number;
 }): Promise<SessionPayload> {

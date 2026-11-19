@@ -20,7 +20,7 @@ from __future__ import annotations
 import uuid
 from datetime import date, datetime, timezone
 from decimal import Decimal
-from typing import Annotated, Any
+from typing import Annotated, Any, Literal
 
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import JSONResponse
@@ -301,6 +301,10 @@ class SessionCreateRequest(BaseModel):
     vad_tail_ms: int = Field(default=300, ge=0, le=2_000, description="端点前留白")
     client_fingerprint: str = Field(default="", max_length=128)
     mode: str = Field(default="tap", description="tap / hold")
+    source: Literal["voice", "manual"] = Field(
+        default="voice",
+        description="voice=按住说（要过录音门禁）；manual=手动记账（无音频，跳过门禁）",
+    )
     last_trigger_ms: int | None = Field(default=None, description="上次触发时间戳（误触判定）")
 
 
@@ -347,19 +351,23 @@ def create_session(
     ids = ids_of(context)
     assert_writable(session, ids.tenant_id)
 
-    gate = Gate().check(
-        payload.duration_ms,
-        now_ms=int(datetime.now(timezone.utc).timestamp() * 1000),
-        last_trigger_ms=payload.last_trigger_ms,
-        has_energy=payload.energy_rms > 0,
-        mode=payload.mode,
-    )
-    if not gate.passed:
-        raise AppError(
-            gate.error_code or "E_GATE_REJECT",
-            message="录音太短、太长或没检测到说话，请重新按一下说。",
-            data={"reason": gate.reason, "duration_ms": payload.duration_ms},
+    # 手动记账没有音频（duration=0），走录音门禁必然被 E_GATE_REJECT 打回——那不是
+    # 业务错误，是「门禁只该管录音」。所以按 source 分流：manual 跳过 G0/G1，
+    # 但仍要过令牌桶与额度（否则手动就成了绕开限流的后门）。
+    if payload.source != "manual":
+        gate = Gate().check(
+            payload.duration_ms,
+            now_ms=int(datetime.now(timezone.utc).timestamp() * 1000),
+            last_trigger_ms=payload.last_trigger_ms,
+            has_energy=payload.energy_rms > 0,
+            mode=payload.mode,
         )
+        if not gate.passed:
+            raise AppError(
+                gate.error_code or "E_GATE_REJECT",
+                message="录音太短、太长或没检测到说话，请重新按一下说。",
+                data={"reason": gate.reason, "duration_ms": payload.duration_ms},
+            )
 
     quota = QuotaService.from_settings(settings)
     decision = quota.take(str(ids.tenant_id))
