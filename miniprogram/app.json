@@ -25,11 +25,6 @@
     }
   },
   "style": "v2",
-  "permission": {
-    "scope.record": {
-      "desc": "用于把你说的话转成进销存单据，录音默认不留存"
-    }
-  },
   "requiredPrivateInfos": [],
   "lazyCodeLoading": "requiredComponents",
   "sitemapLocation": "sitemap.json"

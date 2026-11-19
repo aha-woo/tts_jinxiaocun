@@ -76,8 +76,14 @@ interface RecordRecognitionManager {
   onRecognize?: (res: { result?: string }) => void;
   /** 结束回调：``res.result`` 是最终文字（**属性赋值**） */
   onStop?: (res: { result?: string }) => void;
-  /** 出错回调（**属性赋值**） */
-  onError?: (res: { errMsg?: string; retcode?: number }) => void;
+  /**
+   * 出错回调（**属性赋值**）。
+   *
+   * 注意：同声传译插件的错误对象字段名**不是统一叫 errMsg**——社区与实测里见过
+   * ``errMsg`` / ``msg`` / ``retmsg`` 三种写法，还带 ``retcode``。只读 ``errMsg``
+   * 会把真实原因吞成「未知原因」（2026-11-19 开发者工具里就踩到了）。
+   */
+  onError?: (res: { errMsg?: string; msg?: string; retmsg?: string; retcode?: number }) => void;
   start: (options: { lang: string; duration: number }) => void;
   stop: () => void;
 }
@@ -365,11 +371,17 @@ export class SpeechGate {
       resolve({ text, durationMs });
     };
 
-    manager.onError = (res: { errMsg?: string }) => {
+    manager.onError = (res: { errMsg?: string; msg?: string; retmsg?: string; retcode?: number }) => {
       this.recording = false;
       this.clearTimer();
       this.emit();
-      wx.showToast({ title: `语音识别失败：${res.errMsg ?? '未知原因'}`, icon: 'none' });
+      // 插件错误对象的字段名不统一（errMsg / msg / retmsg），且常常只带 retcode。
+      // 原样打进 console 便于排查；toast 只显示短文案（太长会被截断）。
+      const detail = res.errMsg ?? res.msg ?? res.retmsg ?? '';
+      const code = res.retcode !== undefined ? `retcode=${res.retcode}` : '';
+      console.error('[speech] 同声传译 onError', res);
+      const reason = detail || code || '未知原因';
+      wx.showToast({ title: `语音识别失败：${reason}`.slice(0, 40), icon: 'none' });
       const resolve = this.resolver;
       this.resolver = null;
       if (resolve !== null) {

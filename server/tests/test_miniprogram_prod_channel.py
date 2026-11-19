@@ -459,14 +459,23 @@ def test_app_json_declares_wechatsi_plugin_with_concrete_version() -> None:
     )
 
 
-def test_app_json_declares_microphone_purpose() -> None:
-    """``permission.scope.record.desc`` 必须有内容且 ≤30 字（官方限制）。"""
+def test_app_json_does_not_declare_invalid_record_permission() -> None:
+    """``permission`` 里**不能**出现 ``scope.record``。
+
+    2026-11-19 实测：基础库 3.18.0 连续报
+    ``无效的 app.json permission["scope.record"]``。官方 `permission` 字段只支持
+    ``scope.userLocation``（及前景/后台定位），``scope.record`` 是**授权 scope**，
+    不属于 `permission` 的合法配置项；录音授权由运行时自动拉起，不再看这里。
+
+    这条断言防止有人照着旧教程把它加回来——加了不报错，只在控制台刷警告，
+    而且会让「录音失败」的原因更难看懂。
+    """
     data = json.loads(_read(MP_ROOT / "app.json"))
-    record = (data.get("permission") or {}).get("scope.record")
-    assert isinstance(record, dict), "app.json 缺 permission.scope.record"
-    desc = str(record.get("desc", ""))
-    assert desc.strip() != "", "scope.record.desc 不能是空串（真机会拒绝拉起授权弹窗）"
-    assert len(desc) <= 30, f"scope.record.desc 有 {len(desc)} 字，官方上限 30 字"
+    permission = data.get("permission") or {}
+    assert "scope.record" not in permission, (
+        "app.json 的 permission.scope.record 已被新版基础库判为无效，"
+        "录音授权走运行时 + 后台隐私声明，不要写在这里"
+    )
 
 
 def test_speech_gate_checks_privacy_before_recording() -> None:
