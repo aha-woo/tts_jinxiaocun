@@ -222,12 +222,21 @@ def _read_json(path: Path) -> Any:
 def load_contracts(contracts_dir: Path | None = None) -> ContractBundle:
     """装载并强校验共享契约。
 
+    契约目录的优先级：显式参数 → 环境变量 ``CONTRACTS_DIR`` → 仓库内默认路径。
+
+    为什么必须读环境变量（2026-11-19 部署踩到）：容器里 ``app/`` 被拷到 ``/app/app``，
+    按 ``__file__`` 反推出来的仓库根是 ``/``，于是默认路径变成 ``/packages/shared``，
+    而镜像实际把它放在 ``/app/packages/shared``（Dockerfile 已设 ``CONTRACTS_DIR``）。
+    迁移（``0002_seed``）调用本函数时不传参，若不读环境变量就会在容器里报
+    ``契约文件缺失: /packages/shared/contracts/intents.json``。
+
     Raises
     ------
     ContractError
         文件缺失、数量不符或字段非法 —— 一律 fail-fast。
     """
-    root = contracts_dir if contracts_dir is not None else _SHARED_ROOT
+    env_dir = os.getenv("CONTRACTS_DIR", "").strip()
+    root = contracts_dir if contracts_dir is not None else (Path(env_dir) if env_dir else _SHARED_ROOT)
     contracts_root = root / "contracts"
 
     intents_doc = _read_json(contracts_root / "intents.json")

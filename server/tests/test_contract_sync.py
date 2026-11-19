@@ -379,3 +379,25 @@ def test_schemas_intent_enum_matches_contract() -> None:
     card_schema = load_json(SCHEMAS / "confirm-card.schema.json")
     assert len(card_schema["required"]) == 10
     assert "impact_preview" in card_schema["properties"]
+
+
+def test_load_contracts_honours_contracts_dir_env(monkeypatch, tmp_path) -> None:
+    """契约目录必须优先读环境变量 ``CONTRACTS_DIR``。
+
+    2026-11-19 部署踩到的真问题：容器里 ``app/`` 被拷到 ``/app/app``，按 ``__file__``
+    反推出的仓库根是 ``/``，默认路径变成 ``/packages/shared``；而镜像把契约放在
+    ``/app/packages/shared``（Dockerfile 的 ``CONTRACTS_DIR``）。迁移 ``0002_seed``
+    调用 ``load_contracts()`` 时不传参，于是容器里报
+    ``契约文件缺失: /packages/shared/contracts/intents.json``。
+
+    这条测试锁住「读环境变量」这个行为：改回只看 ``_SHARED_ROOT`` 就会红。
+    """
+    from app.config import ContractError, load_contracts
+
+    # 指向不存在的目录：若实现忽略环境变量，就会退回仓库内默认路径而**不会**抛错
+    monkeypatch.setenv("CONTRACTS_DIR", str(tmp_path / "missing"))
+    with pytest.raises(ContractError):
+        load_contracts()
+
+    monkeypatch.setenv("CONTRACTS_DIR", str(REPO_ROOT / "packages" / "shared"))
+    assert load_contracts().counts()["intents"] == 38
