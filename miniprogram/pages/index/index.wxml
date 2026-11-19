@@ -16,22 +16,7 @@
   </view>
 
   <view class="main">
-    <!-- 语音大按钮 -->
     <view class="panel">
-      <big-button
-        recording="{{recording}}"
-        durationMs="{{durationMs}}"
-        bars="{{bars}}"
-        softLimit="{{softLimit}}"
-        disabled="{{!degrade.canVoice}}"
-        mode="{{mode}}"
-        bind:start="onStart"
-        bind:stop="onStop"
-        bind:modechange="onModeChange"
-      />
-      <view class="talking" wx:if="{{talkingText}}">{{talkingText}}</view>
-      <view class="error" wx:if="{{errorText}}">{{errorText}}</view>
-
       <!-- 键盘兜底入口：全程可脱离语音记账 -->
       <view class="shortcuts">
         <view class="shortcut" bindtap="onGoManual">
@@ -85,5 +70,26 @@
         </view>
       </view>
     </view>
+  </view>
+
+  <!--
+    语音大按钮：**固定在屏幕下半部**（拇指可达区），不再跟着内容流在顶部。
+    设计依据：PRD 3.2「大按钮落在单手拇指可达区域」。手机上固定底部；
+    电脑版微信大屏（resizable / .page--wide）恢复成常规布局，不做 fixed。
+  -->
+  <view class="voice-dock">
+    <big-button
+      recording="{{recording}}"
+      durationMs="{{durationMs}}"
+      bars="{{bars}}"
+      softLimit="{{softLimit}}"
+      disabled="{{!degrade.canVoice}}"
+      mode="{{mode}}"
+      bind:start="onStart"
+      bind:stop="onStop"
+      bind:modechange="onModeChange"
+    />
+    <view class="talking" wx:if="{{talkingText}}">{{talkingText}}</view>
+    <view class="error" wx:if="{{errorText}}">{{errorText}}</view>
   </view>
 </view>

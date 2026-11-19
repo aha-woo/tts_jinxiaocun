@@ -3,6 +3,34 @@
   background: #f4f6f8;
   padding: 20rpx;
   box-sizing: border-box;
+  /* 给底部固定的语音按钮留出空间，避免遮住「管理台」等卡片 */
+  padding-bottom: calc(380rpx + env(safe-area-inset-bottom));
+}
+
+/*
+  语音大按钮停靠区：固定屏幕底部 = 单手拇指可达。
+  背景用渐变过渡，让下方内容「淡出」而不是硬切一条边。
+*/
+.voice-dock {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 20;
+  padding: 8rpx 20rpx calc(16rpx + env(safe-area-inset-bottom));
+  background: linear-gradient(180deg, rgba(244, 246, 248, 0) 0%, #f4f6f8 45%);
+  box-sizing: border-box;
+}
+
+/* 电脑版微信大屏：不做固定，回到正常文档流（双栏布局里按钮在左栏底部） */
+.page--wide {
+  padding-bottom: 20rpx;
+}
+
+.page--wide .voice-dock {
+  position: static;
+  background: none;
+  padding: 8rpx 24rpx 24rpx;
 }
 
 /* 宽屏（电脑版微信 resizable）→ 左录入 / 右动态 双栏 */
