@@ -17,8 +17,14 @@
 import { DEV_MODE, devCall } from './dev-channel';
 import { nextIdempotencyKey } from '../utils/dedupe';
 
-/** 云开发环境 id：部署时替换为真实环境（不要提交真实值到公开仓库）。 */
-export const CLOUD_ENV = 'REPLACE_WITH_CLOUD_ENV_ID';
+/**
+ * 云开发环境 id：**云托管服务所在的那个环境**（不是云开发数据库所在环境也一样）。
+ *
+ * 2026-11-19：切到新建的 PG 环境 `ttsstorage`（上海 / PostgreSQL 模式），
+ * 云托管与数据库都放在这个环境里；换环境只改这一行。
+ * （旧的 `cloud1` 留着跑别的云函数，不再承载本项目后端。）
+ */
+export const CLOUD_ENV = 'ttsstorage-d0gqei1fhbec8cf2a';
 
 /** 云托管服务名，对应 callContainer 请求头 `X-WX-SERVICE`。 */
 export const CLOUD_SERVICE = 'voice-inventory-api';

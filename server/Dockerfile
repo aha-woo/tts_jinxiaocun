@@ -25,6 +25,8 @@ RUN mkdir -p /app/app && printf '__all__ = []\n' > /app/app/__init__.py \
 COPY server/app /app/app
 COPY server/migrations /app/migrations
 COPY server/alembic.ini /app/alembic.ini
+# 运维脚本：`scripts/probe_env.py` 要在容器里能直接跑（部署自检门禁）
+COPY server/scripts /app/scripts
 # 共享契约（单一真相源，只读挂载/拷贝，不复制出第二份）
 COPY packages/shared /app/packages/shared
 
