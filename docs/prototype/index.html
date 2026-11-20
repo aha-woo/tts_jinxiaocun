@@ -6,174 +6,117 @@
 <title>随口记账 · 界面原型</title>
 <style>
   :root {
-    --brand: #0f7a40;
-    --brand-dark: #0b5f32;
-    --brand-soft: #e8f6ee;
-    --sale: #b45309;
-    --sale-soft: #fff1e6;
-    --ink: #1b1f24;
-    --ink-2: #374151;
-    --ink-3: #4b5563;
-    --bg: #f3f4f2;
-    --paper: #fffcf8;
-    --line: #e4e6e2;
-    --warn-bg: #fff6df;
-    --warn-ink: #8a5300;
-    --danger: #b42318;
-    --radius: 14px;
+    --ink: #1c1917;
+    --ink-2: #44403c;
+    --ink-3: #57534e;
+    --bg: #f4f3f0;
+    --paper: #ffffff;
+    --line: #e7e5e4;
+    --accent: #1e3a5f;
+    --accent-soft: #e8eef5;
+    --danger: #9f1239;
     --fs: 18px;
     --fs-sm: 16px;
     --fs-lg: 22px;
-    --fs-xl: 28px;
-    --btn: 56px;
+    --fs-xl: 32px;
+    --btn: 64px;
     --pad: 16px;
   }
   html[data-size="normal"] {
     --fs: 15px;
-    --fs-sm: 13px;
+    --fs-sm: 14px;
     --fs-lg: 18px;
-    --fs-xl: 24px;
-    --btn: 48px;
+    --fs-xl: 26px;
+    --btn: 56px;
   }
   * { box-sizing: border-box; }
   body {
     margin: 0;
     min-height: 100vh;
-    background: #e7e9e6;
+    background: #e8e6e1;
     color: var(--ink);
     font-family: "PingFang SC", "Microsoft YaHei", "Noto Sans SC", sans-serif;
     font-size: var(--fs);
-    line-height: 1.5;
+    line-height: 1.45;
   }
-  .stage {
-    max-width: 1100px;
-    margin: 0 auto;
-    padding: 20px 16px 40px;
-  }
-  .note {
-    max-width: 720px;
-    margin: 0 0 16px;
-    color: var(--ink-2);
-    font-size: 15px;
-  }
-  .toolbar {
-    display: flex;
-    gap: 8px;
-    flex-wrap: wrap;
-    margin-bottom: 16px;
-  }
+  button, input { font: inherit; color: inherit; }
+  .stage { max-width: 1100px; margin: 0 auto; padding: 20px 16px 40px; }
+  .note { max-width: 720px; margin: 0 0 14px; color: var(--ink-2); font-size: 15px; }
+  .toolbar { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 16px; }
   .toolbar button {
-    font: inherit;
-    font-size: 15px;
-    border: 1px solid #cfd3ce;
+    border: 1px solid #d6d3d1;
     background: #fff;
-    color: var(--ink);
     border-radius: 999px;
     padding: 8px 14px;
     cursor: pointer;
+    font-size: 15px;
   }
-  .toolbar button[aria-pressed="true"] {
-    background: var(--brand);
-    color: #fff;
-    border-color: var(--brand);
-  }
-  .devices {
-    display: flex;
-    gap: 20px;
-    align-items: flex-start;
-    flex-wrap: wrap;
-  }
+  .toolbar button[aria-pressed="true"] { background: var(--accent); color: #fff; border-color: var(--accent); }
+  .devices { display: flex; gap: 20px; align-items: flex-start; flex-wrap: wrap; }
   .phone {
     width: 390px;
     height: 800px;
     background: var(--bg);
-    border: 1px solid #c9cdc8;
+    border: 1px solid #d6d3d1;
     border-radius: 28px;
     overflow: hidden;
     display: flex;
     flex-direction: column;
-    position: relative;
   }
   .wide-panel {
     display: none;
     width: 420px;
     min-height: 800px;
     background: var(--paper);
-    border: 1px solid #c9cdc8;
+    border: 1px solid #d6d3d1;
     border-radius: 28px;
     padding: 28px 24px;
   }
   html[data-wide="1"] .wide-panel { display: block; }
   .nav-bar {
-    background: var(--brand);
-    color: #fff;
-    padding: 14px 16px 12px;
+    background: var(--paper);
+    color: var(--ink);
+    padding: 16px 16px 10px;
     display: flex;
     justify-content: space-between;
-    align-items: center;
-    font-weight: 600;
+    align-items: baseline;
+    border-bottom: 1px solid var(--line);
   }
-  .nav-bar span { font-size: var(--fs-sm); font-weight: 500; opacity: 0.95; }
-  .screen { flex: 1; overflow: auto; padding: var(--pad); padding-bottom: 8px; }
-  .screen[hidden] { display: none; }
-  .gap-line {
-    background: var(--warn-bg);
-    color: var(--warn-ink);
+  .nav-bar b { font-size: var(--fs-lg); }
+  .nav-bar span { font-size: var(--fs-sm); color: var(--ink-3); }
+  .screen { flex: 1; overflow: auto; padding: var(--pad); }
+  .screen[hidden] { display: none !important; }
+  .today {
+    display: grid;
+    grid-template-columns: 1fr 1fr 1fr;
+    gap: 8px;
+    margin-bottom: 14px;
+  }
+  .today button {
+    text-align: left;
+    background: var(--paper);
+    border: 1px solid var(--line);
     border-radius: 12px;
-    padding: 12px 14px;
-    font-weight: 600;
-    cursor: pointer;
-    margin-bottom: 12px;
-  }
-  .mic-wrap { text-align: center; padding: 8px 0 4px; }
-  .hint-say { color: var(--ink-2); font-size: var(--fs-sm); margin: 0 0 12px; }
-  .hint-say button {
-    font: inherit;
-    font-size: inherit;
-    color: var(--brand-dark);
-    background: none;
-    border: none;
-    padding: 0;
-    cursor: pointer;
-    text-decoration: underline;
-    text-underline-offset: 3px;
-  }
-  .mic {
-    width: 168px;
-    height: 168px;
-    border-radius: 50%;
-    border: none;
-    background: var(--brand);
-    color: #fff;
-    font: inherit;
-    font-size: var(--fs-lg);
-    font-weight: 700;
+    padding: 10px 12px;
     cursor: pointer;
   }
-  .mic.recording { background: var(--danger); }
-  .mode-switch {
-    margin-top: 10px;
-    background: none;
-    border: none;
-    color: var(--brand-dark);
-    font: inherit;
-    font-size: var(--fs-sm);
+  .today .k { display: block; color: var(--ink-3); font-size: var(--fs-sm); }
+  .today .v { display: block; font-weight: 700; font-variant-numeric: tabular-nums; margin-top: 2px; }
+  .funcs { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 8px; }
+  .funcs button {
+    min-height: 52px;
+    text-align: left;
+    background: var(--paper);
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    padding: 10px 12px;
     cursor: pointer;
+    font-weight: 650;
   }
-  .chips { display: flex; gap: 8px; justify-content: center; margin: 14px 0 8px; flex-wrap: wrap; }
-  .chip {
-    border: 1px solid #cfd6d0;
-    background: #fff;
-    border-radius: 999px;
-    padding: 8px 12px;
-    font: inherit;
-    font-size: var(--fs-sm);
-    cursor: pointer;
-    color: var(--ink);
-  }
-  .block-title { font-size: var(--fs-sm); color: var(--ink-3); margin: 16px 0 6px; }
+  .funcs button small { display: block; font-weight: 400; color: var(--ink-3); font-size: var(--fs-sm); }
+  .block-title { font-size: var(--fs-sm); color: var(--ink-3); margin: 14px 0 6px; }
   .row {
-    background: #fff;
+    background: var(--paper);
     border: 1px solid var(--line);
     border-radius: 12px;
     padding: 12px 14px;
@@ -183,17 +126,56 @@
     gap: 12px;
     align-items: center;
   }
-  .row strong { display: block; font-size: var(--fs); }
+  .row strong { display: block; }
   .row em { font-style: normal; color: var(--ink-3); font-size: var(--fs-sm); }
   .text-btn {
     border: none;
     background: none;
-    color: var(--brand-dark);
-    font: inherit;
-    font-size: var(--fs-sm);
-    font-weight: 600;
+    color: var(--accent);
+    font-weight: 700;
     cursor: pointer;
     padding: 8px;
+    font-size: var(--fs-sm);
+  }
+  .speak-dock {
+    border-top: 1px solid var(--line);
+    background: var(--paper);
+    padding: 8px 16px 10px;
+  }
+  .speak-dock[hidden] { display: none !important; }
+  .hint-say { margin: 0 0 8px; color: var(--ink-2); font-size: var(--fs-sm); text-align: center; }
+  .hint-say button {
+    border: none;
+    background: none;
+    color: var(--accent);
+    text-decoration: underline;
+    text-underline-offset: 3px;
+    cursor: pointer;
+    padding: 0;
+    font-size: inherit;
+  }
+  .mic {
+    width: 100%;
+    min-height: var(--btn);
+    border: none;
+    border-radius: 14px;
+    background: var(--accent);
+    color: #fff;
+    font-size: var(--fs-lg);
+    font-weight: 700;
+    cursor: pointer;
+  }
+  .mic.recording { background: var(--danger); }
+  .mode-switch {
+    display: block;
+    width: 100%;
+    margin-top: 6px;
+    border: none;
+    background: none;
+    color: var(--ink-3);
+    font-size: var(--fs-sm);
+    cursor: pointer;
+    min-height: 36px;
   }
   .tabbar {
     display: grid;
@@ -201,22 +183,22 @@
     border-top: 1px solid var(--line);
     background: #fff;
   }
+  .tabbar[hidden] { display: none !important; }
   .tabbar button {
     border: none;
     background: none;
-    font: inherit;
     font-size: var(--fs-sm);
     padding: 12px 4px 14px;
     color: var(--ink-3);
     cursor: pointer;
     position: relative;
   }
-  .tabbar button[aria-current="page"] { color: var(--brand-dark); font-weight: 700; }
+  .tabbar button[aria-current="page"] { color: var(--accent); font-weight: 700; }
   .badge {
     position: absolute;
-    top: 6px;
-    right: 18px;
-    background: var(--danger);
+    top: 4px;
+    right: 16px;
+    background: var(--accent);
     color: #fff;
     border-radius: 99px;
     font-size: 12px;
@@ -224,59 +206,43 @@
     line-height: 18px;
   }
   .quote {
-    background: #fff;
-    border-left: 4px solid var(--brand);
+    background: var(--paper);
+    border: 1px solid var(--line);
+    border-left: 3px solid var(--accent);
     padding: 12px 14px;
     border-radius: 8px;
     margin: 0 0 12px;
   }
   .card {
-    background: #fff;
+    background: var(--paper);
     border: 1px solid var(--line);
-    border-radius: var(--radius);
+    border-radius: 14px;
     padding: 14px;
     margin-bottom: 10px;
   }
   .card h2 { margin: 0 0 8px; font-size: var(--fs-lg); }
   .tag {
     display: inline-block;
-    background: var(--brand-soft);
-    color: var(--brand-dark);
+    background: var(--accent-soft);
+    color: var(--accent);
     border-radius: 999px;
     padding: 2px 10px;
     font-size: var(--fs-sm);
     font-weight: 700;
     margin-bottom: 8px;
   }
-  .tag.sale { background: var(--sale-soft); color: var(--sale); }
-  .tag.warn { background: var(--warn-bg); color: var(--warn-ink); }
   .kv { display: flex; justify-content: space-between; gap: 12px; padding: 8px 0; border-top: 1px solid var(--line); }
   .kv span { color: var(--ink-3); }
   .money { font-size: var(--fs-xl); font-weight: 700; font-variant-numeric: tabular-nums; }
-  .footer-actions {
-    padding: 8px 16px 16px;
-    background: var(--bg);
-  }
-  .primary, .ghost {
-    width: 100%;
-    min-height: var(--btn);
-    border-radius: 12px;
-    font: inherit;
-    font-weight: 700;
-    cursor: pointer;
-  }
-  .primary { background: var(--brand); color: #fff; border: none; }
-  .primary:disabled { background: #d7dbe0; color: #6b7280; cursor: not-allowed; }
-  .ghost {
-    margin-top: 8px;
-    background: #fff;
-    color: var(--ink-2);
-    border: 1px solid #cfd3ce;
-  }
+  .footer-actions { padding: 8px 16px 12px; background: var(--bg); }
+  .footer-actions[hidden] { display: none !important; }
+  .primary, .ghost { width: 100%; min-height: var(--btn); border-radius: 12px; font-weight: 700; cursor: pointer; }
+  .primary { background: var(--accent); color: #fff; border: none; }
+  .primary:disabled { background: #d6d3d1; color: #78716c; cursor: not-allowed; }
+  .ghost { margin-top: 8px; background: #fff; color: var(--ink-2); border: 1px solid #d6d3d1; }
   .keys { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-top: 8px; }
   .keys button {
     min-height: 52px;
-    font: inherit;
     font-size: var(--fs-lg);
     font-weight: 600;
     border: 1px solid var(--line);
@@ -284,177 +250,190 @@
     border-radius: 10px;
     cursor: pointer;
   }
-  .answer { font-size: 40px; font-weight: 700; margin: 8px 0; letter-spacing: -0.02em; }
+  .answer { font-size: 40px; font-weight: 700; margin: 8px 0; }
   html[data-size="normal"] .answer { font-size: 32px; }
-  .search {
-    display: flex;
-    gap: 8px;
-    margin-bottom: 12px;
-  }
-  .search input {
-    flex: 1;
-    font: inherit;
-    border: 1px solid var(--line);
-    border-radius: 10px;
-    padding: 10px 12px;
+  .search { display: flex; gap: 8px; margin-bottom: 12px; }
+  .search input { flex: 1; border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; background: #fff; }
+  .search button, .chip {
+    border: 1px solid #d6d3d1;
     background: #fff;
+    border-radius: 999px;
+    padding: 8px 14px;
+    cursor: pointer;
   }
   .dialog {
-    position: absolute;
+    position: fixed;
     inset: 0;
-    background: rgba(20, 24, 20, 0.45);
+    background: rgba(28, 25, 23, 0.4);
     display: flex;
     align-items: flex-end;
+    justify-content: center;
     padding: 16px;
   }
-  .dialog[hidden] { display: none; }
-  .sheet {
-    background: var(--paper);
-    border-radius: 16px;
-    padding: 16px;
-    width: 100%;
-  }
+  .dialog[hidden] { display: none !important; }
+  .sheet { background: var(--paper); border-radius: 16px; padding: 16px; width: min(390px, 100%); }
   .sheet h2 { margin: 0 0 8px; font-size: var(--fs-lg); }
-  .sheet .row { cursor: pointer; }
   .stat { margin-bottom: 22px; }
   .stat .num { font-size: 40px; font-weight: 700; font-variant-numeric: tabular-nums; }
   .stat .label { color: var(--ink-3); }
-  .low { color: var(--warn-ink); font-weight: 700; }
 </style>
 </head>
 <body>
 <div class="stage">
-  <p class="note">这是看布局用的原型，不是小程序本身。默认大字。点例子、按住按钮、底栏和「还有货没写进价」都能走。宽屏右边是今天的数字。</p>
+  <p class="note">改过的原型。账本和进、卖、库存、欠款都在第一屏。说话是底部拇指区的一条按钮，不再占满整页。颜色是纸色加深墨蓝，没有微信绿，也没有黄条。</p>
   <div class="toolbar">
     <button type="button" id="size-large" aria-pressed="true">字号：大</button>
     <button type="button" id="size-normal" aria-pressed="false">字号：标准</button>
     <button type="button" id="wide-toggle" aria-pressed="false">看宽屏</button>
   </div>
   <div class="devices">
-    <div class="phone" id="phone">
+    <div class="phone">
       <div class="nav-bar"><b id="title">本店</b><span id="size-label">字号：大</span></div>
+
       <div class="screen" id="home">
-        <div class="gap-line" id="gap-line">还有 2 样货没写进价</div>
-        <div class="mic-wrap">
-          <p class="hint-say">可以说：<button type="button" id="ex-main">今天进了十个货A，一个三块五</button></p>
-          <button type="button" class="mic" id="mic">按住说话</button>
-          <div><button type="button" class="mode-switch" id="mode">模式：按住说（点这里切换）</button></div>
-          <div class="chips">
-            <button type="button" class="chip" data-go="priced">进货例子</button>
-            <button type="button" class="chip" data-go="sale">卖货例子</button>
-            <button type="button" class="chip" data-go="stock">还剩多少</button>
-          </div>
+        <div class="today">
+          <button type="button" data-tab="docs"><span class="k">今日进</span><span class="v">¥35</span></button>
+          <button type="button" data-tab="docs"><span class="k">今日卖</span><span class="v">¥128</span></button>
+          <button type="button" id="open-low"><span class="k">快没了</span><span class="v">1 样</span></button>
         </div>
-        <div class="block-title">刚刚</div>
+        <div class="funcs">
+          <button type="button" id="go-in">进货<small>说一句，或点这里记</small></button>
+          <button type="button" id="go-out">卖货<small>库存跟着减</small></button>
+          <button type="button" data-tab="stock">库存<small>还剩多少</small></button>
+          <button type="button" data-tab="debt">欠款<small>谁还没给</small></button>
+        </div>
+        <div class="block-title">最近的账</div>
         <div class="row">
-          <div><strong>进了 10 个苹果</strong><em>进价还空着</em></div>
+          <div><strong>进 · 苹果 10 个</strong><em>进价还空着</em></div>
           <button type="button" class="text-btn" id="fill-apple">补进价</button>
         </div>
         <div class="row">
-          <div><strong>卖了 3 瓶可乐</strong><em>¥7.50 · 刚刚</em></div>
+          <div><strong>卖 · 可乐 3 瓶</strong><em>¥7.50 · 已付清</em></div>
           <button type="button" class="text-btn">撤</button>
+        </div>
+        <div class="row">
+          <div><strong>进 · 货A 还没记上</strong><em>说「十个，一个三块五」就能建档并入库</em></div>
         </div>
       </div>
 
-      <div class="screen" id="card" hidden>
-        <div id="card-body"></div>
-      </div>
-
-      <div class="screen" id="query" hidden>
+      <div class="screen" id="stock" hidden>
         <div class="search">
           <input id="q" value="可乐" aria-label="查什么" />
-          <button type="button" class="chip" id="q-go">查</button>
+          <button type="button" id="q-go">查</button>
         </div>
         <div class="card">
           <div class="tag">库存</div>
           <div>可乐</div>
           <div class="answer">还剩 8 箱</div>
           <div class="kv"><span>折合</span><b>48 瓶</b></div>
-          <div class="kv"><span>进价</span><b>一箱 ¥24，已记下</b></div>
+          <div class="kv"><span>进价</span><b>一箱 ¥24</b></div>
         </div>
-        <div class="block-title">其他</div>
         <div class="row"><div><strong>苹果</strong><em>10 个</em></div><b>进价空着</b></div>
-        <div class="row"><div><strong>货A</strong><em>还没进过</em></div><b>—</b></div>
+        <div class="row"><div><strong>货A</strong><em>还没有档案</em></div><b>—</b></div>
+      </div>
+
+      <div class="screen" id="debt" hidden>
+        <div class="card">
+          <div class="tag">欠款</div>
+          <div class="answer">¥460</div>
+          <p style="margin:0;color:var(--ink-3)">还欠着的，一共这么多。</p>
+        </div>
+        <div class="row"><div><strong>李婶</strong><em>两条烟 · 说下回给</em></div><b>¥460</b></div>
+        <div class="row"><div><strong>南门老赵</strong><em>进货还没结</em></div><b>¥120</b></div>
+      </div>
+
+      <div class="screen" id="docs" hidden>
+        <div class="block-title">今天的单据</div>
+        <div class="row"><div><strong>卖 · 可乐 3 瓶</strong><em>已付清 · 散客</em></div><b>¥7.50</b></div>
+        <div class="row"><div><strong>进 · 苹果 10 个</strong><em>进价还空着</em></div><button type="button" class="text-btn" id="fill-apple-2">补</button></div>
+        <p class="hint-say">香蕉昨天卖了 3 斤，没说收了多少钱，所以没算进「今日卖」。</p>
+      </div>
+
+      <div class="screen" id="card" hidden>
+        <div id="card-body"></div>
       </div>
 
       <div class="screen" id="pending" hidden>
-        <p class="hint-say">这些单子还没记账。打开后仍是同一张卡。</p>
-        <div class="row">
-          <div><strong>进了 2 箱苹果</strong><em>还要问一箱几个 · 未记账</em></div>
-        </div>
+        <p class="hint-say">这些单子还没记账。</p>
+        <div class="row"><div><strong>进了 2 箱苹果</strong><em>还要问一箱几个</em></div></div>
         <button type="button" class="primary" id="open-box">打开确认</button>
-        <button type="button" class="ghost" style="margin-top:8px">先放着</button>
+        <button type="button" class="ghost">先放着</button>
       </div>
 
       <div class="screen" id="mine" hidden>
         <div class="card">
           <h2>字号</h2>
-          <div class="chips" style="justify-content:flex-start">
-            <button type="button" class="chip" id="mine-large">大</button>
-            <button type="button" class="chip" id="mine-normal">标准</button>
-          </div>
-          <p class="hint-say">默认大。标准给看得清较小字的人。存在这台手机上。</p>
+          <button type="button" class="chip" id="mine-large">大</button>
+          <button type="button" class="chip" id="mine-normal">标准</button>
+          <p class="hint-say">默认大。存在这台手机上。</p>
         </div>
         <div class="card">
           <h2>这个月说了 40 次</h2>
-          <p>套餐还剩 160 次、12 天。到期不会自动扣钱。</p>
+          <p style="margin:0">套餐还剩 160 次、12 天。到期不会自动扣钱。</p>
         </div>
         <button type="button" class="ghost">导出库存到微信</button>
       </div>
 
+      <div class="speak-dock" id="dock-speak">
+        <p class="hint-say">可以说：<button type="button" id="ex-main">今天进了十个货A，一个三块五</button></p>
+        <button type="button" class="mic" id="mic">按住说话</button>
+        <button type="button" class="mode-switch" id="mode">按住说 · 点这里改成点一下</button>
+      </div>
       <div class="footer-actions" id="dock" hidden>
         <button type="button" class="primary" id="confirm"></button>
         <button type="button" class="ghost" id="cancel">先不记</button>
       </div>
       <div class="tabbar" id="tabs">
-        <button type="button" data-tab="home" aria-current="page">说话</button>
-        <button type="button" data-tab="query">查账</button>
+        <button type="button" data-tab="home" aria-current="page">账本</button>
+        <button type="button" data-tab="stock">库存</button>
         <button type="button" data-tab="pending">待确认<span class="badge">1</span></button>
         <button type="button" data-tab="mine">我的</button>
       </div>
-
-      <div class="dialog" id="dialog" hidden>
-        <div class="sheet">
-          <h2>今天还有账没补全</h2>
-          <div class="row" data-fill="apple"><div><strong>苹果</strong><em>进了 10 个，进价还空着</em></div></div>
-          <div class="row" data-fill="sale-gap"><div><strong>香蕉</strong><em>昨天卖了 3 斤，没说收了多少钱</em></div></div>
-          <button type="button" class="primary" id="go-fill">去补</button>
-          <button type="button" class="ghost" id="later">今天先不补</button>
-        </div>
-      </div>
     </div>
 
-    <aside class="wide-panel" aria-label="今天的数字">
+    <aside class="wide-panel">
       <h2 style="margin-top:0">今天</h2>
-      <div class="stat"><div class="label">进了</div><div class="num">¥35</div><div>货A 10 个。苹果 10 个还没有进价，这 ¥35 不含它。</div></div>
-      <div class="stat"><div class="label">卖了</div><div class="num">¥128</div><div>3 笔。香蕉那笔没写金额，没算进来。</div></div>
-      <div class="stat"><div class="label">快没了</div><div class="num low">可乐 8 箱</div><div>按昨天的卖法，大概还能卖两天。</div></div>
+      <div class="stat"><div class="label">进了</div><div class="num">¥35</div><div>苹果 10 个还没有进价，这 ¥35 不含它。</div></div>
+      <div class="stat"><div class="label">卖了</div><div class="num">¥128</div><div>香蕉那笔没写金额，没算进来。</div></div>
+      <div class="stat"><div class="label">快没了</div><div class="num">可乐 8 箱</div><div>按昨天的卖法，大概还能卖两天。</div></div>
     </aside>
+  </div>
+</div>
+<div class="dialog" id="dialog" hidden>
+  <div class="sheet">
+    <h2>还有账没补全</h2>
+    <div class="row"><div><strong>苹果</strong><em>进了 10 个，进价还空着</em></div></div>
+    <div class="row"><div><strong>香蕉</strong><em>昨天卖了 3 斤，没说收了多少钱</em></div></div>
+    <button type="button" class="primary" id="go-fill">去补</button>
+    <button type="button" class="ghost" id="later">今天先不补</button>
   </div>
 </div>
 <script>
 const $ = (id) => document.getElementById(id);
-const screens = ["home", "card", "query", "pending", "mine"];
+const screens = ["home", "stock", "debt", "docs", "card", "pending", "mine"];
 let mode = "hold";
 let holding = false;
+let tapOn = false;
 let priceDigits = "";
+const titles = { home: "本店", stock: "库存", debt: "欠款", docs: "今天的账", card: "确认", pending: "待确认", mine: "我的" };
 
 function setSize(size) {
   document.documentElement.dataset.size = size;
-  $("size-large").setAttribute("aria-pressed", size === "large");
-  $("size-normal").setAttribute("aria-pressed", size === "normal");
+  $("size-large").setAttribute("aria-pressed", String(size === "large"));
+  $("size-normal").setAttribute("aria-pressed", String(size === "normal"));
   $("size-label").textContent = size === "large" ? "字号：大" : "字号：标准";
   try { localStorage.setItem("vil-proto-size", size); } catch (e) {}
 }
 function show(name) {
   screens.forEach((id) => { $(id).hidden = id !== name; });
-  $("tabs").hidden = name === "card";
-  $("dock").hidden = name !== "card";
-  document.querySelectorAll(".tabbar button").forEach((btn) => {
+  const onCard = name === "card";
+  $("tabs").hidden = onCard;
+  $("dock").hidden = !onCard;
+  $("dock-speak").hidden = onCard || name === "pending";
+  document.querySelectorAll("#tabs button").forEach((btn) => {
     if (btn.dataset.tab === name) btn.setAttribute("aria-current", "page");
     else btn.removeAttribute("aria-current");
   });
-  const titles = { home: "本店", query: "查账", pending: "待确认", mine: "我的", card: "确认" };
   $("title").textContent = titles[name] || "本店";
 }
 function card(kind) {
@@ -467,8 +446,8 @@ function card(kind) {
       <div class="quote">今天进了十个货A，一个三块五</div>
       <div class="card">
         <h2>会做两件事</h2>
-        <div class="kv"><span>建档案</span><b>货A · 单位「个」 · 进价 ¥3.50</b></div>
-        <div class="kv"><span>售价</span><b>先空着，卖的时候再问</b></div>
+        <div class="kv"><span>建档案</span><b>货A · 个 · 进价 ¥3.50</b></div>
+        <div class="kv"><span>售价</span><b>卖的时候再问</b></div>
         <div class="kv"><span>入库</span><b>0 → 10 个</b></div>
         <div class="money">本单 ¥35.00</div>
         <div class="kv"><span>供应商</span><b>没说，先记成待补</b></div>
@@ -478,88 +457,90 @@ function card(kind) {
   } else if (kind === "qty") {
     priceDigits = "";
     body.innerHTML = `
-      <div class="tag warn">进货 · 新货</div>
+      <div class="tag">进货 · 新货</div>
       <div class="quote">今天进了十个苹果</div>
       <div class="card">
-        <h2>苹果还没有档案。我听到：今天进了 10 个。</h2>
-        <p>一个多少钱？不填也可以先记数量，进价以后补。</p>
+        <h2>苹果还没有档案。听到：进了 10 个。</h2>
+        <p>一个多少钱？不填也可以先记数量。</p>
         <div class="money" id="price-show">进价还空着</div>
         <div class="keys" id="keys"></div>
       </div>`;
-    const keys = $("keys");
-    "123456789.0⌫".split("").forEach((k) => {
-      const b = document.createElement("button");
-      b.type = "button";
-      b.textContent = k;
-      b.addEventListener("click", () => typePrice(k));
-      keys.appendChild(b);
-    });
+    mountKeys((k) => typePrice(k));
     confirm.textContent = "先只记数量，进价以后补";
   } else if (kind === "sale") {
     body.innerHTML = `
-      <div class="tag sale">卖货</div>
+      <div class="tag">卖货</div>
       <div class="quote">卖了三瓶可乐，收了七块五</div>
       <div class="card">
         <div class="kv"><span>可乐</span><b>3 瓶</b></div>
         <div class="money">¥7.50</div>
         <div class="kv"><span>库存</span><b>48 → 45 瓶</b></div>
-        <div class="kv"><span>客户</span><b>没说，记成散客</b></div>
+        <div class="kv"><span>客户</span><b>散客</b></div>
         <div class="kv"><span>付款</span><b>已付清</b></div>
       </div>`;
     confirm.textContent = "确认：卖出 3 瓶可乐 ¥7.50";
   } else if (kind === "box") {
     priceDigits = "";
     body.innerHTML = `
-      <div class="tag warn">进货</div>
+      <div class="tag">进货</div>
       <div class="quote">进了两箱苹果，一箱三十五</div>
       <div class="card">
         <h2>一箱是几个？</h2>
-        <p>答完这次就记住。下次再说箱，不用再问。</p>
+        <p>答完这次就记住。</p>
         <div class="money" id="price-show">还没说</div>
         <div class="keys" id="keys"></div>
-        <div class="kv"><span>进价</span><b>一箱 ¥35，这句已经说了</b></div>
+        <div class="kv"><span>进价</span><b>一箱 ¥35</b></div>
       </div>`;
-    const keys = $("keys");
-    "123456789⌫0".split("").forEach((k) => {
-      const b = document.createElement("button");
-      b.type = "button";
-      b.textContent = k;
-      b.addEventListener("click", () => typeCount(k));
-      keys.appendChild(b);
-    });
+    mountKeys((k) => typeCount(k));
     confirm.disabled = true;
     confirm.textContent = "先告诉我一箱几个";
   }
   show("card");
 }
+function mountKeys(onKey) {
+  const keys = $("keys");
+  "123456789.0⌫".split("").forEach((k) => {
+    const b = document.createElement("button");
+    b.type = "button";
+    b.textContent = k;
+    b.addEventListener("click", () => onKey(k));
+    keys.appendChild(b);
+  });
+}
 function typePrice(k) {
   if (k === "⌫") priceDigits = priceDigits.slice(0, -1);
   else if (k === "." && priceDigits.includes(".")) return;
   else if (priceDigits.length < 6) priceDigits += k;
-  const show = $("price-show");
-  const confirm = $("confirm");
+  const showEl = $("price-show");
   if (!priceDigits) {
-    show.textContent = "进价还空着";
-    confirm.textContent = "先只记数量，进价以后补";
+    showEl.textContent = "进价还空着";
+    $("confirm").textContent = "先只记数量，进价以后补";
   } else {
-    show.textContent = "一个 ¥" + priceDigits;
-    confirm.textContent = "确认：建档并入库 10 个苹果";
+    showEl.textContent = "一个 ¥" + priceDigits;
+    $("confirm").textContent = "确认：建档并入库 10 个苹果";
   }
 }
 function typeCount(k) {
+  if (k === ".") return;
   if (k === "⌫") priceDigits = priceDigits.slice(0, -1);
   else if (priceDigits.length < 3) priceDigits += k;
-  const show = $("price-show");
+  const showEl = $("price-show");
   const confirm = $("confirm");
   if (!priceDigits) {
-    show.textContent = "还没说";
+    showEl.textContent = "还没说";
     confirm.disabled = true;
     confirm.textContent = "先告诉我一箱几个";
   } else {
-    show.textContent = "一箱 " + priceDigits + " 个";
+    showEl.textContent = "一箱 " + priceDigits + " 个";
     confirm.disabled = false;
     confirm.textContent = "确认：一箱 " + priceDigits + " 个，入库 2 箱";
   }
+}
+function resetMic() {
+  holding = false;
+  tapOn = false;
+  $("mic").classList.remove("recording");
+  $("mic").textContent = mode === "hold" ? "按住说话" : "点一下说";
 }
 $("size-large").onclick = () => setSize("large");
 $("size-normal").onclick = () => setSize("normal");
@@ -568,39 +549,27 @@ $("mine-normal").onclick = () => setSize("normal");
 $("wide-toggle").onclick = () => {
   const on = document.documentElement.dataset.wide !== "1";
   document.documentElement.dataset.wide = on ? "1" : "0";
-  $("wide-toggle").setAttribute("aria-pressed", on);
+  $("wide-toggle").setAttribute("aria-pressed", String(on));
 };
-document.querySelectorAll(".tabbar button").forEach((btn) => {
-  btn.onclick = () => show(btn.dataset.tab);
+document.querySelectorAll("[data-tab]").forEach((btn) => {
+  btn.addEventListener("click", () => show(btn.dataset.tab));
 });
-document.querySelectorAll("[data-go]").forEach((btn) => {
-  btn.onclick = () => {
-    if (btn.dataset.go === "stock") show("query");
-    else card(btn.dataset.go);
-  };
-});
+$("go-in").onclick = () => card("priced");
+$("go-out").onclick = () => card("sale");
 $("ex-main").onclick = () => card("priced");
 $("fill-apple").onclick = () => card("qty");
+$("fill-apple-2").onclick = () => card("qty");
 $("open-box").onclick = () => card("box");
-$("gap-line").onclick = () => { $("dialog").hidden = false; };
-$("later").onclick = () => {
-  $("dialog").hidden = true;
-  $("gap-line").hidden = true;
-};
-$("go-fill").onclick = () => {
-  $("dialog").hidden = true;
-  card("qty");
-};
+$("open-low").onclick = () => show("stock");
+$("q-go").onclick = () => show("stock");
 $("cancel").onclick = () => show("home");
-$("confirm").onclick = () => {
-  $("confirm").textContent = "已记下";
-  setTimeout(() => show("home"), 500);
-};
-$("q-go").onclick = () => show("query");
+$("confirm").onclick = () => show("home");
+$("go-fill").onclick = () => { $("dialog").hidden = true; card("qty"); };
+$("later").onclick = () => { $("dialog").hidden = true; };
 $("mode").onclick = () => {
   mode = mode === "hold" ? "tap" : "hold";
-  $("mode").textContent = mode === "hold" ? "模式：按住说（点这里切换）" : "模式：点一下说（点这里切换）";
-  if (!holding) $("mic").textContent = mode === "hold" ? "按住说话" : "点一下说";
+  $("mode").textContent = mode === "hold" ? "按住说 · 点这里改成点一下" : "点一下说 · 点这里改成按住";
+  resetMic();
 };
 const mic = $("mic");
 mic.addEventListener("pointerdown", (e) => {
@@ -612,17 +581,15 @@ mic.addEventListener("pointerdown", (e) => {
 });
 mic.addEventListener("pointerup", () => {
   if (mode !== "hold" || !holding) return;
-  holding = false;
-  mic.classList.remove("recording");
-  mic.textContent = "按住说话";
+  resetMic();
   card("priced");
 });
 mic.addEventListener("click", () => {
   if (mode !== "tap") return;
-  holding = !holding;
-  mic.classList.toggle("recording", holding);
-  mic.textContent = holding ? "再说一次结束" : "点一下说";
-  if (!holding) card("priced");
+  tapOn = !tapOn;
+  mic.classList.toggle("recording", tapOn);
+  mic.textContent = tapOn ? "再说一次结束" : "点一下说";
+  if (!tapOn) card("priced");
 });
 try {
   const saved = localStorage.getItem("vil-proto-size");

@@ -1,0 +1,646 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>一句话进销存 · 原型（方向 A 暖纸账本）</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@400;500;700;900&family=Noto+Serif+SC:wght@600;700;900&display=swap" rel="stylesheet">
+<style>
+:root{--bg:#F5F1E8;--sf:#FFFDF8;--ink:#1F1B16;--mu:#7C7367;--ln:#E7DFD1;--ac:#C2410C;--acs:#FBE6DA;--act:#A8380A;--wn:#94560A;--wnb:#FBEFD6;--wnl:#EBCF95;--serif:"Noto Serif SC",serif;--sans:"Noto Sans SC",sans-serif}
+*{box-sizing:border-box;margin:0;padding:0}
+button{font:inherit;color:inherit;background:none;border:0;cursor:pointer}
+body{font-family:var(--sans);background:#E8E2D6;color:var(--ink);padding:18px 10px 30px}
+.page{max-width:900px;margin:0 auto;display:flex;gap:28px;justify-content:center;align-items:flex-start;flex-wrap:wrap}
+.guide{flex:1 1 260px;max-width:340px;font-size:13px;line-height:1.7;color:#4a443c}
+.guide h1{font-family:var(--serif);font-size:20px;color:var(--ink);margin-bottom:4px}
+.guide h2{font-size:13px;color:var(--ink);margin:14px 0 4px}
+.guide li{margin-left:18px}
+.guide .k{display:inline-block;background:#fff;border:1px solid #d8cfbf;border-radius:6px;padding:0 6px;font-size:12px}
+
+.phone{width:360px;max-width:100%;height:760px;border-radius:44px;background:#141210;padding:10px;box-shadow:0 30px 60px -30px rgba(60,40,10,.5);flex-shrink:0}
+.scr{position:relative;width:100%;height:100%;border-radius:35px;overflow:hidden;background:var(--bg);display:flex;flex-direction:column;font-size:16px}
+.scr.std{font-size:14px}
+.sb{height:2em;flex-shrink:0;display:flex;justify-content:space-between;align-items:center;padding:0 1.4em;font-size:.75em;font-weight:700}
+.nav{height:2.6em;flex-shrink:0;display:flex;align-items:center;gap:.4em;padding:0 .6em 0 1em}
+.nav .t{flex:1;font-weight:700;font-size:1.02em}
+.nav .back{font-size:1.4em;line-height:1;padding:0 .3em 0 0;color:var(--ink)}
+.cap{display:flex;align-items:center;border:1px solid var(--ln);border-radius:999px;height:1.8em;padding:0 .7em;gap:.6em;background:var(--sf);font-size:.78em}
+.cap i{width:1px;height:1em;background:var(--ln)}
+main{flex:1;overflow-y:auto;padding:.2em 1em 1em;display:flex;flex-direction:column;gap:.75em;scrollbar-width:none}
+main::-webkit-scrollbar{display:none}
+.serif{font-family:var(--serif)}
+.mu{color:var(--mu)}
+.card{background:var(--sf);border:1px solid var(--ln);border-radius:14px}
+.seg{display:flex;background:#EAE3D5;border-radius:999px;padding:3px;font-size:.8em}
+.seg button{flex:1;padding:.4em .8em;border-radius:999px;color:#6b6257;white-space:nowrap}
+.seg button.on{background:var(--sf);color:var(--ink);font-weight:700;box-shadow:0 1px 2px rgba(0,0,0,.06)}
+
+/* today */
+.hello{display:flex;justify-content:space-between;align-items:flex-end;gap:.5em}
+.hello h2{font-family:var(--serif);font-size:1.35em;font-weight:900;line-height:1.2}
+.hello small{display:block;font-size:.76em;color:var(--mu);margin-top:.15em}
+.pbadge{display:flex;align-items:center;gap:.35em;background:var(--sf);border:1px solid var(--ln);border-radius:999px;padding:.3em .75em;font-size:.8em;font-weight:700;white-space:nowrap}
+.pbadge b{background:var(--ac);color:#fff;border-radius:999px;min-width:1.5em;height:1.5em;display:inline-flex;align-items:center;justify-content:center;font-size:.85em}
+.stats{display:grid;grid-template-columns:repeat(3,1fr);padding:.8em .3em}
+.stats div{text-align:center}
+.stats div+div{border-left:1px solid var(--ln)}
+.stats small{display:block;font-size:.74em;color:var(--mu)}
+.stats b{display:block;font-family:var(--serif);font-size:1.3em;font-weight:900;margin-top:.1em;font-variant-numeric:tabular-nums}
+.stats .owe b{color:var(--wn)}
+.bar{display:flex;align-items:center;justify-content:space-between;gap:.6em;padding:.75em .9em;border-radius:12px;background:var(--wnb);border:1px solid var(--wnl);color:var(--wn);font-size:.85em;font-weight:700;text-align:left;width:100%}
+.bar span:last-child{white-space:nowrap;text-decoration:underline;font-size:.95em}
+.est{padding:.8em .9em;display:flex;justify-content:space-between;align-items:center;gap:.6em}
+.est small{display:block;font-size:.74em;color:var(--mu)}
+.est b{font-family:var(--serif);font-size:1.25em}
+.btn-s{border:1px solid var(--ink);border-radius:999px;padding:.35em .9em;font-size:.8em;font-weight:700;white-space:nowrap}
+.flow{padding:.2em .9em .3em}
+.flow h3{display:flex;justify-content:space-between;font-size:.76em;color:var(--mu);font-weight:500;padding:.7em 0 .3em}
+.fi{display:flex;gap:.6em;align-items:flex-start;padding:.7em 0;border-top:1px solid var(--ln);width:100%;text-align:left}
+.fi:first-of-type{border-top:0}
+.fi .tm{font-size:.74em;color:var(--mu);width:2.9em;flex-shrink:0;padding-top:.2em;font-variant-numeric:tabular-nums}
+.fi .md{flex:1;min-width:0}
+.fi .md b{font-weight:500;font-size:.94em}
+.fi .md small{display:block;font-size:.72em;color:var(--mu);margin-top:.1em}
+.fi .rt{text-align:right;flex-shrink:0}
+.fi .rt b{font-family:var(--serif);font-weight:700;font-size:.98em;font-variant-numeric:tabular-nums}
+.fi .rt small{display:block;font-size:.7em;color:var(--wn);font-weight:700}
+.fi.undone .md b,.fi.undone .rt b{text-decoration:line-through;color:var(--mu)}
+.fi.flash{animation:fl 1.4s ease}
+@keyframes fl{0%{background:var(--acs)}100%{background:transparent}}
+.tg{display:inline-block;font-size:.72em;font-weight:700;padding:.05em .4em;border-radius:5px;margin-right:.35em;vertical-align:.08em}
+.t-进{background:#EDE6D8;color:var(--ink)}
+.t-卖{background:var(--acs);color:var(--act)}
+.t-赊{background:var(--wnb);color:var(--wn)}
+.t-退{background:#E9E4F1;color:#4A3D73}
+.t-盘{background:#1F1B16;color:#FFFDF8}
+.t-收{background:#E6EEE4;color:#355A35}
+.miss{color:var(--wn)!important;font-family:var(--sans)!important;font-size:.82em!important;font-weight:700!important}
+
+/* tabs */
+.tabs{flex-shrink:0;height:4.6em;background:var(--sf);border-top:1px solid var(--ln);display:flex;justify-content:space-around;align-items:center;position:relative;padding-bottom:.4em}
+.tabs button{display:flex;flex-direction:column;align-items:center;gap:.15em;font-size:.72em;color:var(--mu);width:4.4em}
+.tabs button.on{color:var(--ink);font-weight:700}
+.tabs svg{width:1.7em;height:1.7em}
+.tabs .mic{width:5.2em;height:5.2em;border-radius:50%;background:var(--ac);color:#fff;margin-top:-2.6em;box-shadow:0 0 0 .45em #F3D2C0,0 10px 20px -8px rgba(194,65,12,.6);justify-content:center;font-size:.8em;font-weight:700;gap:.1em}
+.tabs .mic svg{width:2em;height:2em}
+
+/* goods */
+.chips{display:flex;gap:.4em;flex-wrap:wrap}
+.chip{border:1px solid var(--ln);background:var(--sf);border-radius:999px;padding:.3em .8em;font-size:.8em}
+.chip.on{background:var(--ink);color:var(--sf);border-color:var(--ink)}
+.gi{display:flex;align-items:center;gap:.6em;padding:.75em .9em;border-top:1px solid var(--ln);width:100%;text-align:left}
+.gi:first-child{border-top:0}
+.gi .md{flex:1;min-width:0}
+.gi .md b{font-weight:700;font-size:.95em}
+.gi .md small{display:block;font-size:.74em;color:var(--mu);margin-top:.1em}
+.gi .md small.w{color:var(--wn);font-weight:700}
+.gi .rt{font-family:var(--serif);font-weight:900;font-size:1.1em;text-align:right;white-space:nowrap}
+.gi .rt small{display:block;font-family:var(--sans);font-weight:500;font-size:.62em;color:var(--mu)}
+.gi .low{color:var(--ac)}
+.cta-wide{width:100%;min-height:3.3em;border-radius:14px;background:var(--ink);color:var(--sf);font-weight:700;font-size:.95em}
+
+/* debt */
+.dsum{padding:.9em;display:flex;justify-content:space-between;align-items:center}
+.dsum small{font-size:.76em;color:var(--mu)}
+.dsum b{display:block;font-family:var(--serif);font-size:1.6em;font-weight:900}
+
+/* me */
+.mi{display:flex;justify-content:space-between;align-items:center;gap:.6em;padding:.85em .9em;border-top:1px solid var(--ln);width:100%;text-align:left;font-size:.92em}
+.mi:first-child{border-top:0}
+.mi small{display:block;font-size:.78em;color:var(--mu);margin-top:.1em}
+.mi .ar{color:var(--mu)}
+.sec-t{font-size:.76em;color:var(--mu);padding:0 .2em}
+
+/* overlays */
+.ov{position:absolute;inset:0;background:rgba(31,27,22,.45);display:flex;align-items:flex-end;z-index:20;animation:fade .2s ease}
+@keyframes fade{from{opacity:0}}
+.sheet{width:100%;max-height:92%;background:var(--sf);border-radius:22px 22px 0 0;display:flex;flex-direction:column;animation:up .25s ease}
+@keyframes up{from{transform:translateY(40px)}}
+.sheet .in{overflow-y:auto;padding:1.1em 1em .4em;display:flex;flex-direction:column;gap:.7em;scrollbar-width:none}
+.sheet h3{font-family:var(--serif);font-size:1.15em;font-weight:900}
+.sheet .sub-t{font-size:.8em;color:var(--mu);margin-top:-.4em}
+.grab{width:2.6em;height:.28em;border-radius:9px;background:var(--ln);margin:.5em auto 0}
+.cfoot{padding:.7em 1em 1.1em;display:flex;flex-direction:column;gap:.5em;border-top:1px solid var(--ln)}
+.cta{width:100%;min-height:3.6em;border-radius:14px;background:var(--ac);color:#fff;font-weight:700;font-size:1em;line-height:1.35;padding:.5em .8em}
+.cta:disabled{background:#D9CFC0;color:#8A8073;cursor:not-allowed}
+.subs{display:flex;gap:.5em}
+.subs button{flex:1;height:2.8em;border-radius:12px;border:1px solid var(--ln);background:var(--sf);font-size:.88em}
+
+/* voice */
+.voice{padding:1.2em 1em 1.4em;display:flex;flex-direction:column;align-items:center;gap:.9em;text-align:center}
+.voice h3{font-family:var(--serif);font-size:1.2em}
+.live{min-height:3.4em;font-size:1.15em;line-height:1.5;font-weight:500;padding:0 .4em}
+.live .cur{display:inline-block;width:2px;height:1em;background:var(--ac);vertical-align:-.12em;animation:bl 1s steps(1) infinite;margin-left:2px}
+@keyframes bl{50%{opacity:0}}
+.wave{display:flex;gap:4px;align-items:center;height:2.4em}
+.wave i{width:4px;border-radius:3px;background:var(--ac);animation:wv .9s ease-in-out infinite}
+.wave i:nth-child(2n){animation-delay:-.3s}.wave i:nth-child(3n){animation-delay:-.6s}
+@keyframes wv{0%,100%{height:.5em}50%{height:2.2em}}
+.ring{width:6.4em;height:6.4em;border-radius:50%;background:var(--ac);color:#fff;display:flex;flex-direction:column;align-items:center;justify-content:center;font-weight:700;font-size:.95em;box-shadow:0 0 0 .7em #F3D2C0}
+.ring.on{animation:pu 1.2s ease-in-out infinite}
+@keyframes pu{50%{box-shadow:0 0 0 1.1em #F3D2C0}}
+.ring svg{width:2.2em;height:2.2em}
+.think{display:flex;gap:.35em;align-items:center;color:var(--mu);font-size:.9em}
+.think i{width:.45em;height:.45em;border-radius:50%;background:var(--mu);animation:dt 1s infinite}
+.think i:nth-child(2){animation-delay:.15s}.think i:nth-child(3){animation-delay:.3s}
+@keyframes dt{50%{opacity:.2}}
+.examples{width:100%;display:flex;flex-direction:column;gap:.45em;text-align:left}
+.ex{display:flex;justify-content:space-between;align-items:center;gap:.6em;padding:.7em .85em;border:1px solid var(--ln);border-radius:12px;background:var(--bg);font-size:.9em;width:100%;text-align:left}
+.ex small{font-size:.72em;color:var(--mu);white-space:nowrap}
+.hint{font-size:.74em;color:var(--mu)}
+
+/* confirm card */
+.ch{display:flex;justify-content:space-between;align-items:center}
+.ctag{font-size:.76em;font-weight:700;padding:.2em .65em;border-radius:999px;background:var(--acs);color:var(--act)}
+.ctag.owe{background:var(--wnb);color:var(--wn)}
+.ctag.must{background:var(--ac);color:#fff}
+.lnk{font-size:.8em;color:var(--act);font-weight:700;display:flex;align-items:center;gap:.25em}
+.lnk svg{width:1.1em;height:1.1em}
+.said{background:var(--bg);border-radius:12px;padding:.65em .8em;font-size:1em;line-height:1.5}
+.said small{display:flex;justify-content:space-between;font-size:.72em;color:var(--mu);margin-bottom:.15em}
+.rows{border:1px solid var(--ln);border-radius:14px;padding:0 .85em}
+.r{display:flex;justify-content:space-between;align-items:flex-start;gap:.8em;padding:.7em 0;border-top:1px solid var(--ln)}
+.r:first-child{border-top:0}
+.r .k{color:var(--mu);font-size:.85em;padding-top:.1em;white-space:nowrap}
+.r .v{text-align:right;font-weight:700;font-size:.95em}
+.r .v small{display:block;font-weight:400;font-size:.76em;color:var(--mu);margin-top:.1em}
+.r .v.guess span{background:var(--wnb);box-shadow:0 0 0 3px var(--wnb);border-radius:3px}
+.r .v.guess small{color:var(--wn)}
+.r .v.new span::after{content:"新建";font-size:.68em;font-weight:700;background:var(--ac);color:#fff;border-radius:4px;padding:.05em .35em;margin-left:.35em;vertical-align:.12em}
+.r .v.dim{color:var(--mu);font-weight:400}
+.r .v.owe{color:var(--wn)}
+.gap{flex-direction:column;gap:.45em;margin:0 -.85em;padding:.75em .85em;border-top:0}
+.gap.must{background:#FCEDE5}
+.gap.later{background:var(--wnb)}
+.gap .gh{display:flex;justify-content:space-between;width:100%;gap:.6em;font-size:.85em}
+.gap .gh b{font-weight:700}
+.gap.must .gh b{color:var(--act)}
+.gap.later .gh b{color:var(--wn)}
+.gap .gh small{font-size:.86em;color:var(--mu);white-space:nowrap}
+.opts{display:flex;gap:.4em;flex-wrap:wrap;width:100%}
+.opt{flex:1 1 auto;min-height:2.7em;border-radius:11px;border:1.5px solid var(--ln);background:var(--sf);font-weight:700;font-size:.9em;padding:0 .8em}
+.opt.on{border-color:var(--ac);background:var(--acs);color:var(--act)}
+.gnum{width:100%;min-height:2.8em;border-radius:11px;border:1.5px dashed var(--wnl);background:var(--sf);font-size:.92em;color:var(--wn);font-weight:700}
+.gnum.filled{border-style:solid;border-color:var(--ac);color:var(--ink)}
+.impact{display:grid;grid-template-columns:1fr;gap:.45em}
+.imp{display:flex;justify-content:space-between;align-items:center;padding:.65em .85em;background:var(--bg);border-radius:12px;font-size:.85em}
+.imp b{font-family:var(--serif);font-size:1.12em;font-variant-numeric:tabular-nums}
+.imp b i{font-style:normal;color:var(--mu);font-weight:400;margin:0 .25em}
+
+/* keypad */
+.kpd{font-family:var(--serif);font-size:2.2em;font-weight:900;text-align:center;padding:.15em;border-bottom:2px solid var(--ink);min-height:1.6em}
+.kpd small{font-family:var(--sans);font-size:.4em;font-weight:500;color:var(--mu);margin-left:.3em}
+.kp{display:grid;grid-template-columns:repeat(3,1fr);gap:.45em}
+.kp button{height:3.3em;border-radius:12px;background:var(--bg);font-family:var(--serif);font-size:1.25em;font-weight:700}
+.kp .ok{grid-column:span 3;background:var(--ac);color:#fff;font-family:var(--sans);font-size:1em}
+
+/* toast */
+.toast{position:absolute;left:.8em;right:.8em;bottom:5.4em;background:var(--ink);color:var(--sf);border-radius:14px;padding:.8em .9em;display:flex;align-items:center;gap:.7em;z-index:30;animation:up .25s ease;box-shadow:0 10px 24px -10px rgba(0,0,0,.5)}
+.toast.hi{bottom:1.2em}
+.toast .tx{flex:1;font-size:.86em;line-height:1.45}
+.toast .tx small{display:block;color:#C9BFB1;font-size:.86em}
+.toast button{color:#FDBA8C;font-weight:700;font-size:.88em;white-space:nowrap;border:1px solid #6b5f52;border-radius:999px;padding:.3em .8em}
+
+/* count */
+.cstat{display:flex;justify-content:space-between;align-items:center;font-size:.82em}
+.cstat b{font-family:var(--serif);font-size:1.15em}
+.said-strip{display:flex;gap:.4em;overflow-x:auto;padding:.1em 0 .2em;scrollbar-width:none}
+.said-strip::-webkit-scrollbar{display:none}
+.sc{flex-shrink:0;font-size:.8em;padding:.35em .7em;border-radius:999px;background:var(--sf);border:1px solid var(--ln)}
+.sc.bad{background:#FCEDE5;border-color:var(--ac);color:var(--act);font-weight:700}
+.sc.live{border-style:dashed;color:var(--mu)}
+.ci{display:flex;align-items:center;gap:.6em;padding:.7em .9em;border-top:1px solid var(--ln);width:100%;text-align:left;transition:background .3s}
+.ci:first-child{border-top:0}
+.ci .md{flex:1;min-width:0}
+.ci .md b{font-weight:700;font-size:.93em}
+.ci .md small{display:block;font-size:.72em;color:var(--mu)}
+.ci .md em{display:block;font-style:normal;font-size:.72em;color:var(--act);margin-top:.1em}
+.ci .q{min-width:4.6em;text-align:center;padding:.35em .5em;border-radius:10px;border:1.5px dashed var(--ln);color:var(--mu);font-size:.85em}
+.ci.done .q{border:1.5px solid var(--ink);color:var(--ink);font-family:var(--serif);font-weight:900;font-size:.95em}
+.ci.flash{background:var(--acs)}
+.cbar{flex-shrink:0;padding:.7em 1em 1em;background:var(--sf);border-top:1px solid var(--ln);display:flex;gap:.6em;align-items:center}
+.cbar .cmic{flex:1;min-height:3.4em;border-radius:14px;background:var(--ac);color:#fff;font-weight:700;display:flex;align-items:center;justify-content:center;gap:.5em;font-size:.95em}
+.cbar .cmic.on{background:var(--ink)}
+.cbar .cmic svg{width:1.4em;height:1.4em}
+.cbar .cdone{min-height:3.4em;border-radius:14px;border:1.5px solid var(--ink);padding:0 1em;font-weight:700;font-size:.9em}
+.rc{padding:.8em .9em;border-top:1px solid var(--ln)}
+.rc:first-child{border-top:0}
+.rc .h{display:flex;justify-content:space-between;align-items:baseline;gap:.5em}
+.rc .h b{font-weight:700}
+.rc .h span{font-size:.8em;color:var(--act);font-weight:700;white-space:nowrap}
+.rc p{font-size:.8em;color:var(--mu);margin:.2em 0 .5em}
+.rc .seg{font-size:.76em}
+.al{display:flex;justify-content:space-between;align-items:center;gap:.6em;padding:.75em .9em;border-top:1px solid var(--ln)}
+.al:first-child{border-top:0}
+.al b{font-weight:700}
+.al small{display:block;font-size:.74em;color:var(--mu)}
+.al button{font-size:.78em;color:var(--mu);border:1px solid var(--ln);border-radius:999px;padding:.2em .7em}
+.empty{text-align:center;padding:2.2em 1em;color:var(--mu);font-size:.88em}
+</style>
+</head>
+<body>
+<div class="page">
+  <div class="phone"><div class="scr" id="scr"></div></div>
+  <aside class="guide">
+    <h1>原型 · 方向 A 暖纸账本</h1>
+    <p>王姐便利店的一天。点中间的 <span class="k">说</span>，选一句示例来模拟说话（原型里没有真实录音）。</p>
+    <h2>建议按这个顺序试</h2>
+    <ol>
+      <li>「卖了三瓶冰红茶」→ 听清了，<b>直接记</b>，底部出「已记」带撤</li>
+      <li>「刚才那笔冰红茶是四瓶」→ <b>直接改</b>，告诉你改了什么</li>
+      <li>「今天进了货A二十箱」→ <b>新货卡</b>，进价黄色空格可先不填</li>
+      <li>「卖了两瓶可了」→ <b>猜测卡</b>，红色空格必须先选</li>
+      <li>「卖了五瓶农夫山泉」→ 第一次出现「瓶」，<b>当场问一箱几瓶</b></li>
+      <li>「李婶拿走两条烟…」→ <b>赊账卡</b>，看欠款怎么变</li>
+    </ol>
+    <h2>其他可以点的</h2>
+    <ul>
+      <li>流水里任意一笔：看原话、手动改、撤</li>
+      <li>顶部「待处理」：补进价、补金额、没确认的卡</li>
+      <li>货品 → 开始盘点：边说边填，再对账</li>
+      <li>欠款 → 点人：记还款、发对账单</li>
+      <li>我的：切换记账方式、字号、看说法本</li>
+    </ul>
+  </aside>
+</div>
+
+<script>
+/* ---------- data ---------- */
+const P=[
+ {id:'kl',name:'可乐 500ml',unit:'箱',small:'瓶',conv:24,stock:288,cost:35,price:3,shelf:1},
+ {id:'xb',name:'雪碧 500ml',unit:'箱',small:'瓶',conv:24,stock:120,cost:34,price:3,shelf:1},
+ {id:'kl2',name:'可乐 2L',unit:'瓶',stock:5,cost:5.5,price:8,shelf:1},
+ {id:'bht',name:'冰红茶',unit:'瓶',stock:37,cost:2.2,price:4,shelf:2},
+ {id:'hn',name:'红牛',unit:'罐',stock:4,cost:4.5,price:6,shelf:2,low:6},
+ {id:'nf',name:'农夫山泉',unit:'箱',stock:6,cost:24,price:null,shelf:3},
+ {id:'zh',name:'软中华',unit:'条',stock:7,cost:210,price:230,shelf:4},
+ {id:'pg',name:'苹果',unit:'斤',stock:10,cost:null,price:5,shelf:5},
+];
+let F=[
+ {id:1,t:'07:42',type:'进',pid:'kl',qty:2,u:'箱',amt:70,who:'王姐',how:'直接记',said:'进了两箱可乐，一箱三十五',base:48},
+ {id:2,t:'08:15',type:'进',pid:'pg',qty:10,u:'斤',amt:null,miss:'进价待补',who:'王姐',how:'确认过',said:'苹果来了十斤',base:10},
+ {id:3,t:'08:50',type:'卖',name:'散客零售（早上合计）',amt:186,who:'老公',how:'直接记',said:'早上一共卖了一百八十六'},
+ {id:4,t:'09:12',type:'卖',pid:'xb',qty:1,u:'箱',amt:null,miss:'收多少待补',who:'老公',how:'确认过',said:'雪碧拿走一箱',base:-24},
+ {id:5,t:'09:40',type:'赊',pid:'zh',party:'李婶',qty:1,u:'条',amt:230,who:'王姐',how:'确认过',said:'李婶拿了一条烟，记账上',base:-1},
+ {id:6,t:'10:05',type:'卖',pid:'hn',qty:2,u:'罐',amt:12,who:'老公',how:'直接记',said:'红牛两罐十二',base:-2},
+ {id:7,t:'10:31',type:'卖',pid:'bht',qty:3,u:'瓶',amt:12,who:'王姐',how:'直接记',said:'冰红茶三瓶，收了十二',base:-3},
+];
+let PEND=[
+ {id:'p1',kind:'fill',fid:2,field:'cost',title:'苹果 · 进了 10 斤',desc:'进价还空着',unit:'元/斤'},
+ {id:'p2',kind:'fill',fid:4,field:'amt',title:'雪碧 500ml · 卖了 1 箱',desc:'没说收了多少钱',unit:'元'},
+ {id:'p3',kind:'unconf',sc:'ret',title:'退货 · 王老板退回红牛 2 罐',desc:'10:50 说的，放下没确认'},
+];
+const D=[
+ {name:'李婶',dir:'in',amt:350,last:'今天',items:[['11月14日','赊 白酒 1 瓶',200],['11月16日','还了',-80],['今天','赊 软中华 1 条',230]]},
+ {name:'兴旺超市',dir:'in',amt:1200,last:'11月12日',items:[['11月12日','赊 可乐 500ml 20 箱',1200]]},
+ {name:'二中店',dir:'in',amt:640,last:'11月18日',items:[['11月10日','赊 矿泉水 等',900],['11月18日','还了',-260]]},
+ {name:'南门老赵',dir:'out',amt:2300,last:'11月15日',items:[['11月15日','进 农夫山泉 等，先欠着',2300]]},
+ {name:'王老板批发',dir:'out',amt:480,last:'11月19日',items:[['11月19日','进 红牛 4 箱，先欠着',480]]},
+];
+const AL=[
+ {scope:'store',from:'快乐水',to:'可乐 500ml',type:'商品叫法',n:12},
+ {scope:'store',from:'烟',to:'软中华',type:'商品叫法',n:20},
+ {scope:'store',from:'可乐 一箱',to:'24 瓶',type:'一箱几个',n:31},
+ {scope:'me',from:'可了',to:'可乐',type:'听错的字',n:3},
+ {scope:'me',from:'拐',to:'7',type:'数字读法',n:5},
+];
+const S={tab:'today',page:null,range:'today',mode:'each',fs:'big',gf:'all',dtab:'in',ptab:'fill',voice:null,card:null,sheet:null,toast:null,count:null,recon:null,flash:null};
+let nid=100;
+
+/* ---------- helpers ---------- */
+const prod=id=>P.find(p=>p.id===id);
+const money=n=>n==null?'—':'¥'+(Number.isInteger(n)?n.toLocaleString('zh-CN'):n.toFixed(2));
+const now=()=>{const d=new Date();return String(d.getHours()).padStart(2,'0')+':'+String(d.getMinutes()).padStart(2,'0')};
+function stockText(p,base){base=base==null?p.stock:base;if(p.conv){const b=Math.floor(base/p.conv),r=base%p.conv;const s=(b?b+' '+p.unit:'')+(r?(b?' ':'')+r+' '+p.small:'');return s||'0 '+p.unit}return base+' '+p.unit}
+function ftitle(f){const n=f.pid?prod(f.pid).name:f.name;return (f.party?f.party+' · ':'')+n+(f.qty!=null?' '+f.qty+' '+f.u:'')}
+function addFlow(o){const f=Object.assign({id:++nid,t:now(),who:'王姐'},o);F.push(f);if(f.pid&&f.base)prod(f.pid).stock+=f.base;S.flash=f.id;return f}
+function toast(text,sub,action,fn){const id=++nid;S.toast={id,text,sub,action,fn};setTimeout(()=>{if(S.toast&&S.toast.id===id){S.toast=null;render()}},6500)}
+const ICON={
+ mic:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg>',
+ today:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M4 6h16M4 12h16M4 18h10"/></svg>',
+ goods:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"><path d="M3 7l9-4 9 4-9 4-9-4zM3 7v10l9 4 9-4V7M12 11v10"/></svg>',
+ debt:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><rect x="4" y="3" width="16" height="18" rx="2"/><path d="M8 8h8M8 12h8M8 16h5"/></svg>',
+ me:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="8" r="4"/><path d="M4 21c1-4 4.5-6 8-6s7 2 8 6"/></svg>',
+};
+
+/* ---------- scenarios ---------- */
+const EX=[
+ {id:'sell',text:'卖了三瓶冰红茶，收了十二块',hint:'听清了'},
+ {id:'fix',text:'刚才那笔冰红茶是四瓶',hint:'改单'},
+ {id:'newp',text:'今天进了货A二十箱',hint:'新货'},
+ {id:'guess',text:'卖了两瓶可了',hint:'没听准'},
+ {id:'unit',text:'卖了五瓶农夫山泉',hint:'新单位'},
+ {id:'owe',text:'李婶拿走两条烟，一共四百六，说下回给',hint:'赊账'},
+];
+function runScenario(id){
+ if(id==='sell'){
+  const f=addFlow({type:'卖',pid:'bht',qty:3,u:'瓶',amt:12,how:'直接记',said:'卖了三瓶冰红茶，收了十二块',base:-3});
+  toast('已记：卖 冰红茶 3 瓶 ¥12','冰红茶还剩 '+stockText(prod('bht')),'撤',()=>{undoFlow(f);toast('撤掉了：冰红茶 3 瓶')});return;
+ }
+ if(id==='fix'){
+  const f=[...F].reverse().find(x=>x.pid==='bht'&&x.who==='王姐'&&!x.undone);
+  if(!f){toast('没找到刚才那笔冰红茶','可以在流水里点那一笔手动改');return}
+  const old={qty:f.qty,amt:f.amt,base:f.base};applyQty(f,4);
+  toast(`已改：冰红茶 ${old.qty} 瓶 → 4 瓶`,`${money(old.amt)} → ${money(f.amt)}`,'改回去',()=>{applyQty(f,old.qty);f.note=null;toast('改回去了')});return;
+ }
+ if(id==='newp'&&prod('A')){
+  const p=prod('A');const f=addFlow({type:'进',pid:'A',qty:20,u:'箱',amt:p.cost?p.cost*20:null,miss:p.cost?null:'进价待补',how:p.cost?'直接记':'确认过',said:'今天进了货A二十箱',base:20});
+  if(!p.cost)PEND.push({id:'p'+(++nid),kind:'fill',fid:f.id,field:'cost',title:'货A · 进了 20 箱',desc:'进价还空着',unit:'元/箱'});
+  toast('已记：进 货A 20 箱'+(p.cost?' '+money(p.cost*20):''),'货A 现在 '+stockText(p),'撤',()=>{undoFlow(f);toast('撤掉了')});return;
+ }
+ S.card=CARDS[id]();
+}
+function applyQty(f,q){const unitAmt=f.amt!=null&&f.qty?f.amt/f.qty:null;const nb=f.base!=null?Math.round(f.base/f.qty*q):null;if(f.pid&&nb!=null)prod(f.pid).stock+=nb-f.base;if(!f.note)f.note=`改过：原 ${f.qty} ${f.u}${f.amt!=null?' '+money(f.amt):''}`;f.qty=q;f.base=nb;if(unitAmt!=null)f.amt=Math.round(unitAmt*q*100)/100;S.flash=f.id}
+function undoFlow(f){f.undone=true;if(f.pid&&f.base)prod(f.pid).stock-=f.base;S.flash=f.id}
+
+const CARDS={
+ newp(){const c={id:'newp',tag:'新货 · 建档并入库',tone:'',said:'今天进了货A二十箱',short:'新货 · 货A 20 箱',vals:{cost:null}};
+  c.rows=()=>[{k:'商品',v:'货A',cls:'new',sub:'店里还没有，确认后新建'},{k:'数量',v:'20 箱',sub:'以后货A按「箱」记'},
+   {k:'进价',gap:{must:false,q:'没说进价',num:true,key:'cost',unit:'元/箱'}},{k:'日期',v:'今天 11月20日'}];
+  c.impact=()=>[['货A 库存','0','20 箱'],['本单金额',null,c.vals.cost?money(c.vals.cost*20):'补上进价后再算']];
+  c.ok=()=>true;c.btn=()=>c.vals.cost?`确认：新建货A，入库 20 箱 ${money(c.vals.cost*20)}`:'确认：新建货A，入库 20 箱（进价待补）';
+  c.confirm=()=>{P.push({id:'A',name:'货A',unit:'箱',stock:0,cost:c.vals.cost,price:null,shelf:6});
+   const f=addFlow({type:'进',pid:'A',qty:20,u:'箱',amt:c.vals.cost?c.vals.cost*20:null,miss:c.vals.cost?null:'进价待补',how:'确认过',said:c.said,base:20});
+   if(!c.vals.cost)PEND.push({id:'p'+(++nid),kind:'fill',fid:f.id,field:'cost',title:'货A · 进了 20 箱',desc:'进价还空着',unit:'元/箱'});
+   toast('已建档并入库：货A 20 箱',c.vals.cost?'':'进价放进了「待处理」，有空再补');};return c},
+ owe(){const p=prod('zh');const d=D.find(x=>x.name==='李婶');const c={id:'owe',tag:'赊账',tone:'owe',said:'李婶拿走两条烟，一共四百六，说下回给',short:'赊账 · 李婶 软中华 2 条'};
+  c.rows=()=>[{k:'客户',v:'李婶',sub:`现在欠你 ${money(d.amt)}`},{k:'商品',v:'软中华',sub:'你说的「烟」'},{k:'数量',v:'2 条'},{k:'金额',v:'¥460',sub:'一共四百六'},{k:'付款',v:'赊账 · 下回给',cls:'owe'}];
+  c.impact=()=>[['李婶欠你',money(d.amt),money(d.amt+460)],['软中华 库存',stockText(p),stockText(p,p.stock-2)]];
+  c.ok=()=>true;c.btn=()=>'确认：李婶赊 2 条软中华 ¥460';
+  c.confirm=()=>{addFlow({type:'赊',pid:'zh',party:'李婶',qty:2,u:'条',amt:460,how:'确认过',said:c.said,base:-2});d.amt+=460;d.last='今天';d.items.push(['今天','赊 软中华 2 条',460]);
+   toast('已记：李婶赊 2 条软中华 ¥460','李婶一共欠你 '+money(d.amt))};return c},
+ guess(){const c={id:'guess',tag:'有一项要你选',tone:'must',said:'卖了两瓶可了',short:'卖 · 可了 2 瓶',vals:{pid:null}};
+  const p=()=>c.vals.pid&&prod(c.vals.pid);
+  c.rows=()=>{const q=p();return [{k:'商品',gap:{must:true,q:'听到「可了」，是哪一个？',key:'pid',opts:[{l:'可乐 500ml',v:'kl'},{l:'可乐 2L',v:'kl2'}]}},{k:'数量',v:'2 瓶'},
+   q?{k:'收了多少',v:money(q.price*2),cls:'guess',sub:`没说，按售价 ${money(q.price)}/瓶 算的`}:{k:'收了多少',v:'选好商品后算',cls:'dim'}]};
+  c.impact=()=>{const q=p();return q?[[q.name+' 库存',stockText(q),stockText(q,q.stock-2)]]:[]};
+  c.ok=()=>!!c.vals.pid;c.btn=()=>{const q=p();return q?`确认：卖 ${q.name} 2 瓶 ${money(q.price*2)}`:'先选是哪件货'};
+  c.confirm=()=>{const q=p();addFlow({type:'卖',pid:q.id,qty:2,u:'瓶',amt:q.price*2,how:'确认过',said:c.said,base:-2});
+   const a=AL.find(x=>x.from==='可了');if(a){a.n++;a.to=q.name}toast(`已记：卖 ${q.name} 2 瓶 ${money(q.price*2)}`,'「可了」记进了你的说法本，第 '+(a?a.n:1)+' 次')};return c},
+ unit(){const p=prod('nf');const c={id:'unit',tag:p.conv?'卖货':'第一次按「瓶」卖',tone:p.conv?'':'must',said:'卖了五瓶农夫山泉',short:'卖 · 农夫山泉 5 瓶',vals:{conv:p.conv||null,amt:null}};
+  c.rows=()=>{const r=[{k:'商品',v:'农夫山泉',sub:p.conv?'':'档案里只按「箱」记过'},{k:'数量',v:'5 瓶'}];
+   if(!p.conv)r.push({k:'一箱几瓶',gap:{must:true,q:'农夫山泉一箱几瓶？答一次就记住',key:'conv',opts:[{l:'12 瓶',v:12},{l:'24 瓶',v:24},{l:'其他',v:'other',unit:'瓶'}]}});
+   r.push({k:'收了多少',gap:{must:false,q:'没说收了多少钱',num:true,key:'amt',unit:'元'}});return r};
+  c.impact=()=>{const cv=c.vals.conv;if(!cv)return [['农夫山泉 库存',null,'填上一箱几瓶后算']];const base=p.conv?p.stock:p.stock*cv;const tmp={conv:cv,unit:'箱',small:'瓶'};return [['农夫山泉 库存',stockText(tmp,base),stockText(tmp,base-5)]]};
+  c.ok=()=>!!c.vals.conv;c.btn=()=>!c.vals.conv?'先填一箱几瓶':`确认：卖 农夫山泉 5 瓶${c.vals.amt?' '+money(c.vals.amt):'（收多少待补）'}`;
+  c.confirm=()=>{const first=!p.conv;if(first){p.stock=p.stock*c.vals.conv;p.conv=c.vals.conv;p.small='瓶';AL.push({scope:'store',from:'农夫山泉 一箱',to:p.conv+' 瓶',type:'一箱几个',n:1})}
+   const f=addFlow({type:'卖',pid:'nf',qty:5,u:'瓶',amt:c.vals.amt,miss:c.vals.amt?null:'收多少待补',how:'确认过',said:c.said,base:-5});
+   if(!c.vals.amt)PEND.push({id:'p'+(++nid),kind:'fill',fid:f.id,field:'amt',title:'农夫山泉 · 卖了 5 瓶',desc:'没说收了多少钱',unit:'元'});
+   toast('已记：卖 农夫山泉 5 瓶',first?`记住了：一箱 ${p.conv} 瓶，下次不再问`:'')};return c},
+ ret(){const p=prod('hn');const c={id:'ret',tag:'退货',tone:'owe',said:'王老板退回来两罐红牛，钱退给他了',short:'退货 · 红牛 2 罐'};
+  c.rows=()=>[{k:'方向',v:'客户退回来'},{k:'客户',v:'王老板'},{k:'商品',v:'红牛 2 罐'},{k:'退给他',v:'¥12',cls:'guess',sub:'没说多少，按售价 ¥6/罐 算的'},{k:'钱',v:'已经退了'}];
+  c.impact=()=>[['红牛 库存',stockText(p),stockText(p,p.stock+2)]];
+  c.ok=()=>true;c.btn=()=>'确认：王老板退回红牛 2 罐，退 ¥12';
+  c.confirm=()=>{addFlow({type:'退',pid:'hn',party:'王老板',qty:2,u:'罐',amt:12,how:'确认过',said:c.said,base:2});toast('已记：退货 红牛 2 罐，退 ¥12','红牛现在 '+stockText(p))};return c},
+};
+
+/* ---------- views ---------- */
+function statsToday(){let sell=0,inn=0,owe=0;F.forEach(f=>{if(f.undone||f.amt==null)return;if(f.type==='卖')sell+=f.amt;if(f.type==='进')inn+=f.amt;if(f.type==='赊')owe+=f.amt});return {sell,inn,owe,n:F.filter(f=>!f.undone).length}}
+function vToday(){
+ const st=S.range==='today'?statsToday():S.range==='week'?{sell:8642,inn:5210,owe:1890,n:86}:{sell:36480,inn:21900,owe:2620,n:362};
+ const pc=PEND.length;const fill=PEND.filter(p=>p.kind==='fill').length;
+ let h=`<div class="hello"><div><h2>早上好，王姐</h2><small>11月20日 周五 · 王姐便利店</small></div>
+  <button class="pbadge" data-a="openPend">待处理 <b>${pc}</b></button></div>
+  <div class="seg">${[['today','今天'],['week','本周'],['month','本月']].map(([k,l])=>`<button class="${S.range===k?'on':''}" data-a="range" data-v="${k}">${l}</button>`).join('')}</div>
+  <div class="card stats"><div><small>卖了</small><b>${money(st.sell)}</b></div><div><small>进货</small><b>${money(st.inn)}</b></div><div class="owe"><small>赊出去</small><b>${money(st.owe)}</b></div></div>`;
+ if(fill)h+=`<button class="bar" data-a="openPend"><span>还有 ${fill} 笔没补全，今天赚多少先不算它们</span><span>去补</span></button>`;
+ if(S.mode==='count')h+=`<div class="card est"><div><small>上次盘点（11月16日）后估算卖出</small><b>¥2,140</b></div><button class="btn-s" data-a="startCount">去盘点</button></div>`;
+ if(S.range!=='today'){h+=`<div class="card empty">${S.range==='week'?'本周':'本月'}共 ${st.n} 笔<br>（原型只演示今天的流水）</div>`;return h}
+ h+=`<div class="card flow"><h3><span>今日流水 · ${st.n} 笔</span><span>点一笔可以改或撤</span></h3>`;
+ [...F].reverse().forEach(f=>{
+  h+=`<button class="fi ${f.undone?'undone':''} ${S.flash===f.id?'flash':''}" data-a="row" data-id="${f.id}"><span class="tm">${f.t}</span>
+  <span class="md"><b><span class="tg t-${f.type}">${f.type}</span>${ftitle(f)}</b><small>${f.who} · ${f.undone?'已撤':f.how}${f.note?' · '+f.note:''}</small></span>
+  <span class="rt">${f.amt!=null?`<b>${money(f.amt)}</b>`:`<small>${f.miss||''}</small>`}</span></button>`});
+ return h+'</div>';
+}
+function vGoods(){
+ let list=[...P].sort((a,b)=>a.shelf-b.shelf);
+ if(S.gf==='low')list=list.filter(p=>p.stock<=(p.low||(p.conv?p.conv*2:5)));
+ if(S.gf==='nocost')list=list.filter(p=>p.cost==null);
+ let h=`<button class="cta-wide" data-a="startCount">开始盘点 · 边说边数</button>
+ <div class="chips">${[['all','全部 '+P.length],['low','快没了'],['nocost','缺进价']].map(([k,l])=>`<button class="chip ${S.gf===k?'on':''}" data-a="gf" data-v="${k}">${l}</button>`).join('')}</div><div class="card">`;
+ if(!list.length)h+=`<div class="empty">没有</div>`;
+ list.forEach(p=>{const low=p.stock<=(p.low||(p.conv?p.conv*2:5));
+  h+=`<button class="gi" data-a="prod" data-id="${p.id}"><span class="md"><b>${p.name}</b>${p.cost==null?'<small class="w">进价待补</small>':`<small>进 ${money(p.cost)}/${p.unit}${p.price?` · 卖 ${money(p.price)}/${p.small||p.unit}`:''}</small>`}</span>
+  <span class="rt ${low?'low':''}">${stockText(p)}${low?'<small>快没了</small>':''}</span></button>`});
+ return h+'</div>';
+}
+function vDebt(){
+ const list=D.filter(d=>d.dir===S.dtab&&d.amt>0);const sum=list.reduce((a,b)=>a+b.amt,0);
+ let h=`<div class="seg"><button class="${S.dtab==='in'?'on':''}" data-a="dtab" data-v="in">别人欠我</button><button class="${S.dtab==='out'?'on':''}" data-a="dtab" data-v="out">我欠别人</button></div>
+ <div class="card dsum"><div><small>${S.dtab==='in'?'一共有人欠你':'你一共欠别人'}</small><b>${money(sum)}</b></div><small>${list.length} 个人</small></div><div class="card">`;
+ list.forEach(d=>{h+=`<button class="gi" data-a="debt" data-n="${d.name}"><span class="md"><b>${d.name}</b><small>最后一笔 ${d.last}</small></span><span class="rt">${money(d.amt)}</span></button>`});
+ return h+'</div>';
+}
+function vMe(){
+ return `<div class="hello"><div><h2>王姐</h2><small>王姐便利店 · 老板</small></div></div>
+ <div class="card est"><div><small>本月卖了 · 毛利约</small><b>¥36,480 · ¥7,120</b><small style="color:var(--wn);font-weight:700;margin-top:.2em">毛利没算：苹果（缺进价）</small></div></div>
+ <div class="sec-t">记账方式</div>
+ <div class="card" style="padding:.8em .9em;display:flex;flex-direction:column;gap:.5em">
+  <div class="seg"><button class="${S.mode==='each'?'on':''}" data-a="mode" data-v="each">逐笔记</button><button class="${S.mode==='count'?'on':''}" data-a="mode" data-v="count">进货 + 盘点倒推</button></div>
+  <small class="mu" style="font-size:.76em">${S.mode==='each'?'每卖一笔都说。盘点时差额当作「可能漏记」提醒你。':'只记进货、赊账、退货。卖了多少靠盘点倒推，首页会显示估算卖出。'}</small></div>
+ <div class="sec-t">字号</div>
+ <div class="seg"><button class="${S.fs==='big'?'on':''}" data-a="fs" data-v="big">大</button><button class="${S.fs==='std'?'on':''}" data-a="fs" data-v="std">标准</button></div>
+ <div class="card">
+  <button class="mi" data-a="openAlias"><span>说法本<small>你和店里教过系统的说法，${AL.length} 条</small></span><span class="ar">›</span></button>
+  <button class="mi" data-a="tip" data-v="店里的人：王姐（老板）、老公（能记、能改）"><span>店里的人<small>王姐（老板）· 老公</small></span><span class="ar">›</span></button>
+  <button class="mi" data-a="tip" data-v="基础版：本月智能理解用了 38 / 300 次。标准说法不算次数。"><span>套餐<small>基础版 · 12月15日到期</small></span><span class="ar">›</span></button>
+  <button class="mi" data-a="tip" data-v="会生成 Excel，转发到微信「文件传输助手」。正式版要滑动确认。"><span>导出全部账<small>文件转发到微信</small></span><span class="ar">›</span></button>
+  <button class="mi" data-a="tip" data-v="电脑上打开微信，搜同一个小程序，就是表格版大屏。"><span>在电脑上用<small>电脑版微信里打开同一个小程序</small></span><span class="ar">›</span></button>
+ </div>`;
+}
+function vPending(){
+ const fill=PEND.filter(p=>p.kind==='fill'),un=PEND.filter(p=>p.kind==='unconf');const list=S.ptab==='fill'?fill:un;
+ let h=`<div class="seg"><button class="${S.ptab==='fill'?'on':''}" data-a="ptab" data-v="fill">要补 ${fill.length}</button><button class="${S.ptab==='unconf'?'on':''}" data-a="ptab" data-v="unconf">没确认 ${un.length}</button></div>
+ <small class="mu" style="font-size:.78em;padding:0 .2em">${S.ptab==='fill'?'账已经记了，就差这一项。补上之前，利润不算它们。':'说过但没点确认的卡，点开接着确认。'}</small><div class="card">`;
+ if(!list.length)h+=`<div class="empty">都处理完了</div>`;
+ list.forEach(p=>{h+=`<button class="gi" data-a="pend" data-id="${p.id}"><span class="md"><b>${p.title}</b><small class="w">${p.desc}</small></span><span class="rt" style="font-family:var(--sans);font-size:.85em;color:var(--act)">${p.kind==='fill'?'补 ›':'打开 ›'}</span></button>`});
+ return h+'</div>';
+}
+function vAlias(){
+ const g=(sc,t)=>{const l=AL.filter(a=>a.scope===sc);return `<div class="sec-t">${t}</div><div class="card">${l.length?l.map(a=>`<div class="al"><span><b>你说「${a.from}」→ 记成 ${a.to}</b><small>${a.type} · 用过 ${a.n} 次</small></span><button data-a="delAlias" data-f="${a.from}">删</button></div>`).join(''):'<div class="empty">还没有</div>'}</div>`};
+ return `<small class="mu" style="font-size:.78em;padding:0 .2em">系统记下的说法，下次直接听懂，不用再问、也不调用 AI。不对就删掉。</small>${g('store','全店都用')}${g('me','只对我（王姐）')}`;
+}
+function vCount(){
+ const c=S.count;const list=[...P].sort((a,b)=>a.shelf-b.shelf);const left=list.filter(p=>c.e[p.id]==null).length;
+ let h=`<div class="cstat"><span>已数 <b>${list.length-left}</b> 样</span><span class="mu">还剩 <b style="color:var(--act)">${left}</b> 样没数 · 没说的不当 0</span></div>
+ <div class="said-strip">${c.chips.length||c.live?'':'<span class="sc live">刚才说的会出现在这里</span>'}${c.chips.map((x,i)=>`<button class="sc ${x.pid?'':'bad'}" data-a="chip" data-i="${i}">${x.pid?'':'没对上：'}${x.text}</button>`).join('')}${c.live?`<span class="sc live">${c.live}…</span>`:''}</div><div class="card">`;
+ list.forEach(p=>{const e=c.e[p.id];h+=`<button class="ci ${e!=null?'done':''} ${c.last===p.id?'flash':''}" id="ci-${p.id}" data-a="cRow" data-id="${p.id}"><span class="md"><b>${p.name}</b><small>账上 ${stockText(p)}</small>${e!=null&&e.said?`<em>“${e.said}”</em>`:''}</span><span class="q">${e!=null?stockText(p,e.base):'没数'}</span></button>`});
+ return h+'</div>';
+}
+function vRecon(){
+ const c=S.count,r=S.recon;const sold=S.mode==='each'?'漏记卖出':'散卖了';
+ const rows=P.filter(p=>c.e[p.id]!=null).map(p=>({p,d:c.e[p.id].base-p.stock}));const diff=rows.filter(x=>x.d!==0),same=rows.filter(x=>x.d===0);
+ const skip=P.length-rows.length;let est=0,noPrice=[];
+ diff.forEach(({p,d})=>{if(d<0&&r[p.id]==='sold'){if(p.price){const per=p.conv?p.price:p.price;est+=-d*per}else noPrice.push(p.name)}});
+ let h=`<small class="mu" style="font-size:.8em;padding:0 .2em">账上应剩 = 上次盘点 + 进的 − 记下卖出的。差额怎么来的，点一下。</small><div class="card">`;
+ diff.forEach(({p,d})=>{const k=r[p.id];const opts=d<0?[['sold',sold],['lost','坏了丢了'],['wrong','我数错了']]:[['in','漏记进货'],['wrong','我数错了']];
+  h+=`<div class="rc"><div class="h"><b>${p.name}</b><span>${d<0?'少了':'多了'} ${stockText(p,Math.abs(d))}</span></div><p>账上应剩 ${stockText(p)}，你数的是 ${stockText(p,c.e[p.id].base)}${k==='wrong'?' · 这样先不改，回头重数':''}</p>
+  <div class="seg">${opts.map(([v,l])=>`<button class="${k===v?'on':''}" data-a="rc" data-id="${p.id}" data-v="${v}">${l}</button>`).join('')}</div></div>`});
+ if(!diff.length)h+=`<div class="empty">全部对得上</div>`;
+ h+=`</div><div class="card est"><div><small>按售价估算${sold==='散卖了'?'散卖':'漏记的卖出'}</small><b>${money(est)}</b>${noPrice.length?`<small style="color:var(--wn);font-weight:700">没算：${noPrice.join('、')}（没有售价）</small>`:''}</div></div>
+ <small class="mu" style="font-size:.78em;padding:0 .2em">${same.length} 样账对得上（已折叠）· ${skip} 样这次没数，库存不变</small>`;
+ return h;
+}
+
+/* ---------- overlays ---------- */
+function oVoice(){const v=S.voice;
+ if(v.stage==='pick')return `<div class="ov" data-a="closeVoice"><div class="sheet" data-stop><div class="grab"></div><div class="voice">
+  <h3>想记什么，直接说</h3><div class="hint">轻点一下开始，说完停一下自动结束；也可以按住说、松手结束</div>
+  <button class="ring" data-a="ex" data-id="sell">${ICON.mic}点一下说</button>
+  <div class="examples"><div class="hint" style="text-align:left">原型里点一句示例来模拟说话：</div>${EX.map(e=>`<button class="ex" data-a="ex" data-id="${e.id}"><span>“${e.text}”</span><small>${e.hint}</small></button>`).join('')}</div></div></div></div>`;
+ return `<div class="ov"><div class="sheet"><div class="grab"></div><div class="voice">
+  ${v.stage==='listen'?`<div class="wave">${'<i></i>'.repeat(9)}</div><div class="live">${v.text}<span class="cur"></span></div><button class="ring on" data-a="stopVoice">${ICON.mic}再点一下结束</button><div class="hint">说完停一下会自动结束</div>`
+  :`<div class="live">“${v.full}”</div><div class="think">在理解 <i></i><i></i><i></i></div>`}</div></div></div>`;
+}
+function rowHtml(r){
+ if(r.gap){const g=r.gap,c=S.card,cur=c.vals[g.key];
+  let inner='';
+  if(g.opts)inner+=`<div class="opts">${g.opts.map(o=>{const on=o.v==='other'?(cur&&!g.opts.some(x=>x.v==cur)):cur==o.v;return `<button class="opt ${on?'on':''}" data-a="gapOpt" data-key="${g.key}" data-v="${o.v}" data-unit="${o.unit||''}">${o.v==='other'&&on?cur+' '+o.unit:o.l}</button>`}).join('')}</div>`;
+  if(g.num)inner+=`<button class="gnum ${cur?'filled':''}" data-a="gapNum" data-key="${g.key}" data-unit="${g.unit}" data-k="${r.k}">${cur?money(cur)+(g.unit.includes('/')?' / '+g.unit.split('/')[1]:''):'点这里填（'+g.unit+'）'}</button>`;
+  return `<div class="r gap ${g.must?'must':'later'}"><div class="gh"><b>${r.k} · ${g.q}</b><small>${g.must?'要先填':'可以以后补'}</small></div>${inner}</div>`}
+ return `<div class="r"><span class="k">${r.k}</span><span class="v ${r.cls||''}"><span>${r.v}</span>${r.sub?`<small>${r.sub}</small>`:''}</span></div>`;
+}
+function oCard(){const c=S.card;
+ return `<div class="ov"><div class="sheet"><div class="grab"></div><div class="in">
+  <div class="ch"><span class="ctag ${c.tone}">${c.tag}</span><button class="lnk" data-a="cardNext">${ICON.mic}说下一句</button></div>
+  <div class="said"><small><span>你说的</span><span>${c.fromPend?'从待处理打开':'刚刚'}</span></small>“${c.said}”</div>
+  <div class="rows">${c.rows().map(rowHtml).join('')}</div>
+  <div class="impact">${c.impact().map(([k,a,b])=>`<div class="imp"><span class="mu">${k}</span><b>${a!=null?a+'<i>→</i>':''}${b}</b></div>`).join('')}</div>
+ </div><div class="cfoot"><button class="cta" data-a="cardOk" ${c.ok()?'':'disabled'}>${c.btn()}</button>
+ <div class="subs"><button data-a="cardLater">先存着</button><button data-a="cardDrop">不记了</button></div></div></div></div>`;
+}
+function oSheet(){const s=S.sheet;
+ if(s.type==='kp')return `<div class="ov" data-a="closeSheet"><div class="sheet" data-stop><div class="grab"></div><div class="in">
+  <h3>${s.title}</h3>${s.sub?`<div class="sub-t">${s.sub}</div>`:''}<div class="kpd">${s.val||'<span class="mu" style="font-weight:400">0</span>'}<small>${s.unit}</small></div>
+  <div class="kp">${['1','2','3','4','5','6','7','8','9','.','0','del'].map(k=>`<button data-a="kp" data-k="${k}">${k==='del'?'删':k}</button>`).join('')}<button class="ok" data-a="kpOk">确定</button></div></div></div></div>`;
+ if(s.type==='row'){const f=F.find(x=>x.id===s.id);
+  return `<div class="ov" data-a="closeSheet"><div class="sheet" data-stop><div class="grab"></div><div class="in">
+  <h3><span class="tg t-${f.type}">${f.type}</span>${ftitle(f)}</h3><div class="sub-t">${f.t} · ${f.who} · ${f.undone?'已撤':f.how}</div>
+  <div class="said"><small><span>当时说的</span></small>“${f.said||'—'}”</div>${f.note?`<div class="sub-t" style="margin:0">${f.note}</div>`:''}
+  <div class="rows"><div class="r"><span class="k">金额</span><span class="v">${f.amt!=null?money(f.amt):f.miss}</span></div>${f.pid?`<div class="r"><span class="k">${prod(f.pid).name} 现在</span><span class="v">${stockText(prod(f.pid))}</span></div>`:''}</div>
+  </div><div class="cfoot">${f.undone?'<button class="cta" disabled>这笔已经撤了</button>':`${f.qty!=null?'<button class="cta" data-a="rowEdit">改数量</button>':''}<div class="subs"><button data-a="rowUndo">撤掉这笔</button><button data-a="closeSheet">关闭</button></div>`}</div></div></div>`}
+ if(s.type==='choose'){const left=P.filter(p=>S.count.e[p.id]==null);
+  return `<div class="ov" data-a="closeSheet"><div class="sheet" data-stop><div class="grab"></div><div class="in"><h3>「${s.text}」是哪件货？</h3><div class="sub-t">选完会记进你的说法本，下次直接认出来</div>
+  <div class="card">${left.map(p=>`<button class="gi" data-a="chooseP" data-id="${p.id}"><span class="md"><b>${p.name}</b><small>账上 ${stockText(p)}</small></span><span class="rt" style="font-size:.9em">${s.q} ${p.unit}</span></button>`).join('')}</div></div></div></div>`}
+ if(s.type==='debt'){const d=D.find(x=>x.name===s.n);
+  return `<div class="ov" data-a="closeSheet"><div class="sheet" data-stop><div class="grab"></div><div class="in"><h3>${d.name}</h3><div class="sub-t">${d.dir==='in'?'欠你':'你欠他'} <b class="serif" style="font-size:1.4em;color:var(--ink)">${money(d.amt)}</b></div>
+  <div class="card">${[...d.items].reverse().map(([t,x,a])=>`<div class="al"><span><b>${x}</b><small>${t}</small></span><b class="serif" style="${a<0?'color:#355A35':''}">${a<0?'−'+money(-a):money(a)}</b></div>`).join('')}</div>
+  </div><div class="cfoot"><button class="cta" data-a="debtPay">${d.dir==='in'?'记一笔还款':'记一笔付款'}</button><div class="subs"><button data-a="debtSend">发给${d.name}看</button><button data-a="closeSheet">关闭</button></div></div></div></div>`}
+ if(s.type==='prod'){const p=prod(s.id);const fl=F.filter(f=>f.pid===p.id&&!f.undone).slice(-4).reverse();const al=AL.filter(a=>a.to.startsWith(p.name)||a.from.startsWith(p.name));
+  return `<div class="ov" data-a="closeSheet"><div class="sheet" data-stop><div class="grab"></div><div class="in"><h3>${p.name}</h3><div class="sub-t">现在 <b class="serif" style="font-size:1.4em;color:var(--ink)">${stockText(p)}</b></div>
+  <div class="rows"><div class="r"><span class="k">进价</span><span class="v ${p.cost==null?'guess':''}"><span>${p.cost==null?'待补':money(p.cost)+'/'+p.unit}</span></span></div>
+  <div class="r"><span class="k">售价</span><span class="v">${p.price?money(p.price)+'/'+(p.small||p.unit):'<span class="mu" style="font-weight:400">卖的时候再说</span>'}</span></div>
+  <div class="r"><span class="k">一${p.unit}几个</span><span class="v">${p.conv?p.conv+' '+p.small:'<span class="mu" style="font-weight:400">还没用到</span>'}</span></div>
+  <div class="r"><span class="k">叫法</span><span class="v">${al.length?al.map(a=>a.from).join('、'):'<span class="mu" style="font-weight:400">—</span>'}</span></div></div>
+  <div class="sec-t">今天的进出</div><div class="card">${fl.length?fl.map(f=>`<div class="al"><span><b><span class="tg t-${f.type}">${f.type}</span>${f.qty!=null?f.qty+' '+f.u:''}</b><small>${f.t} · ${f.who}</small></span><b class="serif">${f.amt!=null?money(f.amt):''}</b></div>`).join(''):'<div class="empty">今天没有</div>'}</div>
+  </div><div class="cfoot">${p.cost==null?`<button class="cta" data-a="prodCost">补进价</button>`:''}<div class="subs"><button data-a="closeSheet">关闭</button></div></div></div></div>`}
+ return '';
+}
+
+/* ---------- render ---------- */
+function render(){
+ const scr=document.getElementById('scr');const m=scr.querySelector('main');const top=m?m.scrollTop:0;const samePage=scr.dataset.view===(S.page||S.tab);
+ scr.className='scr '+(S.fs==='std'?'std':'');
+ const titles={today:'王姐便利店',goods:'货品',debt:'欠款',me:'我的',pending:'待处理',alias:'说法本',count:'盘点 · 进行中',recon:'对账结果'};
+ const view=S.page||S.tab;let body={today:vToday,goods:vGoods,debt:vDebt,me:vMe,pending:vPending,alias:vAlias,count:vCount,recon:vRecon}[view]();
+ let h=`<div class="sb"><span>9:41</span><span>5G · 86%</span></div><div class="nav">${S.page?'<button class="back" data-a="back" aria-label="返回">‹</button>':''}<span class="t">${titles[view]}</span><span class="cap">···<i></i>◎</span></div><main>${body}</main>`;
+ if(view==='count'){const c=S.count;h+=`<div class="cbar"><button class="cmic ${c.listening?'on':''}" data-a="cMic">${c.listening?'<span class="wave" style="height:1.4em">'+'<i style="background:#fff"></i>'.repeat(5)+'</span> 在听… 点一下结束':ICON.mic+(c.chips.length?'接着说':'点一下说，连着说一串')}</button><button class="cdone" data-a="toRecon">数完了</button></div>`}
+ else if(view==='recon'){h+=`<div class="cbar"><button class="cmic" data-a="reconOk">确认盘点，改好库存</button></div>`}
+ else if(!S.page){h+=`<nav class="tabs">${[['today','今天'],['goods','货品']].map(([k,l])=>`<button class="${S.tab===k?'on':''}" data-a="tab" data-v="${k}">${ICON[k]}${l}</button>`).join('')}<button class="mic" data-a="mic" aria-label="说话记账">${ICON.mic}说</button>${[['debt','欠款'],['me','我的']].map(([k,l])=>`<button class="${S.tab===k?'on':''}" data-a="tab" data-v="${k}">${ICON[k]}${l}</button>`).join('')}</nav>`}
+ if(S.voice)h+=oVoice();
+ if(S.card)h+=oCard();
+ if(S.sheet)h+=oSheet();
+ if(S.toast)h+=`<div class="toast ${S.page||S.card?'hi':''}"><div class="tx">${S.toast.text}${S.toast.sub?`<small>${S.toast.sub}</small>`:''}</div>${S.toast.action?`<button data-a="toastAct">${S.toast.action}</button>`:''}</div>`;
+ scr.innerHTML=h;scr.dataset.view=view;
+ const nm=scr.querySelector('main');if(samePage&&nm)nm.scrollTop=top;
+ if(view==='count'&&S.count.last){const el=document.getElementById('ci-'+S.count.last);if(el)el.scrollIntoView({block:'nearest',behavior:'smooth'})}
+ if(S.flash){const id=S.flash;setTimeout(()=>{if(S.flash===id)S.flash=null},1500)}
+}
+
+/* ---------- voice sim ---------- */
+let vTimer=null;
+function startVoice(id){const ex=EX.find(e=>e.id===id);S.voice={stage:'listen',text:'',full:ex.text,id};let i=0;render();
+ clearInterval(vTimer);vTimer=setInterval(()=>{i++;S.voice.text=ex.text.slice(0,i);if(i>=ex.text.length){clearInterval(vTimer);setTimeout(think,500)}render()},70)}
+function think(){if(!S.voice)return;S.voice.stage='think';render();setTimeout(()=>{const id=S.voice.id;S.voice=null;runScenario(id);render()},800)}
+function openVoice(){if(S.card){parkCard();toast('上一笔没确认，先放进「待处理」','说完这一句再回去确认')}S.voice={stage:'pick'};render()}
+function parkCard(){const c=S.card;if(!c.fromPend)PEND.push({id:'p'+(++nid),kind:'unconf',sc:c.id,title:c.short,desc:now()+' 说的，放下没确认'});S.card=null}
+
+/* ---------- count sim ---------- */
+const BATCH=[[{text:'可乐九箱',pid:'kl',q:9},{text:'雪碧五箱',pid:'xb',q:5},{text:'红牛没了',pid:'hn',q:0},{text:'大绿瓶五个',pid:null,q:5},{text:'冰红茶三十瓶',pid:'bht',q:30}],[{text:'苹果八斤',pid:'pg',q:8},{text:'软中华六条',pid:'zh',q:6}]];
+let cTimers=[];
+function cMic(){const c=S.count;if(c.listening){cTimers.forEach(clearTimeout);cTimers=[];c.listening=false;c.live='';render();return}
+ const b=BATCH[c.batch];if(!b){toast('原型里的示例说完了','可以点某一行，用数字键盘填');render();return}
+ c.listening=true;c.batch++;render();
+ b.forEach((it,i)=>{cTimers.push(setTimeout(()=>{c.live=it.text;render()},i*1300+200));
+  cTimers.push(setTimeout(()=>{c.live='';c.chips.push({text:it.text,pid:it.pid,q:it.q});if(it.pid){const p=prod(it.pid);c.e[it.pid]={base:p.conv?it.q*p.conv:it.q,said:it.text};c.last=it.pid}render()},i*1300+1000))});
+ cTimers.push(setTimeout(()=>{c.listening=false;render()},b.length*1300+300));
+}
+function baseFor(p,q){return p.conv?q*p.conv:q}
+
+/* ---------- events ---------- */
+document.addEventListener('click',e=>{
+ const el=e.target.closest('[data-a]');if(!el)return;
+ if(el.hasAttribute('data-stop'))return;
+ const a=el.dataset.a,d=el.dataset;
+ if((a==='closeSheet'||a==='closeVoice')&&e.target.closest('[data-stop]')&&el.classList.contains('ov'))return;
+ switch(a){
+  case 'tab':S.tab=d.v;S.page=null;break;
+  case 'range':S.range=d.v;break;
+  case 'mic':openVoice();return;
+  case 'ex':startVoice(d.id);return;
+  case 'stopVoice':clearInterval(vTimer);think();return;
+  case 'closeVoice':S.voice=null;break;
+  case 'cardOk':{const c=S.card;c.confirm();if(c.fromPend)PEND=PEND.filter(p=>p.id!==c.fromPend);S.card=null;break}
+  case 'cardLater':parkCard();toast('先存着了','在「待处理 · 没确认」里');break;
+  case 'cardDrop':{const c=S.card;if(c.fromPend)PEND=PEND.filter(p=>p.id!==c.fromPend);S.card=null;toast('没记');break}
+  case 'cardNext':openVoice();return;
+  case 'gapOpt':if(d.v==='other'){openKp(`一箱几${d.unit}`,'',d.unit,v=>{S.card.vals[d.key]=v})}else S.card.vals[d.key]=isNaN(+d.v)?d.v:+d.v;break;
+  case 'gapNum':openKp(d.k,'',d.unit,v=>{S.card.vals[d.key]=v});break;
+  case 'kp':{const s=S.sheet;if(d.k==='del')s.val=s.val.slice(0,-1);else if(!(d.k==='.'&&s.val.includes('.'))&&s.val.length<8)s.val+=d.k;break}
+  case 'kpOk':{const s=S.sheet;if(s.val===''||isNaN(+s.val))return;S.sheet=null;s.done(+s.val);break}
+  case 'closeSheet':S.sheet=null;break;
+  case 'toastAct':{const fn=S.toast.fn;S.toast=null;fn&&fn();break}
+  case 'row':S.sheet={type:'row',id:+d.id};break;
+  case 'rowEdit':{const f=F.find(x=>x.id===S.sheet.id);openKp('改成多少',`现在是 ${f.qty} ${f.u}`,f.u,v=>{const o={q:f.qty,a:f.amt};applyQty(f,v);toast(`已改：${f.pid?prod(f.pid).name:''} ${o.q} ${f.u} → ${v} ${f.u}`,o.a!=null?`${money(o.a)} → ${money(f.amt)}`:'','改回去',()=>{applyQty(f,o.q);f.note=null;toast('改回去了')})});return}
+  case 'rowUndo':{const f=F.find(x=>x.id===S.sheet.id);undoFlow(f);S.sheet=null;toast('撤掉了：'+ftitle(f),'流水里划掉留着，方便查','恢复',()=>{f.undone=false;if(f.pid&&f.base)prod(f.pid).stock+=f.base;toast('恢复了')});break}
+  case 'openPend':S.page='pending';break;
+  case 'ptab':S.ptab=d.v;break;
+  case 'pend':{const p=PEND.find(x=>x.id===d.id);if(p.kind==='unconf'){const c=CARDS[p.sc]();c.fromPend=p.id;S.card=c;break}
+   const f=F.find(x=>x.id===p.fid);openKp(p.field==='cost'?'补进价':'补收了多少',p.title,p.unit,v=>{
+    if(p.field==='cost'){const pr=prod(f.pid);pr.cost=v;f.amt=Math.round(v*f.qty*100)/100}else f.amt=v;
+    f.miss=null;PEND=PEND.filter(x=>x.id!==p.id);toast('补上了：'+p.title,'金额 '+money(f.amt)+'，现在算进利润')});return}
+  case 'back':S.page=S.page==='recon'?'count':(S.page==='alias'?null:null);if(S.page===null&&d&&S.tab!=='me'&&false){}if(!S.page&&S.count&&!S.count.done){toast('盘点先存着，下次接着说')}break;
+  case 'gf':S.gf=d.v;break;
+  case 'prod':S.sheet={type:'prod',id:d.id};break;
+  case 'prodCost':{const p=prod(S.sheet.id);openKp('补进价',p.name,'元/'+p.unit,v=>{p.cost=v;F.filter(f=>f.pid===p.id&&f.type==='进'&&f.amt==null).forEach(f=>{f.amt=v*f.qty;f.miss=null;PEND=PEND.filter(x=>x.fid!==f.id)});toast('补上了：'+p.name+' 进价 '+money(v))});return}
+  case 'startCount':if(!S.count)S.count={e:{},chips:[],batch:0,listening:false,live:'',last:null};S.page='count';break;
+  case 'cMic':cMic();return;
+  case 'cRow':{const p=prod(d.id);openKp(p.name+' 数出来多少',`账上 ${stockText(p)}`,p.unit,v=>{S.count.e[p.id]={base:baseFor(p,v),said:null};S.count.last=p.id});return}
+  case 'chip':{const x=S.count.chips[+d.i];if(x.pid){S.count.last=x.pid;break}S.sheet={type:'choose',text:x.text,q:x.q,i:+d.i};break}
+  case 'chooseP':{const s=S.sheet,p=prod(d.id),x=S.count.chips[s.i];x.pid=p.id;x.text=x.text+' → '+p.name;S.count.e[p.id]={base:baseFor(p,s.q),said:s.text};S.count.last=p.id;AL.push({scope:'me',from:'大绿瓶',to:p.name,type:'商品叫法',n:1});S.sheet=null;toast('「大绿瓶」记成 '+p.name,'已记进你的说法本');break}
+  case 'toRecon':{const c=S.count;if(!Object.keys(c.e).length){toast('还没数任何一样');break}cTimers.forEach(clearTimeout);c.listening=false;c.live='';
+   S.recon={};P.forEach(p=>{if(c.e[p.id]!=null){const dd=c.e[p.id].base-p.stock;if(dd)S.recon[p.id]=dd<0?'sold':'in'}});S.page='recon';break}
+  case 'rc':S.recon[d.id]=d.v;break;
+  case 'reconOk':{const c=S.count;let n=0,dn=0;P.forEach(p=>{const e=c.e[p.id];if(e==null)return;if(S.recon[p.id]==='wrong')return;if(e.base!==p.stock)dn++;p.stock=e.base;n++});
+   F.push({id:++nid,t:now(),type:'盘',name:`盘点 ${n} 样`,amt:null,miss:dn?`${dn} 样有差额`:'全部对上',who:'王姐',how:'确认过',said:c.chips.map(x=>x.text).join('，')});S.flash=nid;
+   S.count=null;S.recon=null;S.page=null;S.tab='goods';toast(`盘点好了：改了 ${n} 样库存`,dn?`${dn} 样有差额，已按你选的记下`:'');break}
+  case 'dtab':S.dtab=d.v;break;
+  case 'debt':S.sheet={type:'debt',n:d.n};break;
+  case 'debtPay':{const dd=D.find(x=>x.name===S.sheet.n);openKp(dd.dir==='in'?dd.name+' 还了多少':'付给'+dd.name+'多少',`现在 ${money(dd.amt)}`,'元',v=>{dd.amt=Math.max(0,dd.amt-v);dd.items.push(['今天',dd.dir==='in'?'还了':'付了',-v]);dd.last='今天';
+    F.push({id:++nid,t:now(),type:'收',party:dd.name,name:dd.dir==='in'?'还款':'付款',amt:v,who:'王姐',how:'确认过',said:'（手动记）'});toast(`已记：${dd.name} ${dd.dir==='in'?'还了':'付了'} ${money(v)}`,`还剩 ${money(dd.amt)}`)});return}
+  case 'debtSend':S.sheet=null;toast('对账单图片生成好了','选一个微信聊天发过去（正式版）');break;
+  case 'mode':S.mode=d.v;toast(d.v==='each'?'改成逐笔记':'改成进货 + 盘点倒推','首页会显示估算卖出');break;
+  case 'fs':S.fs=d.v;break;
+  case 'openAlias':S.page='alias';break;
+  case 'delAlias':{const i=AL.findIndex(x=>x.from===d.f);if(i>-1)AL.splice(i,1);toast('删掉了：「'+d.f+'」');break}
+  case 'tip':toast(d.v);break;
+ }
+ render();
+});
+function openKp(title,sub,unit,done){S.sheet={type:'kp',title,sub,unit,val:'',done};render()}
+render();
+</script>
+</body>
+</html>
