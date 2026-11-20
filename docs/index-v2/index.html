@@ -237,6 +237,15 @@ main::-webkit-scrollbar{display:none}
 .al small{display:block;font-size:.74em;color:var(--mu)}
 .al button{font-size:.78em;color:var(--mu);border:1px solid var(--ln);border-radius:999px;padding:.2em .7em}
 .empty{text-align:center;padding:2.2em 1em;color:var(--mu);font-size:.88em}
+
+/* batch & advanced */
+.tg-batch{font-size:.6em;font-weight:700;background:var(--acs);color:var(--act);border-radius:4px;padding:.05em .3em;margin-left:.35em;vertical-align:.1em}
+.brow{display:flex;justify-content:space-between;align-items:flex-start;gap:.8em;padding:.6em 0;border-top:1px solid var(--ln);font-size:.86em}
+.brow:first-child{border-top:0}
+.brow .bl{font-family:var(--serif);font-weight:900;font-variant-numeric:tabular-nums;white-space:nowrap}
+.brow .bmeta small{display:block;font-size:.74em;color:var(--mu);margin-top:.1em}
+.brow .bexp{display:block;color:var(--wn);font-weight:700;font-size:.72em;margin-top:.1em}
+.t-损{background:#F3E3E0;color:#8A3B2E}
 </style>
 </head>
 <body>
@@ -253,6 +262,7 @@ main::-webkit-scrollbar{display:none}
       <li>「卖了两瓶可了」→ <b>猜测卡</b>，红色空格必须先选</li>
       <li>「卖了五瓶农夫山泉」→ 第一次出现「瓶」，<b>当场问一箱几瓶</b></li>
       <li>「李婶拿走两条烟…」→ <b>赊账卡</b>，看欠款怎么变</li>
+      <li>「卖两箱昨天进的可乐」→ <b>指定批次</b>，看不同进价批次怎么算毛利</li>
     </ol>
     <h2>其他可以点的</h2>
     <ul>
@@ -261,6 +271,7 @@ main::-webkit-scrollbar{display:none}
       <li>货品 → 开始盘点：边说边填，再对账</li>
       <li>欠款 → 点人：记还款、发对账单</li>
       <li>我的：切换记账方式、字号、看说法本</li>
+      <li>货品 → 可乐：看批次与价格历史；红牛：临期提醒</li>
     </ul>
   </aside>
 </div>
@@ -268,11 +279,11 @@ main::-webkit-scrollbar{display:none}
 <script>
 /* ---------- data ---------- */
 const P=[
- {id:'kl',name:'可乐 500ml',unit:'箱',small:'瓶',conv:24,stock:288,cost:35,price:3,shelf:1},
- {id:'xb',name:'雪碧 500ml',unit:'箱',small:'瓶',conv:24,stock:120,cost:34,price:3,shelf:1},
+ {id:'kl',name:'可乐 500ml',unit:'箱',small:'瓶',conv:24,stock:288,cost:35,price:3,shelf:1,batches:[{id:'k1',date:'11-18',cost:34,left:240,exp:null,supplier:'南门批发'},{id:'k2',date:'11-20',cost:36,left:48,exp:null,supplier:'王老板批发'}]},
+ {id:'xb',name:'雪碧 500ml',unit:'箱',small:'瓶',conv:24,stock:120,cost:34,price:3,shelf:1,batches:[{id:'x1',date:'11-19',cost:34,left:120,exp:null,supplier:''}]},
  {id:'kl2',name:'可乐 2L',unit:'瓶',stock:5,cost:5.5,price:8,shelf:1},
  {id:'bht',name:'冰红茶',unit:'瓶',stock:37,cost:2.2,price:4,shelf:2},
- {id:'hn',name:'红牛',unit:'罐',stock:4,cost:4.5,price:6,shelf:2,low:6},
+ {id:'hn',name:'红牛',unit:'罐',stock:4,cost:4.5,price:6,shelf:2,low:6,batches:[{id:'h1',date:'10-20',cost:4.5,left:2,exp:'11-25',supplier:''},{id:'h2',date:'11-15',cost:4.8,left:2,exp:'12-10',supplier:''}]},
  {id:'nf',name:'农夫山泉',unit:'箱',stock:6,cost:24,price:null,shelf:3},
  {id:'zh',name:'软中华',unit:'条',stock:7,cost:210,price:230,shelf:4},
  {id:'pg',name:'苹果',unit:'斤',stock:10,cost:null,price:5,shelf:5},
@@ -332,6 +343,8 @@ const EX=[
  {id:'guess',text:'卖了两瓶可了',hint:'没听准'},
  {id:'unit',text:'卖了五瓶农夫山泉',hint:'新单位'},
  {id:'owe',text:'李婶拿走两条烟，一共四百六，说下回给',hint:'赊账'},
+ {id:'batch',text:'卖两箱昨天进的可乐',hint:'指定批次'},
+ {id:'loss',text:'坏了三瓶冰红茶',hint:'报损'},
 ];
 function runScenario(id){
  if(id==='sell'){
@@ -344,6 +357,8 @@ function runScenario(id){
   const old={qty:f.qty,amt:f.amt,base:f.base};applyQty(f,4);
   toast(`已改：冰红茶 ${old.qty} 瓶 → 4 瓶`,`${money(old.amt)} → ${money(f.amt)}`,'改回去',()=>{applyQty(f,old.qty);f.note=null;toast('改回去了')});return;
  }
+ if(id==='loss'){const p=prod('bht');addFlow({type:'损',pid:'bht',qty:3,u:'瓶',amt:null,miss:'报损',how:'直接记',said:'坏了三瓶冰红茶',base:-3});
+  toast('已记：报损 冰红茶 3 瓶','损耗单列，不算收入 · 冰红茶还剩 '+stockText(p));return}
  if(id==='newp'&&prod('A')){
   const p=prod('A');const f=addFlow({type:'进',pid:'A',qty:20,u:'箱',amt:p.cost?p.cost*20:null,miss:p.cost?null:'进价待补',how:p.cost?'直接记':'确认过',said:'今天进了货A二十箱',base:20});
   if(!p.cost)PEND.push({id:'p'+(++nid),kind:'fill',fid:f.id,field:'cost',title:'货A · 进了 20 箱',desc:'进价还空着',unit:'元/箱'});
@@ -357,7 +372,7 @@ function undoFlow(f){f.undone=true;if(f.pid&&f.base)prod(f.pid).stock-=f.base;S.
 const CARDS={
  newp(){const c={id:'newp',tag:'新货 · 建档并入库',tone:'',said:'今天进了货A二十箱',short:'新货 · 货A 20 箱',vals:{cost:null}};
   c.rows=()=>[{k:'商品',v:'货A',cls:'new',sub:'店里还没有，确认后新建'},{k:'数量',v:'20 箱',sub:'以后货A按「箱」记'},
-   {k:'进价',gap:{must:false,q:'没说进价',num:true,key:'cost',unit:'元/箱'}},{k:'日期',v:'今天 11月20日'}];
+   {k:'进价',gap:{must:false,q:'这批进价多少？',num:true,key:'cost',unit:'元/箱'}},{k:'这批',v:'确认后单独记一批',sub:'以后卖货能按批次算成本'},{k:'日期',v:'今天 11月20日'}];
   c.impact=()=>[['货A 库存','0','20 箱'],['本单金额',null,c.vals.cost?money(c.vals.cost*20):'补上进价后再算']];
   c.ok=()=>true;c.btn=()=>c.vals.cost?`确认：新建货A，入库 20 箱 ${money(c.vals.cost*20)}`:'确认：新建货A，入库 20 箱（进价待补）';
   c.confirm=()=>{P.push({id:'A',name:'货A',unit:'箱',stock:0,cost:c.vals.cost,price:null,shelf:6});
@@ -393,6 +408,15 @@ const CARDS={
   c.impact=()=>[['红牛 库存',stockText(p),stockText(p,p.stock+2)]];
   c.ok=()=>true;c.btn=()=>'确认：王老板退回红牛 2 罐，退 ¥12';
   c.confirm=()=>{addFlow({type:'退',pid:'hn',party:'王老板',qty:2,u:'罐',amt:12,how:'确认过',said:c.said,base:2});toast('已记：退货 红牛 2 罐，退 ¥12','红牛现在 '+stockText(p))};return c},
+ batch(){const p=prod('kl');const c={id:'batch',tag:'卖 · 指定批次',tone:'',said:'卖两箱昨天进的可乐',short:'卖 · 可乐 2 箱',vals:{bid:'k1'}};
+  c.rows=()=>[{k:'商品',v:'可乐 500ml',sub:'你有多批，这次按你说的出'},{k:'数量',v:'2 箱'},
+   {k:'从哪批出',gap:{must:true,q:'哪一批？',key:'bid',opts:p.batches.map(b=>({l:b.date+' 进 ¥'+b.cost+'/箱 · 剩 '+b.left+(b.id==='k1'?'（建议·先进先出）':''),v:b.id}))}},
+   {k:'收了多少',v:money(p.price*p.conv*2),sub:'按售价 ¥'+p.price+'/瓶 × '+(p.conv*2)+' 瓶 算'}];
+  c.impact=()=>{const b=p.batches.find(x=>x.id===c.vals.bid)||p.batches[0];const rev=p.price*p.conv*2,cost=b.cost*2;return [[b.date+' 那批剩余',b.left,b.left-p.conv*2],['这批的毛利',null,money(rev-cost)+'（按 ¥'+b.cost+'/箱 结转）']]};
+  c.ok=()=>!!c.vals.bid;c.btn=()=>`确认：卖 可乐 2 箱，从 ${c.vals.bid==='k1'?'11-18':'11-20'} 那批出`;
+  c.confirm=()=>{const b=p.batches.find(x=>x.id===c.vals.bid);b.left-=p.conv*2;
+   addFlow({type:'卖',pid:'kl',qty:2,u:'箱',amt:p.price*p.conv*2,how:'确认过',said:c.said,base:-p.conv*2});
+   toast('已记：卖 可乐 2 箱','从 '+b.date+' 那批出，还剩 '+b.left+(b.exp?' · 临期':''))};return c},
 };
 
 /* ---------- views ---------- */
@@ -405,6 +429,7 @@ function vToday(){
   <div class="seg">${[['today','今天'],['week','本周'],['month','本月']].map(([k,l])=>`<button class="${S.range===k?'on':''}" data-a="range" data-v="${k}">${l}</button>`).join('')}</div>
   <div class="card stats"><div><small>卖了</small><b>${money(st.sell)}</b></div><div><small>进货</small><b>${money(st.inn)}</b></div><div class="owe"><small>赊出去</small><b>${money(st.owe)}</b></div></div>`;
  if(fill)h+=`<button class="bar" data-a="openPend"><span>还有 ${fill} 笔没补全，今天赚多少先不算它们</span><span>去补</span></button>`;
+ h+=`<button class="bar" data-a="tip" data-v="红牛有一批 11-25 到期，点进去看批次"><span>有 1 样快到期（红牛 11-25）</span><span>看看</span></button>`;
  if(S.mode==='count')h+=`<div class="card est"><div><small>上次盘点（11月16日）后估算卖出</small><b>¥2,140</b></div><button class="btn-s" data-a="startCount">去盘点</button></div>`;
  if(S.range!=='today'){h+=`<div class="card empty">${S.range==='week'?'本周':'本月'}共 ${st.n} 笔<br>（原型只演示今天的流水）</div>`;return h}
  h+=`<div class="card flow"><h3><span>今日流水 · ${st.n} 笔</span><span>点一笔可以改或撤</span></h3>`;
@@ -422,8 +447,8 @@ function vGoods(){
  <div class="chips">${[['all','全部 '+P.length],['low','快没了'],['nocost','缺进价']].map(([k,l])=>`<button class="chip ${S.gf===k?'on':''}" data-a="gf" data-v="${k}">${l}</button>`).join('')}</div><div class="card">`;
  if(!list.length)h+=`<div class="empty">没有</div>`;
  list.forEach(p=>{const low=p.stock<=(p.low||(p.conv?p.conv*2:5));
-  h+=`<button class="gi" data-a="prod" data-id="${p.id}"><span class="md"><b>${p.name}</b>${p.cost==null?'<small class="w">进价待补</small>':`<small>进 ${money(p.cost)}/${p.unit}${p.price?` · 卖 ${money(p.price)}/${p.small||p.unit}`:''}</small>`}</span>
-  <span class="rt ${low?'low':''}">${stockText(p)}${low?'<small>快没了</small>':''}</span></button>`});
+  h+=`<button class="gi" data-a="prod" data-id="${p.id}"><span class="md"><b>${p.name}${p.batches?'<span class="tg-batch">批</span>':''}</b>${p.cost==null?'<small class="w">进价待补</small>':`<small>进 ${money(p.cost)}/${p.unit}${p.price?` · 卖 ${money(p.price)}/${p.small||p.unit}`:''}</small>`}</span>
+  <span class="rt ${low?'low':''}">${stockText(p)}${low?'<small>快没了</small>':''}${p.batches&&p.batches.some(b=>b.exp==='11-25')?'<small class="bexp">临期</small>':''}</span></button>`});
  return h+'</div>';
 }
 function vDebt(){
@@ -435,7 +460,7 @@ function vDebt(){
 }
 function vMe(){
  return `<div class="hello"><div><h2>王姐</h2><small>王姐便利店 · 老板</small></div></div>
- <div class="card est"><div><small>本月卖了 · 毛利约</small><b>¥36,480 · ¥7,120</b><small style="color:var(--wn);font-weight:700;margin-top:.2em">毛利没算：苹果（缺进价）</small></div></div>
+ <div class="card est"><div><small>本月卖了 · 毛利约</small><b>¥36,480 · ¥7,120</b><small style="color:var(--wn);font-weight:700;margin-top:.2em">毛利没算：苹果（缺进价）、可乐（11-20 那批没记进价）</small></div></div>
  <div class="sec-t">记账方式</div>
  <div class="card" style="padding:.8em .9em;display:flex;flex-direction:column;gap:.5em">
   <div class="seg"><button class="${S.mode==='each'?'on':''}" data-a="mode" data-v="each">逐笔记</button><button class="${S.mode==='count'?'on':''}" data-a="mode" data-v="count">进货 + 盘点倒推</button></div>
@@ -448,6 +473,7 @@ function vMe(){
   <button class="mi" data-a="tip" data-v="基础版：本月智能理解用了 38 / 300 次。标准说法不算次数。"><span>套餐<small>基础版 · 12月15日到期</small></span><span class="ar">›</span></button>
   <button class="mi" data-a="tip" data-v="会生成 Excel，转发到微信「文件传输助手」。正式版要滑动确认。"><span>导出全部账<small>文件转发到微信</small></span><span class="ar">›</span></button>
   <button class="mi" data-a="tip" data-v="电脑上打开微信，搜同一个小程序，就是表格版大屏。"><span>在电脑上用<small>电脑版微信里打开同一个小程序</small></span><span class="ar">›</span></button>
+  <button class="mi" data-a="tip" data-v="给需要批次的货记批次、选计价方式（先进先出/移动平均）。普通老板不用管。"><span>批次设置<small>高级 · 一般不用管</small></span><span class="ar">›</span></button>
  </div>`;
 }
 function vPending(){
@@ -534,6 +560,7 @@ function oSheet(){const s=S.sheet;
   <div class="r"><span class="k">售价</span><span class="v">${p.price?money(p.price)+'/'+(p.small||p.unit):'<span class="mu" style="font-weight:400">卖的时候再说</span>'}</span></div>
   <div class="r"><span class="k">一${p.unit}几个</span><span class="v">${p.conv?p.conv+' '+p.small:'<span class="mu" style="font-weight:400">还没用到</span>'}</span></div>
   <div class="r"><span class="k">叫法</span><span class="v">${al.length?al.map(a=>a.from).join('、'):'<span class="mu" style="font-weight:400">—</span>'}</span></div></div>
+  ${p.batches?`<div class="sec-t">批次 · ${p.batches.length} 批${p.conv?'（按'+p.unit+'）':''}</div><div class="card" style="padding:0 .9em">${p.batches.map(b=>`<div class="brow"><span class="bmeta"><b>${b.date} 进 ¥${b.cost}/${p.unit}</b><small>${b.supplier||'—'}${b.exp?' · 到期 '+b.exp:''}</small></span><span class="bl">${b.left}<small class="bexp">${b.exp==='11-25'?'临期':''}</small></span></div>`).join('')}</div>`:''}
   <div class="sec-t">今天的进出</div><div class="card">${fl.length?fl.map(f=>`<div class="al"><span><b><span class="tg t-${f.type}">${f.type}</span>${f.qty!=null?f.qty+' '+f.u:''}</b><small>${f.t} · ${f.who}</small></span><b class="serif">${f.amt!=null?money(f.amt):''}</b></div>`).join(''):'<div class="empty">今天没有</div>'}</div>
   </div><div class="cfoot">${p.cost==null?`<button class="cta" data-a="prodCost">补进价</button>`:''}<div class="subs"><button data-a="closeSheet">关闭</button></div></div></div></div>`}
  return '';
@@ -610,7 +637,7 @@ document.addEventListener('click',e=>{
   case 'pend':{const p=PEND.find(x=>x.id===d.id);if(p.kind==='unconf'){const c=CARDS[p.sc]();c.fromPend=p.id;S.card=c;break}
    const f=F.find(x=>x.id===p.fid);openKp(p.field==='cost'?'补进价':'补收了多少',p.title,p.unit,v=>{
     if(p.field==='cost'){const pr=prod(f.pid);pr.cost=v;f.amt=Math.round(v*f.qty*100)/100}else f.amt=v;
-    f.miss=null;PEND=PEND.filter(x=>x.id!==p.id);toast('补上了：'+p.title,'金额 '+money(f.amt)+'，现在算进利润')});return}
+    f.miss=null;PEND=PEND.filter(x=>x.id!==p.id);toast('补上了：'+p.title,'金额 '+money(f.amt)+'，'+(prod(f.pid).batches?'这批的毛利已重算':'现在算进利润'))});return}
   case 'back':S.page=S.page==='recon'?'count':(S.page==='alias'?null:null);if(S.page===null&&d&&S.tab!=='me'&&false){}if(!S.page&&S.count&&!S.count.done){toast('盘点先存着，下次接着说')}break;
   case 'gf':S.gf=d.v;break;
   case 'prod':S.sheet={type:'prod',id:d.id};break;
