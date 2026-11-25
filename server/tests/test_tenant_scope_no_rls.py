@@ -96,7 +96,9 @@ def test_capabilities_do_not_claim_rls_on_sqlite(database: Database) -> None:
     assert capabilities["dialect"] == "sqlite"
     assert capabilities["rls_enabled"] is False
     assert capabilities["isolation_mode"] == "app_scope_only"
-    assert capabilities["tables"] == 34
+    from app.config import EXPECTED_TABLES
+
+    assert capabilities["tables"] == EXPECTED_TABLES == 42
     assert "无 RLS" in capabilities["notes"]
     assert "隔离强度" in capabilities["notes"]
 

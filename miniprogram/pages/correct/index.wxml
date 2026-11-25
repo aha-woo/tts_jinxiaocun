@@ -1,0 +1,58 @@
+<!-- 一步改单卡：改前（服务端单据）+ 改后（本地输入） -->
+<view class="page">
+  <view class="page__gap">
+    <view wx:if="{{loading}}" class="empty">读取这张单…</view>
+
+    <block wx:if="{{doc}}">
+      <view class="card pad">
+        <view class="head">
+          <text class="tag">{{dirLabel}}</text>
+          <text class="no">{{doc.doc_no}}</text>
+        </view>
+        <text class="date">{{doc.biz_date}} · {{doc.payment_status}} · {{doc.status === 'confirmed' ? '已确认' : doc.status}}</text>
+        <text class="total serif-num">合计 {{doc.total_amount_display}}</text>
+      </view>
+
+      <view class="card pad">
+        <text class="c-title">改前 → 改后</text>
+        <view wx:for="{{lines}}" wx:key="productId" class="line">
+          <view class="line__before">
+            <text class="muted">{{item.productName}} · 原：{{item.beforeQty}} {{item.unit}} × ¥{{item.beforePrice || '待补'}}</text>
+          </view>
+          <view class="line__edit">
+            <input
+              class="in"
+              type="digit"
+              value="{{item.qty}}"
+              data-index="{{index}}"
+              data-field="qty"
+              bindinput="onLineInput"
+            />
+            <text class="unit">{{item.unit}} × ¥</text>
+            <input
+              class="in"
+              type="digit"
+              placeholder="待补"
+              value="{{item.price}}"
+              data-index="{{index}}"
+              data-field="price"
+              bindinput="onLineInput"
+            />
+          </view>
+        </view>
+        <text class="hint">修改每行数量和单价，总金额和库存差额自动重算。</text>
+      </view>
+
+      <view wx:if="{{note}}" class="bar">
+        <text>{{note}}</text>
+      </view>
+
+      <button class="cta" bindtap="onSubmitCorrect" loading="{{submitting}}">确认更正 · 一步完成</button>
+      <button class="sub" bindtap="onReverseOnly" disabled="{{submitting}}">只撤销，不重记</button>
+
+      <view wx:if="{{errorText}}" class="bar" style="background:var(--dgrb);border-color:#e0b9b0;color:var(--dgr)">
+        <text>{{errorText}}</text>
+      </view>
+    </block>
+  </view>
+</view>

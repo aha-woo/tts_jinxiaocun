@@ -1,20 +1,42 @@
 {
   "pages": [
     "pages/index/index",
+    "pages/goods/index",
+    "pages/debts/index",
+    "pages/mine/index",
     "pages/card/index",
+    "pages/delivery-note/index",
     "pages/manual/index",
     "pages/pending/index",
     "pages/query/index",
+    "pages/count/index",
+    "pages/correct/index",
+    "pages/gaps/index",
+    "pages/inventory-settings/index",
+    "pages/batches/index",
     "pages/pay/index",
     "pages/admin/index"
   ],
   "window": {
-    "navigationBarTitleText": "语音记账",
-    "navigationBarBackgroundColor": "#1f6feb",
-    "navigationBarTextStyle": "white",
-    "backgroundColor": "#f4f6f8",
+    "navigationBarTitleText": "今天",
+    "navigationBarBackgroundColor": "#f5f1e8",
+    "navigationBarTextStyle": "black",
+    "backgroundColor": "#f5f1e8",
     "backgroundTextStyle": "dark",
     "enablePullDownRefresh": false
+  },
+  "tabBar": {
+    "custom": true,
+    "color": "#7c7367",
+    "selectedColor": "#1f1b16",
+    "backgroundColor": "#fffdf8",
+    "borderStyle": "black",
+    "list": [
+      { "pagePath": "pages/index/index", "text": "今天" },
+      { "pagePath": "pages/goods/index", "text": "货品" },
+      { "pagePath": "pages/debts/index", "text": "欠款" },
+      { "pagePath": "pages/mine/index", "text": "我的" }
+    ]
   },
   "resizable": true,
   "cloud": true,

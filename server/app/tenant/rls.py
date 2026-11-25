@@ -183,11 +183,11 @@ def tenant_policy_expressions(table_name: str, *, nullable_tenant: bool) -> tupl
     而 **空串**（事务结束后残留的值）由 :func:`tenant_guc_uuid_sql` 里的 ``NULLIF`` 兜住。
     """
     tenant_uuid = tenant_guc_uuid_sql()
+    strict_expr = f"(tenant_id = {tenant_uuid})"
     if nullable_tenant:
-        expression = f"(tenant_id IS NULL OR tenant_id = {tenant_uuid})"
-        return expression, expression
-    expression = f"(tenant_id = {tenant_uuid})"
-    return expression, expression
+        using_expr = f"(tenant_id IS NULL OR tenant_id = {tenant_uuid})"
+        return using_expr, strict_expr
+    return strict_expr, strict_expr
 
 
 def isolation_policy_sql(table_name: str, *, nullable_tenant: bool = False) -> str:

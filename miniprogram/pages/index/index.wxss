@@ -1,218 +1,130 @@
-/* 首页（方案 A）：白卡片 + 微信绿 + 大字号，大按钮固定在底部拇指区 */
-.page {
-  min-height: 100vh;
-  background: var(--c-bg);
-  padding: var(--s-2) var(--s-3);
-  box-sizing: border-box;
-  padding-bottom: calc(400rpx + env(safe-area-inset-bottom));
+/* 今天页：样式主体在 app.wxss，这里只放页面独有的说话面板 */
+.page__gap {
+  padding-bottom: 8rpx;
 }
 
-/* 宽屏（电脑版微信 resizable）→ 左录入 / 右动态 双栏 */
-.page--wide {
-  padding-bottom: var(--s-3);
+.fi__strike {
+  text-decoration: line-through;
+  color: var(--mu);
 }
 
-.page--wide .main {
+.vsheet-mask {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  background: rgba(31, 27, 22, 0.35);
   display: flex;
-  align-items: flex-start;
+  align-items: flex-end;
 }
 
-.page--wide .panel {
-  flex: 0 0 520rpx;
-  margin-right: var(--s-3);
+.vsheet {
+  width: 100%;
+  background: var(--sf);
+  border-top: 2rpx solid var(--ln);
+  border-radius: 36rpx 36rpx 0 0;
+  padding: 40rpx 32rpx calc(200rpx + env(safe-area-inset-bottom));
+  box-shadow: 0 -20rpx 48rpx -24rpx rgba(0, 0, 0, 0.3);
 }
 
-.page--wide .side {
-  flex: 1;
-  min-width: 0;
-}
-
-/* ------------------------------------------------------------------ 状态条 */
-.banner {
-  border-radius: var(--r-card);
-  padding: var(--s-2) var(--s-3);
-  margin-bottom: var(--s-2);
-}
-
-.banner--ok {
-  background: var(--c-brand-soft);
-  color: var(--c-brand-dark);
-}
-
-.banner--warn {
-  background: var(--c-warn-bg);
-  color: var(--c-warn-ink);
-}
-
-.banner--danger {
-  background: var(--c-danger-soft);
-  color: var(--c-danger);
-}
-
-.banner__title {
-  display: flex;
-  align-items: center;
-  font-size: var(--f-small);
+.vsheet__h {
+  display: block;
+  font-family: 'Songti SC', 'Noto Serif SC', serif;
+  font-size: 38rpx;
   font-weight: 700;
 }
 
-.banner__level,
-.banner__flag {
-  margin-left: var(--s-1);
-  font-size: 22rpx;
-  padding: 2rpx 14rpx;
-  border-radius: var(--r-pill);
+.vsheet__t {
+  display: block;
+  margin-top: 16rpx;
+  min-height: 96rpx;
+  font-size: 32rpx;
+  line-height: 1.6;
+  color: var(--ink);
 }
 
-.banner__level {
-  border: 1rpx solid currentColor;
+.vsheet__btns {
+  margin-top: 24rpx;
 }
 
-.banner__flag {
-  background: rgba(255, 255, 255, 0.7);
-}
-
-.banner__hint {
-  margin-top: 6rpx;
-  font-size: var(--f-small);
-  opacity: 0.9;
-}
-
-/* ------------------------------------------------------------------ 卡片 */
-.panel {
-  background: var(--c-white);
-  border-radius: var(--r-card);
-  padding: var(--s-3);
-  margin-bottom: var(--s-2);
-}
-
-.panel__head {
+.vsheet__stop {
+  width: 100%;
+  height: 100rpx;
+  border-radius: 24rpx;
+  background: var(--ac);
+  color: #fff;
+  font-size: 30rpx;
+  font-weight: 700;
   display: flex;
   align-items: center;
-  justify-content: space-between;
-}
-
-.panel__title {
-  font-size: var(--f-body);
-  font-weight: 600;
-  color: var(--c-ink);
-}
-
-.panel__more {
-  font-size: var(--f-small);
-  color: var(--c-brand-dark);
-}
-
-/* ------------------------------------------------------------------ 快捷入口 */
-.shortcuts {
-  display: flex;
-  margin-top: var(--s-2);
-}
-
-.shortcut {
-  flex: 1;
-  background: #f7f8fa;
-  border-radius: var(--r-btn);
-  padding: var(--s-2) var(--s-3);
-  margin-right: var(--s-2);
-  min-height: 112rpx;
-  display: flex;
-  flex-direction: column;
   justify-content: center;
 }
 
-.shortcut:last-child {
-  margin-right: 0;
+.vsheet__stop:active {
+  background: var(--act);
 }
 
-.shortcut--wide {
-  margin-right: 0;
-  margin-top: var(--s-2);
+.vsheet__stop--cancel {
+  background: var(--bg);
+  color: var(--ink);
+  border: 2rpx solid var(--ln);
 }
 
-.shortcut__title {
-  display: block;
-  font-size: var(--f-body);
-  font-weight: 600;
-  color: var(--c-ink);
-}
-
-.shortcut__desc {
-  display: block;
-  margin-top: 4rpx;
-  font-size: var(--f-small);
-  color: var(--c-ink-3);
-}
-
-/* ------------------------------------------------------------------ 最近 */
-.recent__item {
-  padding: var(--s-2) 0;
-  border-bottom: 1rpx solid var(--c-line);
-}
-
-.recent__text {
-  font-size: var(--f-body);
-  color: var(--c-ink);
-}
-
-.recent__meta {
-  display: block;
-  margin-top: 4rpx;
-  font-size: 22rpx;
-  color: var(--c-ink-3);
-}
-
-.recent__empty {
-  padding: var(--s-3) 0;
-  font-size: var(--f-small);
-  color: var(--c-ink-3);
-}
-
-/* ------------------------------------------------------------------ 自检 */
-.kv {
-  display: flex;
-  justify-content: space-between;
-  font-size: var(--f-small);
-  color: var(--c-ink-2);
-  padding: var(--s-1) 0;
-  border-bottom: 1rpx solid var(--c-line);
-}
-
-.kv:last-child {
-  border-bottom: none;
-}
-
-/* ------------------------------------------------------------------ 提示 */
-.talking {
-  text-align: center;
-  font-size: var(--f-small);
-  color: var(--c-brand-dark);
-  margin-top: var(--s-1);
-}
-
-.error {
-  margin: var(--s-1) 0 0;
-  padding: var(--s-2) var(--s-3);
-  background: var(--c-danger-soft);
-  color: var(--c-danger);
-  border-radius: var(--r-btn);
-  font-size: var(--f-small);
-}
-
-/* ------------------------------------------------------------------ 语音停靠区 */
-.voice-dock {
+.undo-toast {
   position: fixed;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  z-index: 20;
-  padding: var(--s-1) var(--s-3) calc(var(--s-2) + env(safe-area-inset-bottom));
-  background: linear-gradient(180deg, rgba(245, 246, 247, 0) 0%, var(--c-bg) 40%);
-  box-sizing: border-box;
+  left: 28rpx;
+  right: 28rpx;
+  bottom: calc(180rpx + env(safe-area-inset-bottom));
+  z-index: 55;
+  background: var(--ink);
+  color: #fff;
+  border-radius: 20rpx;
+  padding: 20rpx 24rpx;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16rpx;
+  box-shadow: 0 12rpx 32rpx rgba(0, 0, 0, 0.25);
 }
 
-.page--wide .voice-dock {
-  position: static;
-  background: none;
-  padding: var(--s-1) 0 0;
+.undo-toast__txt {
+  font-size: 26rpx;
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.undo-toast__btn {
+  padding: 10rpx 22rpx;
+  border-radius: 14rpx;
+  background: var(--act);
+  color: #fff;
+  font-size: 26rpx;
+  font-weight: 700;
+}
+
+.quick-strip {
+  display: flex;
+  gap: 16rpx;
+}
+
+.quick-chip {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 20rpx 24rpx;
+  background: var(--sf);
+  border: 2rpx solid var(--ln);
+  border-radius: 20rpx;
+  font-size: 28rpx;
+  font-weight: 600;
+  color: var(--ink);
+}
+
+.quick-chip__sub {
+  font-size: 22rpx;
+  font-weight: 400;
+  color: var(--mu);
 }

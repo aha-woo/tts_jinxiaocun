@@ -17,9 +17,10 @@
 
 from __future__ import annotations
 
+import re
 import uuid
 from datetime import date, datetime, timezone
-from decimal import Decimal
+from decimal import Decimal, ROUND_HALF_UP
 from typing import Annotated, Any, Literal
 
 from fastapi import APIRouter, Depends, Request
@@ -27,24 +28,30 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field
 
 from app.api.v1._shared import assert_writable, ids_of, require_roles, runtime_for, WRITE_ROLES
+from app.api.v1.cards import apply_card_updates
 from app.common.envelope import ok
 from app.common.errors import AppError
 from app.config import Settings
 from app.deps import AuthContextDep, SettingsDep, TenantSessionDep, get_database
 from app.domain.doc_service import DocService
 from app.domain.report_service import ReportService
-from app.models.voice import VoiceSession
+from app.models.org import Member
+from app.models.voice import ConfirmCard, VoiceSession
 from app.services.degrade import DegradeController
 from app.services.entitlement import EntitlementService
-from app.services.ledger import LedgerService
+from app.services.ledger import LedgerService, StoredCardPayload
+from app.services.novice import can_auto_post_tier_a, novice_status_of
 from app.services.pending_task import PendingTaskService
 from app.services.quota import QuotaService
 from app.services.upload_ticket import UploadTicketRequest, UploadTicketService
-from app.services.voice_runtime import LedgerLine, lines_of_result
+from app.services.voice_runtime import LedgerLine, lines_of_result, shared_voice_state
+from app.utils.date_utils import today_in_tz
+from app.utils.unit import CANONICAL_UNITS
 from app.voice.card_builder import CardBuildError
 from app.voice.clarifier_templates import build_clarify, pick_slot_to_ask
 from app.voice.gate import Gate
 from app.voice.impact_preview import ImpactPreviewService, build_deltas
+from app.voice.number_normalizer import parse_money_yuan, parse_quantity
 from app.voice.output_schema import SOURCE_VALUES, ClarifyPrompt
 from app.voice.pipeline import PipelineResult
 from app.voice.routing import (
@@ -318,6 +325,89 @@ class ParseRequest(BaseModel):
     asr_confidence: float = Field(default=0.95, ge=0.0, le=1.0)
     duration_ms: int = Field(default=2_000, ge=0, le=60_000)
     partner_id: str | None = Field(default=None, description="明确指定的往来单位（可选）")
+    active_card_id: str | None = Field(
+        default=None,
+        description="当前正打开的待确认卡 ID（短语补充如「三箱」「一箱35」直接更新此卡，0 LLM 调用）",
+    )
+
+
+_NEW_INTENT_MARKERS: tuple[str, ...] = (
+    "进了",
+    "进货",
+    "卖了",
+    "卖出",
+    "盘点",
+    "还剩",
+    "退货",
+    "撤销",
+    "作废",
+    "新建",
+    "删掉",
+    "报损",
+    "收款",
+    "付款",
+)
+
+
+def _parse_fragment_updates(
+    text: str, stored: StoredCardPayload, runtime: Any
+) -> dict[str, Any] | None:
+    """短片段追述解析（如「三箱」「一箱35」「一共70」「老王」「赊账」），0 次 LLM 调用。"""
+    cleaned = (text or "").strip("，,。.！？! ")
+    if not cleaned or len(cleaned) > 16:
+        return None
+    if any(marker in cleaned for marker in _NEW_INTENT_MARKERS):
+        return None
+
+    updates: dict[str, Any] = {}
+    if any(w in cleaned for w in ("欠着", "赊账", "挂账", "未付")):
+        updates["PS"] = "未结"
+        return updates
+    if any(w in cleaned for w in ("已付", "付清", "现结")):
+        updates["PS"] = "已结"
+        return updates
+
+    if any(w in cleaned for w in ("一共", "总共", "合计", "共")):
+        money = parse_money_yuan(cleaned)
+        if money.ok and money.value is not None:
+            updates["TA"] = int(
+                (money.value * Decimal("100")).quantize(Decimal("1"), rounding=ROUND_HALF_UP)
+            )
+            return updates
+
+    per_unit_match = re.search(r"(?:每|一|单价)\s*([箱件瓶包袋斤公斤克两套打盒条])?\s*(?:要|卖|进)?\s*(.+)", cleaned)
+    if per_unit_match and any(ch.isdigit() or ch in "一二两三四五六七八九十百" for ch in per_unit_match.group(2)):
+        money = parse_money_yuan(per_unit_match.group(2))
+        if money.ok and money.value is not None:
+            updates["UP"] = int(
+                (money.value * Decimal("100")).quantize(Decimal("1"), rounding=ROUND_HALF_UP)
+            )
+            if per_unit_match.group(1):
+                updates["U"] = per_unit_match.group(1)
+            return updates
+
+    qty = parse_quantity(cleaned)
+    if qty.ok and qty.value is not None:
+        unit_hit = next((u for u in sorted(CANONICAL_UNITS, key=len, reverse=True) if u in cleaned), None)
+        if unit_hit is not None:
+            updates["Q"] = int(qty.value) if qty.value == qty.value.to_integral_value() else float(qty.value)
+            updates["U"] = unit_hit
+            return updates
+
+    # 往来单位追述（如「老王」「是老王」）
+    partner_text = re.sub(r"^(?:是|给|找)\s*", "", cleaned).strip()
+    if partner_text:
+        is_purchase = stored.intent_id.startswith("purchase")
+        p_code = "S" if is_purchase else "C"
+        resolver = runtime.suppliers if is_purchase else runtime.customers
+        hit = resolver.resolve(partner_text)
+        if hit is not None and hit.product is not None:
+            updates[p_code] = hit.product.name
+            return updates
+        if cleaned.startswith("是") and len(partner_text) <= 8:
+            updates[p_code] = partner_text
+            return updates
+    return None
 
 
 class Confirm2Request(BaseModel):
@@ -330,8 +420,8 @@ class Confirm2Request(BaseModel):
 
 
 def _today_iso() -> str:
-    """业务日（UTC；门店时区在 T05 端侧处理）。"""
-    return datetime.now(timezone.utc).date().isoformat()
+    """业务日（按租户默认时区 Asia/Shanghai 取当天日期，避免 00:00–08:00 记成昨天）。"""
+    return today_in_tz("Asia/Shanghai")
 
 
 @router.post("/sessions", summary="创建语音会话（门禁 + 上传票据 + 令牌桶）")
@@ -468,40 +558,89 @@ def parse_session(
     payload: ParseRequest,
     request: Request,
     context: AuthContextDep,
-    session: TenantSessionDep,
     settings: SettingsDep,
 ) -> JSONResponse:
-    """跑完整漏斗并按 ``route`` 分流（唯一的写库/扣次入口在 ``card`` 分支）。
-
-    Returns:
-        包络 ``data: {stage, route, parse_result, ...}``
-    """
+    """跑完整漏斗并按 ``route`` 分流（PG 下解析前释放只读 DB 会话，避免持连接等模型 HTTP）。"""
     require_roles(context, WRITE_ROLES)
     ids = ids_of(context)
-    assert_writable(session, ids.tenant_id)
-
-    voice_session = session.get(VoiceSession, session_id)
-    if voice_session is None or voice_session.tenant_id != ids.tenant_id:
-        raise AppError("E_NOT_FOUND", message="语音会话不存在或不属于当前租户")
 
     text = (payload.asr_text or "").strip()
     if not text:
-        # 真实链路：凭 ``audio_object_ref`` 取临时音频送 ASR；本地无 ASR 时不伪造文本
         raise AppError(
             "E_VALIDATION",
             message="缺少 asr_text：真实链路会凭 audio_object_ref 取音频送 ASR（需核实 ASR 服务）",
             data={"audio_object_ref": payload.audio_object_ref},
         )
-    if payload.audio_object_ref:
-        voice_session.audio_object_ref = payload.audio_object_ref
 
-    runtime = runtime_for(session, settings, context)
-    voice_session.state = STATE_PARSING
-    session.flush()
+    database = get_database(request)
+    today_iso = _today_iso()
 
+    # ---- Phase A（短读事务）：校验会话与词表装载；出函数即释放 DB 连接 ----
+    with database.session(context=context) as session:
+        assert_writable(session, ids.tenant_id)
+        voice_session = session.get(VoiceSession, session_id)
+        if voice_session is None or voice_session.tenant_id != ids.tenant_id:
+            raise AppError("E_NOT_FOUND", message="语音会话不存在或不属于当前租户")
+        runtime = runtime_for(session, settings, context)
+
+        # 片段追述：若前端传了当前活跃卡片 ID 且本句是短补充，直接走本地结构化更新（0 LLM）
+        if payload.active_card_id:
+            try:
+                active_uuid = uuid.UUID(str(payload.active_card_id))
+            except ValueError:
+                active_uuid = None
+            if active_uuid is not None:
+                active_card = session.execute(
+                    __import__("sqlalchemy")
+                    .select(ConfirmCard)
+                    .where(
+                        ConfirmCard.tenant_id == ids.tenant_id,
+                        ConfirmCard.card_id == active_uuid,
+                        ConfirmCard.status == "active",
+                    )
+                    .limit(1)
+                ).scalar_one_or_none()
+                if active_card is not None:
+                    frag_updates = _parse_fragment_updates(
+                        text, StoredCardPayload.from_json(active_card.slots), runtime
+                    )
+                    if frag_updates:
+                        card_payload, feedback = apply_card_updates(
+                            session=session,
+                            request=request,
+                            settings=settings,
+                            context=context,
+                            ids=ids,
+                            card_id=active_uuid,
+                            updates=frag_updates,
+                        )
+                        voice_session.state = STATE_AWAIT_CONFIRM
+                        session.flush()
+                        return JSONResponse(
+                            status_code=200,
+                            content=ok(
+                                {
+                                    "session_id": str(session_id),
+                                    "stage": "G5",
+                                    "reason": "fragment_updated",
+                                    "route": "card_updated",
+                                    "asr_text": text,
+                                    "asr_confidence": payload.asr_confidence,
+                                    "corrections": 0,
+                                    "rule_hit": True,
+                                    "llm_calls": 0,
+                                    "card": card_payload,
+                                    "parsed_updates": frag_updates,
+                                    "credit_consumed": False,
+                                    **(feedback or {}),
+                                }
+                            ),
+                        )
+
+    # ---- Phase B（无 DB 连接占用）：运行语音流水线 & 可能的大模型 HTTP ----
     result: PipelineResult = runtime.pipeline.run(
         text,
-        today_iso=_today_iso(),
+        today_iso=today_iso,
         duration_ms=payload.duration_ms,
         session_key=str(session_id),
         asr_confidence=payload.asr_confidence,
@@ -509,327 +648,350 @@ def parse_session(
         customers=runtime.customers,
         suppliers=runtime.suppliers,
         tenant_id=str(ids.tenant_id),
+        member_id=str(ids.member_id),
+        dict_version=runtime.dict_version,
+        personal_fixes=runtime.personal_fixes,
         skip_gate=True,
     )
+    shared_state = shared_voice_state(settings)
+    shared_state.cost_monitor.record_pipeline(result)
 
-    # 解析结果快照（写进 `voice_log.parse_result`）。
-    #
-    # 为什么**每条 route 都写**：澄清分支（`route=clarify`）**不建卡**，
-    # 而 `POST /voice/sessions/{id}/clarify` 只从卡片载荷里取 `intent_id`——
-    # 没卡就取不到 → 422，「说不全」这条支线整条走不通。
-    # 快照落在早就存在却从来没人写过的 JSON 列上：不新增列、不新增表、不动迁移。
-    if result.parse is not None:
-        LedgerService(session).record_parse(
-            tenant_id=ids.tenant_id,
-            store_id=ids.store_id,
-            session_id=session_id,
-            asr_text=result.asr_text or text,
-            asr_confidence=result.asr_confidence,
-            parse_channel=result.parse.channel or "template",
-            parse_result={
-                "intent": result.parse.intent,
-                "slots": _json_safe(dict(result.parse.slots)),
-                "source": {str(k): str(v) for k, v in result.parse.source.items()},
-                "confidence": float(result.parse.confidence),
-                "calc_traces": list(result.parse.calc_traces),
-                "route": result.route,
-            },
-        )
-
-    base = {
-        "session_id": str(session_id),
-        "stage": result.stage,
-        "reason": result.reason,
-        "asr_text": result.asr_text or text,
-        "asr_confidence": result.asr_confidence,
-        "corrections": result.corrections,
-        "rule_hit": result.rule_hit,
-        "llm_calls": result.llm_calls,
-        "parse_result": result.parse.model_dump() if result.parse is not None else None,
-        "trace": list(result.trace),
-    }
-
-    # ---- ① 静态意图：本地话术，不进模型、不写库
-    if result.route == "static":
-        voice_session.state = STATE_CLOSED_READ
+    # ---- Phase C（写事务）：回落解析快照、状态、卡片与直记 ----
+    with database.session(context=context) as session:
+        voice_session = session.get(VoiceSession, session_id)
+        if voice_session is None or voice_session.tenant_id != ids.tenant_id:
+            raise AppError("E_NOT_FOUND", message="语音会话不存在或不属于当前租户")
+        if payload.audio_object_ref:
+            voice_session.audio_object_ref = payload.audio_object_ref
+        voice_session.state = STATE_PARSING
         session.flush()
-        return JSONResponse(
-            status_code=200,
-            content=ok({**base, "route": "static", "static_answer": result.static_answer}),
-        )
 
-    # ---- ② G2 拦下（非命令 / 闲聊 / 60s 去重）：不扣次、不写库
-    if result.error_code in {"E_NON_COMMAND", "E_FILTERED_DUP"}:
-        voice_session.state = STATE_REJECTED
-        voice_session.error_code = result.error_code
-        session.flush()
-        return JSONResponse(
-            status_code=200,
-            content=ok({**base, "route": "rejected", "error_code": result.error_code}),
-        )
+        member = session.get(Member, ids.member_id)
+        novice_info = novice_status_of(member)
 
-    # ---- ③ 澄清：进状态机，不扣次
-    if result.route == "clarify":
-        voice_session.state = STATE_CLARIFYING
-        voice_session.clarify_round = int(
-            result.clarify_state.round_used if result.clarify_state is not None else 0
-        )
-        session.flush()
-        return JSONResponse(
-            status_code=200,
-            content=ok(
-                {
-                    **base,
-                    "route": "clarify",
-                    "clarify": (
-                        result.parse.clarify.model_dump()
-                        if result.parse is not None and result.parse.clarify is not None
-                        else None
+        if result.parse is not None:
+            LedgerService(session).record_parse(
+                tenant_id=ids.tenant_id,
+                store_id=ids.store_id,
+                session_id=session_id,
+                asr_text=result.asr_text or text,
+                asr_confidence=result.asr_confidence,
+                parse_channel=result.parse.channel or "template",
+                parse_result={
+                    "intent": result.parse.intent,
+                    "slots": _json_safe(dict(result.parse.slots)),
+                    "source": {str(k): str(v) for k, v in result.parse.source.items()},
+                    "confidence": float(result.parse.confidence),
+                    "calc_traces": list(result.parse.calc_traces),
+                    "route": result.route,
+                },
+            )
+
+        base = {
+            "session_id": str(session_id),
+            "stage": result.stage,
+            "reason": result.reason,
+            "asr_text": result.asr_text or text,
+            "asr_confidence": result.asr_confidence,
+            "corrections": result.corrections,
+            "rule_hit": result.rule_hit,
+            "llm_calls": result.llm_calls,
+            "parse_result": result.parse.model_dump() if result.parse is not None else None,
+            "trace": list(result.trace),
+            "novice": novice_info,
+        }
+
+        if result.route == "static":
+            voice_session.state = STATE_CLOSED_READ
+            session.flush()
+            return JSONResponse(
+                status_code=200,
+                content=ok({**base, "route": "static", "static_answer": result.static_answer}),
+            )
+
+        if result.error_code in {"E_NON_COMMAND", "E_FILTERED_DUP"}:
+            voice_session.state = STATE_REJECTED
+            voice_session.error_code = result.error_code
+            session.flush()
+            return JSONResponse(
+                status_code=200,
+                content=ok({**base, "route": "rejected", "error_code": result.error_code}),
+            )
+
+        if result.route == "clarify":
+            voice_session.state = STATE_CLARIFYING
+            voice_session.clarify_round = int(
+                result.clarify_state.round_used if result.clarify_state is not None else 0
+            )
+            session.flush()
+            return JSONResponse(
+                status_code=200,
+                content=ok(
+                    {
+                        **base,
+                        "route": "clarify",
+                        "clarify": (
+                            result.parse.clarify.model_dump()
+                            if result.parse is not None and result.parse.clarify is not None
+                            else None
+                        ),
+                        "max_rounds": 2,
+                    }
+                ),
+            )
+
+        if result.route == "manual":
+            voice_session.state = STATE_MANUAL
+            voice_session.error_code = result.error_code
+            session.flush()
+            return JSONResponse(
+                status_code=200,
+                content=ok(
+                    {
+                        **base,
+                        "route": "manual",
+                        "manual_entry_required": True,
+                        "message_zh": "没太听清，切到键盘补一下，点两下就好。",
+                    }
+                ),
+            )
+
+        spec = runtime.registry.require(result.parse.intent) if result.parse is not None else None
+        if spec is not None and route_of_spec(spec) == ROUTE_ANSWER:
+            answer = _read_only_answer(
+                session,
+                tenant_id=ids.tenant_id,
+                store_id=ids.store_id,
+                intent_id=spec.intent_id,
+                parse=result.parse,
+                runtime=runtime,
+            )
+            voice_session.state = STATE_CLOSED_READ
+            session.flush()
+            return JSONResponse(
+                status_code=200,
+                content=ok({**base, "route": "answer", "answer": answer}),
+            )
+
+        if result.parse is not None and spec is not None and route_of_spec(spec) == ROUTE_PENDING_TASK:
+            task = PendingTaskService(session).create(
+                tenant_id=ids.tenant_id,
+                session_id=session_id,
+                intent_id=spec.intent_id,
+                payload={"slots": dict(result.parse.slots), "source": dict(result.parse.source)},
+                member_id=ids.member_id,
+            )
+            voice_session.state = STATE_PENDING_TASK
+            session.flush()
+            return JSONResponse(
+                status_code=200,
+                content=ok(
+                    {
+                        **base,
+                        "route": "pending_task",
+                        "task": task.as_dict(),
+                        "error_code": "E_R3_BLOCKED",
+                        "hint_zh": "该动作只能在电脑版微信大屏管理页确认执行（语音不直写）",
+                    }
+                ),
+            )
+
+        reversal_target: Any = None
+        if spec is not None and spec.intent_id in _REVERSAL_INTENTS and result.parse is not None:
+            ledger = LedgerService(session, card_ttl_seconds=settings.card_ttl_seconds)
+            reversal_target = ledger.resolve_reversal_target(
+                tenant_id=ids.tenant_id, raw_ref=result.parse.slots.get("DOC")
+            )
+            if reversal_target is None:
+                is_correct = spec.intent_id == "sys.correct"
+                prompt = ClarifyPrompt(
+                    slot="DOC",
+                    question=(
+                        "没找到要更正的原始单据（今天还没记过，或者那张已经撤销过了）。要更正哪一单？"
+                        if is_correct
+                        else "没找到可以撤销的单据（今天还没记过，或者已经撤销过了）。要撤销哪一单？"
                     ),
-                    "max_rounds": 2,
-                }
-            ),
-        )
+                    options=["我说个单号", "先记一单", "算了"],
+                )
+                voice_session.state = STATE_CLARIFYING
+                voice_session.clarify_round = _bump_round(voice_session.clarify_round)
+                session.flush()
+                return JSONResponse(
+                    status_code=200,
+                    content=ok(
+                        {
+                            **base,
+                            "route": "clarify",
+                            "clarify": prompt.model_dump(),
+                            "max_rounds": 2,
+                        }
+                    ),
+                )
 
-    # ---- ④ 澄清用尽：切数字键盘补录（**不是** pending_task）
-    if result.route == "manual":
-        voice_session.state = STATE_MANUAL
-        voice_session.error_code = result.error_code
-        session.flush()
-        return JSONResponse(
-            status_code=200,
-            content=ok(
-                {
-                    **base,
-                    "route": "manual",
-                    "manual_entry_required": True,
-                    "message_zh": "没太听清，切到键盘补一下，点两下就好。",
-                }
-            ),
-        )
-
-    # ---- ⑤ 只读（R0）：不建卡、不写库、不扣次
-    # 路由判定统一走 app.voice.routing（测试与实现共用同一个判定点，见 test_route_matrix.py）
-    spec = runtime.registry.require(result.parse.intent) if result.parse is not None else None
-    if spec is not None and route_of_spec(spec) == ROUTE_ANSWER:
-        answer = _read_only_answer(
-            session,
-            tenant_id=ids.tenant_id,
-            store_id=ids.store_id,
-            intent_id=spec.intent_id,
-            parse=result.parse,
-            runtime=runtime,
-        )
-        voice_session.state = STATE_CLOSED_READ
-        session.flush()
-        return JSONResponse(
-            status_code=200,
-            content=ok({**base, "route": "answer", "answer": answer}),
-        )
-
-    # ---- ⑥ R3：只生成待办，绝不直写
-    if result.parse is not None and spec is not None and route_of_spec(spec) == ROUTE_PENDING_TASK:
-        task = PendingTaskService(session).create(
-            tenant_id=ids.tenant_id,
-            session_id=session_id,
-            intent_id=spec.intent_id,
-            payload={"slots": dict(result.parse.slots), "source": dict(result.parse.source)},
-            member_id=ids.member_id,
-        )
-        voice_session.state = STATE_PENDING_TASK
-        session.flush()
-        return JSONResponse(
-            status_code=200,
-            content=ok(
-                {
-                    **base,
-                    "route": "pending_task",
-                    "task": task.as_dict(),
-                    "error_code": "E_R3_BLOCKED",
-                    "hint_zh": "该动作只能在电脑版微信大屏管理页确认执行（语音不直写）",
-                }
-            ),
-        )
-
-    # ---- ⑥.4 撤销/更正：**定位不到原单就不建卡**（建了必 422）
-    #
-    # 「卡片」是给用户的承诺。撤销/更正卡确认时要先把 ``DOC`` 解析成一张真实单据，
-    # 定位不到就 422 —— 那就是一张「建得出来、点下去必失败」的卡。
-    # 所以这里先做一次**只读预判**，定位不到就当场说清楚，转澄清让他补单号。
-    reversal_target: Any = None
-    if spec is not None and spec.intent_id in _REVERSAL_INTENTS and result.parse is not None:
-        ledger = LedgerService(session, card_ttl_seconds=settings.card_ttl_seconds)
-        reversal_target = ledger.resolve_reversal_target(
-            tenant_id=ids.tenant_id, raw_ref=result.parse.slots.get("DOC")
-        )
-        if reversal_target is None:
-            is_correct = spec.intent_id == "sys.correct"
-            prompt = ClarifyPrompt(
-                slot="DOC",
-                question=(
-                    "没找到要更正的原始单据（今天还没记过，或者那张已经撤销过了）。要更正哪一单？"
-                    if is_correct
-                    else "没找到可以撤销的单据（今天还没记过，或者已经撤销过了）。要撤销哪一单？"
+        if spec is not None and spec.intent_id == "sys.teach" and result.parse is not None:
+            plan = plan_teach(text=text, resolver=runtime.products)
+            if not plan.ok:
+                prompt = _teach_clarify(plan)
+                voice_session.state = STATE_CLARIFYING
+                voice_session.clarify_round = _bump_round(voice_session.clarify_round)
+                session.flush()
+                return JSONResponse(
+                    status_code=200,
+                    content=ok(
+                        {
+                            **base,
+                            "route": "clarify",
+                            "clarify": prompt.model_dump(),
+                            "max_rounds": 2,
+                            "teach": {
+                                "reason": plan.reason,
+                                "alias": plan.alias,
+                                "candidates": list(plan.candidates),
+                            },
+                        }
+                    ),
+                )
+            assert plan.target is not None
+            result.parse.intent = "product.alias.add"
+            result.parse.slots = {"P": plan.target.product_name, "ALIAS": plan.alias}
+            result.parse.source = {
+                "P": "alias" if plan.target.from_alias else "asr",
+                "ALIAS": "asr",
+            }
+            spec = runtime.registry.require("product.alias.add")
+            base["parse_result"] = result.parse.model_dump()
+            base["teach"] = {
+                "original_intent": "sys.teach",
+                "alias": plan.alias,
+                "product": plan.target.product_name,
+                "written_as": "product.alias.add",
+                "note_zh": (
+                    "教说法落成商品别名（同时进个人词表）："
+                    "确认后下一句就能用这个说法"
                 ),
-                options=["我说个单号", "先记一单", "算了"],
-            )
-            voice_session.state = STATE_CLARIFYING
-            voice_session.clarify_round = _bump_round(voice_session.clarify_round)
+            }
+            session.flush()
+
+        if result.parse is None:
+            voice_session.state = STATE_FAILED
+            voice_session.error_code = result.error_code or "E_LLM_SCHEMA_INVALID"
             session.flush()
             return JSONResponse(
                 status_code=200,
                 content=ok(
                     {
                         **base,
-                        "route": "clarify",
-                        "clarify": prompt.model_dump(),
-                        "max_rounds": 2,
+                        "route": "failed",
+                        "error_code": result.error_code or "E_LLM_SCHEMA_INVALID",
+                        "credit_consumed": False,
+                        "detail": "解析失败不扣次，可重说或键盘补录",
                     }
                 ),
             )
 
-    # ---- ⑥.5 教说法（sys.teach）：**先补「指向对象」**
-    #
-    # 契约里 ``sys.teach`` 只有 ``ALIAS``，没有指向对象；而落库必须有 ``mapped_id``。
-    # 上一版让人带着这个缺口一路走到确认，结果卡建出来、确认必报
-    # 「要指向哪个商品」。这里当场把话拆成（说法, 指向）：
-    # - 指向唯一命中 → **改写成 ``product.alias.add``**（它才有 P + ALIAS 两个槽位），
-    #   走正常卡片 → 确认 → 写真别名，下一句立刻生效；
-    # - 拆不出/歧义 → 澄清（2~3 个可点候选），**不建卡**。
-    if spec is not None and spec.intent_id == "sys.teach" and result.parse is not None:
-        plan = plan_teach(text=text, resolver=runtime.products)
-        if not plan.ok:
-            prompt = _teach_clarify(plan)
-            voice_session.state = STATE_CLARIFYING
-            voice_session.clarify_round = _bump_round(voice_session.clarify_round)
-            session.flush()
-            return JSONResponse(
-                status_code=200,
-                content=ok(
-                    {
-                        **base,
-                        "route": "clarify",
-                        "clarify": prompt.model_dump(),
-                        "max_rounds": 2,
-                        "teach": {
-                            "reason": plan.reason,
-                            "alias": plan.alias,
-                            "candidates": list(plan.candidates),
-                        },
-                    }
-                ),
+        items = result.template.items if result.template is not None else ()
+        lines = (
+            _reversal_lines(session, tenant_id=ids.tenant_id, target=reversal_target, runtime=runtime)
+            if reversal_target is not None and spec.intent_id in _REVERSAL_INTENTS
+            else lines_of_result(
+                result.parse, runtime=runtime, items=items, partner_id=payload.partner_id
             )
-        assert plan.target is not None  # plan.ok 已保证
-        result.parse.intent = "product.alias.add"
-        result.parse.slots = {"P": plan.target.product_name, "ALIAS": plan.alias}
-        result.parse.source = {
-            "P": "alias" if plan.target.from_alias else "asr",
-            "ALIAS": "asr",
-        }
-        spec = runtime.registry.require("product.alias.add")
-        base["parse_result"] = result.parse.model_dump()
-        base["teach"] = {
-            "original_intent": "sys.teach",
-            "alias": plan.alias,
-            "product": plan.target.product_name,
-            "written_as": "product.alias.add",
-            "note_zh": (
-                "教说法落成商品别名（同时进个人词表）："
-                "确认后下一句就能用这个说法"
-            ),
-        }
-        session.flush()
-
-    # ---- ⑦ 出卡片：影响预演（只读）→ 建卡 → 同一事务扣 1 次
-    if result.parse is None:
-        voice_session.state = STATE_FAILED
-        voice_session.error_code = result.error_code or "E_LLM_SCHEMA_INVALID"
-        session.flush()
-        return JSONResponse(
-            status_code=200,
-            content=ok(
-                {
-                    **base,
-                    "route": "failed",
-                    "error_code": result.error_code or "E_LLM_SCHEMA_INVALID",
-                    "credit_consumed": False,
-                    "detail": "解析失败不扣次，可重说或键盘补录",
-                }
-            ),
         )
-
-    items = result.template.items if result.template is not None else ()
-    # 反做卡（撤销/更正）的明细必须来自**原单**，不能来自本次解析：
-    # 这类意图的槽位里没有商品和数量，硬凑就是一行 pending 空明细，
-    # 卡一片黄、确认必被行级守卫拦下（「建得出、点下去必失败」的老毛病）。
-    lines = (
-        _reversal_lines(session, tenant_id=ids.tenant_id, target=reversal_target, runtime=runtime)
-        if reversal_target is not None and spec.intent_id in _REVERSAL_INTENTS
-        else lines_of_result(
-            result.parse, runtime=runtime, items=items, partner_id=payload.partner_id
+        side_effect = dict(spec.side_effect or {})
+        deltas = build_deltas(
+            intent_id=spec.intent_id,
+            side_effect=side_effect,
+            lines=[line.as_dict() for line in lines if line.product_id],
         )
-    )
-    side_effect = dict(spec.side_effect or {})
-    deltas = build_deltas(
-        intent_id=spec.intent_id,
-        side_effect=side_effect,
-        lines=[line.as_dict() for line in lines if line.product_id],
-    )
-    preview_service = ImpactPreviewService(get_database(request))
-    bundle = preview_service.preview(
-        tenant_id=ids.tenant_id,
-        store_id=ids.store_id,
-        deltas=deltas,
-        session=None if preview_service.dialect != "sqlite" else session,
-    )
-
-    conflicts = tuple(result.template.conflicts) if result.template is not None else ()
-    try:
-        creation = LedgerService(
-            session,
-            card_ttl_seconds=settings.card_ttl_seconds,
-        ).create_card(
+        preview_service = ImpactPreviewService(database)
+        bundle = preview_service.preview(
             tenant_id=ids.tenant_id,
             store_id=ids.store_id,
-            member_id=ids.member_id,
-            session_id=session_id,
+            deltas=deltas,
+            session=None if preview_service.dialect != "sqlite" else session,
+        )
+
+        conflicts = tuple(result.template.conflicts) if result.template is not None else ()
+        ledger_svc = LedgerService(session, card_ttl_seconds=settings.card_ttl_seconds)
+        try:
+            creation = ledger_svc.create_card(
+                tenant_id=ids.tenant_id,
+                store_id=ids.store_id,
+                member_id=ids.member_id,
+                session_id=session_id,
+                parse=result.parse,
+                asr_text=result.asr_text or text,
+                asr_confidence=result.asr_confidence,
+                lines=[line.as_dict() for line in lines],
+                preview=bundle,
+                conflicts=conflicts,
+            )
+        except CardBuildError as build_error:
+            return _card_build_failure_response(
+                session=session,
+                voice_session=voice_session,
+                spec=spec,
+                error=build_error,
+                base=base,
+            )
+
+        card_dict = creation.as_dict()
+        card_gaps = list(card_dict.get("gaps") or ())
+        if can_auto_post_tier_a(
+            member,
             parse=result.parse,
-            asr_text=result.asr_text or text,
-            asr_confidence=result.asr_confidence,
-            lines=[line.as_dict() for line in lines],
-            preview=bundle,
+            lines=lines,
             conflicts=conflicts,
-        )
-    except CardBuildError as build_error:
-        # 建卡失败**绝不能变成 500**：用户看到「Internal Server Error」既看不懂也不会重试，
-        # 对一个「不识字的商户」产品等于没报错（而且包络全丢，前端连 error_code 都拿不到）。
-        return _card_build_failure_response(
-            session=session,
-            voice_session=voice_session,
+            gaps=card_gaps,
             spec=spec,
-            error=build_error,
-            base=base,
-        )
-    voice_session.state = STATE_AWAIT_CONFIRM
-    session.flush()
+            today_iso=today_iso,
+        ):
+            outcome = ledger_svc.confirm(
+                tenant_id=ids.tenant_id,
+                store_id=ids.store_id,
+                member_id=ids.member_id,
+                card_id=uuid.UUID(creation.card_id),
+                confirm_type="button",
+                biz_date=date.fromisoformat(today_iso),
+            )
+            voice_session.state = STATE_CLOSED_READ
+            session.flush()
+            return JSONResponse(
+                status_code=200,
+                content=ok(
+                    {
+                        **base,
+                        "route": "auto_posted",
+                        "auto_posted": True,
+                        "card": card_dict,
+                        "result": outcome.as_dict(),
+                        "novice": outcome.novice or novice_status_of(member),
+                        "undo_window_seconds": 5,
+                        "credit_consumed": creation.billed,
+                        "billing_note": "A 档高置信直记并已落账（5 秒内可点撤销）",
+                    }
+                ),
+            )
 
-    body: dict[str, Any] = {
-        **base,
-        "route": "card",
-        "card": creation.as_dict(),
-        "credit_consumed": creation.billed,
-        "billing_note": "卡片生成成功才扣 1 次；确认/取消/超时都不再扣",
-    }
-    if spec.intent_id == "sys.correct":
-        # 更正 = 反做 + 重记两步，第一步在卡上，第二步靠用户再开口。
-        # 必须在**确认之前**就说清楚：确认后账上会先少一单，不是马上就改好了。
-        body["next_step_zh"] = (
-            "确认后我会先把这个单子反做掉（原单保留、可查）；"
-            "然后你再重说一句正确的，比如「进了三箱可乐，一件三十五」。"
-            "我不会替你猜新金额——猜错就是一笔你没确认过的账。"
-        )
+        voice_session.state = STATE_AWAIT_CONFIRM
+        session.flush()
 
-    return JSONResponse(status_code=200, content=ok(body))
+        body: dict[str, Any] = {
+            **base,
+            "route": "card",
+            "auto_posted": False,
+            "card": card_dict,
+            "credit_consumed": creation.billed,
+            "billing_note": "卡片生成成功才扣 1 次；确认/取消/超时都不再扣",
+        }
+        if spec.intent_id == "sys.correct":
+            body["next_step_zh"] = (
+                "确认后我会先把这个单子反做掉（原单保留、可查）；"
+                "然后你再重说一句正确的，比如「进了三箱可乐，一件三十五」。"
+                "我不会替你猜新金额——猜错就是一笔你没确认过的账。"
+            )
+
+        return JSONResponse(status_code=200, content=ok(body))
 
 
 def _read_only_answer(
@@ -886,7 +1048,7 @@ def _read_only_answer(
         return {
             "kind": "report",
             "report": service.today(
-                tenant_id=tenant_id, store_id=store_id, biz_date=date.today()
+                tenant_id=tenant_id, store_id=store_id, biz_date=date.fromisoformat(_today_iso())
             ).as_dict(),
         }
     return {"kind": "unknown", "note": f"{intent_id} 的只读查询尚未接线（需核实）"}

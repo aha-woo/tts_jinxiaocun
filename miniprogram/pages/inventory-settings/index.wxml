@@ -1,0 +1,54 @@
+<!-- 库存设置：移动平均 vs 批次成本 + 负库存 + 店员成本可见 -->
+<view class="page">
+  <view class="page__gap">
+    <text class="hint">标品默认用移动平均（省事）；生鲜/水产/食品可在货品页按商品开启「分批管理」。</text>
+
+    <view class="card pad">
+      <text class="c-title">全店默认成本法</text>
+      <view class="seg">
+        <view class="seg__item {{!isBatchMode ? 'seg__item--on' : ''}}" data-method="avg" bindtap="onMethod">移动平均（推荐）</view>
+        <view class="seg__item {{isBatchMode ? 'seg__item--on' : ''}}" data-method="batch" bindtap="onMethod">按批次实际成本</view>
+      </view>
+      <text class="hint" wx:if="{{!isBatchMode}}">默认：按加权平均成本算毛利，不需要管批次；缺进价的单据不稀释均价。</text>
+      <text class="hint" wx:else>生鲜/食品/高价货适用：按「先到期先出 / 先进先出」自动扣批次，水产也能按批看损耗。</text>
+    </view>
+
+    <view class="card pad">
+      <view class="row">
+        <view>
+          <text class="row__t">允许负库存</text>
+          <text class="row__s">默认开启：先卖后补进货不卡住；超卖先按暂估成本记，补进货自动结清并调毛利。</text>
+        </view>
+        <switch checked="{{policy.allow_negative}}" bindchange="onAllowNegative" color="#c2410c" />
+      </view>
+    </view>
+
+    <view class="card pad">
+      <view class="row">
+        <view>
+          <text class="row__t">允许店员看进价和毛利</text>
+          <text class="row__s">默认关闭：店员只看库存数量与售价，进价、平均成本与毛利仅老板可见。</text>
+        </view>
+        <switch checked="{{policy.staff_can_view_cost}}" bindchange="onStaffViewCost" color="#c2410c" />
+      </view>
+    </view>
+
+    <button class="cta" bindtap="onSave" loading="{{saving}}">保存设置</button>
+    <view wx:if="{{notice}}" class="bar" style="background:var(--okb);border-color:#c7dcc7;color:var(--ok)">
+      <text>{{notice}}</text>
+    </view>
+    <view wx:if="{{errorText}}" class="bar" style="background:var(--dgrb);border-color:#e0b9b0;color:var(--dgr)">
+      <text>{{errorText}}</text>
+    </view>
+
+    <view class="card">
+      <view class="row row--link" bindtap="onBatches">
+        <view>
+          <text class="row__t">批次余量与虚拟未到货</text>
+          <text class="row__s">查看在库批次、效期与负库存待补进货明细</text>
+        </view>
+        <text class="row__go">›</text>
+      </view>
+    </view>
+  </view>
+</view>

@@ -24,7 +24,7 @@ from sqlalchemy import select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from app.models.doc import ArAp
+from app.models.doc import ArAp, Payment
 
 __all__ = [
     "ArApDelta",
@@ -164,32 +164,110 @@ class ArApService:
     def _apply_one(
         self, tenant_id: uuid.UUID, store_id: uuid.UUID, delta: ArApDelta
     ) -> ArApRow:
-        """单条改动：有未结记录就核销/累加，没有就新建。"""
+        """单条改动：按单据独立记应收应付；核销时按最早未结单据 FIFO 依次核销。"""
         if delta.direction not in {DIRECTION_RECEIVABLE, DIRECTION_PAYABLE}:
             raise ValueError(f"未知的应收应付方向 {delta.direction!r}")
         key = f"{delta.partner_id}:{delta.direction}"
-        row = self.get(tenant_id=tenant_id, partner_id=delta.partner_id, direction=delta.direction)
 
+        # 若带了真 doc_id 且不是核销（赊账新单），必须按 (tenant_id, doc_id, direction) 建独立行，
+        # 否则多笔赊账混成同一条记录会导致撤单引用链出错。
+        if not delta.settle and delta.doc_id is not None:
+            existing_for_doc = self._session.execute(
+                select(ArAp)
+                .where(
+                    ArAp.tenant_id == tenant_id,
+                    ArAp.doc_id == delta.doc_id,
+                    ArAp.direction == delta.direction,
+                )
+                .limit(1)
+            ).scalar_one_or_none()
+            if existing_for_doc is None:
+                return self._create(tenant_id, store_id, delta, key)
+
+        if delta.settle:
+            open_rows = list(
+                self._session.execute(
+                    select(ArAp)
+                    .where(
+                        ArAp.tenant_id == tenant_id,
+                        ArAp.partner_id == delta.partner_id,
+                        ArAp.direction == delta.direction,
+                        ArAp.status != "settled",
+                    )
+                    .order_by(ArAp.created_at.asc())
+                ).scalars()
+            )
+            if not open_rows:
+                raise OverSettleBlocked(key=key, outstanding_fen=0, delta_fen=delta.amount_fen)
+            total_outstanding = sum(int(r.amount_fen) - int(r.settled_amount_fen) for r in open_rows)
+            if delta.amount_fen > total_outstanding:
+                raise OverSettleBlocked(
+                    key=key, outstanding_fen=total_outstanding, delta_fen=delta.amount_fen
+                )
+            remaining = int(delta.amount_fen)
+            last_result: ArApRow | None = None
+            for idx, r in enumerate(open_rows):
+                if remaining <= 0:
+                    break
+                row_out = int(r.amount_fen) - int(r.settled_amount_fen)
+                if row_out <= 0:
+                    continue
+                pay_here = min(row_out, remaining)
+                expected = (
+                    int(delta.expected_version)
+                    if (idx == 0 and delta.expected_version is not None)
+                    else int(r.version)
+                )
+                before_amount = int(r.amount_fen)
+                after_settled = int(r.settled_amount_fen) + pay_here
+                status = _status_of(before_amount, after_settled)
+                outcome = self._session.execute(
+                    update(ArAp)
+                    .where(
+                        ArAp.ar_ap_id == r.ar_ap_id,
+                        ArAp.tenant_id == tenant_id,
+                        ArAp.version == expected,
+                    )
+                    .values(
+                        settled_amount_fen=after_settled,
+                        status=status,
+                        version=expected + 1,
+                    )
+                    .execution_options(synchronize_session=False)
+                )
+                if outcome.rowcount != 1:
+                    current = self.get(
+                        tenant_id=tenant_id, partner_id=delta.partner_id, direction=delta.direction
+                    )
+                    raise VersionConflict(
+                        key=key, expected=expected, actual=int(current.version) if current else None
+                    )
+                self._session.flush()
+                self._session.expire(r)
+                remaining -= pay_here
+                last_result = ArApRow(
+                    ar_ap_id=r.ar_ap_id,
+                    key=key,
+                    amount_fen=before_amount,
+                    settled_amount_fen=after_settled,
+                    outstanding_fen=before_amount - after_settled,
+                    status=status,
+                    version_before=expected,
+                    version_after=expected + 1,
+                )
+            assert last_result is not None
+            return last_result
+
+        row = self.get(tenant_id=tenant_id, partner_id=delta.partner_id, direction=delta.direction)
         if row is None:
             return self._create(tenant_id, store_id, delta, key)
 
         before_amount = int(row.amount_fen)
         before_settled = int(row.settled_amount_fen)
-        outstanding = before_amount - before_settled
-
-        if delta.settle:
-            if delta.amount_fen > outstanding:
-                raise OverSettleBlocked(
-                    key=key, outstanding_fen=outstanding, delta_fen=delta.amount_fen
-                )
-            after_settled = before_settled + delta.amount_fen
-            after_amount = before_amount
-        else:
-            after_settled = before_settled
-            after_amount = (
-                delta.amount_fen if delta.snapshot else before_amount + delta.amount_fen
-            )
-
+        after_settled = before_settled
+        after_amount = (
+            delta.amount_fen if delta.snapshot else before_amount + delta.amount_fen
+        )
         status = _status_of(after_amount, after_settled)
         expected = int(row.version) if delta.expected_version is None else int(delta.expected_version)
         statement = (
@@ -228,6 +306,58 @@ class ArApService:
             version_after=expected + 1,
         )
 
+    def reverse_doc_ar_ap(self, *, tenant_id: uuid.UUID, doc_id: uuid.UUID) -> int:
+        """撤单时冲销原单关联的未核销应收应付记录。"""
+        rows = list(
+            self._session.execute(
+                select(ArAp).where(ArAp.tenant_id == tenant_id, ArAp.doc_id == doc_id)
+            ).scalars()
+        )
+        for row in rows:
+            if int(row.settled_amount_fen) == 0:
+                row.amount_fen = 0
+                row.settled_amount_fen = 0
+                row.status = "settled"
+                row.version = int(row.version) + 1
+        if rows:
+            self._session.flush()
+        return len(rows)
+
+    def record_payment(
+        self,
+        *,
+        tenant_id: uuid.UUID,
+        store_id: uuid.UUID,
+        ar_ap_id: uuid.UUID,
+        amount_fen: int,
+        biz_date: Any,
+        idempotency_key: str,
+        method: str = "现金",
+        note: str | None = None,
+    ) -> Payment:
+        """落库收付款流水（与核销同一事务）。"""
+        existing = self._session.execute(
+            select(Payment)
+            .where(Payment.tenant_id == tenant_id, Payment.idempotency_key == idempotency_key)
+            .limit(1)
+        ).scalar_one_or_none()
+        if existing is not None:
+            return existing
+        payment = Payment(
+            tenant_id=tenant_id,
+            store_id=store_id,
+            ar_ap_id=ar_ap_id,
+            amount_fen=amount_fen,
+            method=method,
+            biz_date=biz_date,
+            idempotency_key=idempotency_key,
+            note=note,
+        )
+        with self._session.begin_nested():
+            self._session.add(payment)
+            self._session.flush()
+        return payment
+
     def _create(
         self, tenant_id: uuid.UUID, store_id: uuid.UUID, delta: ArApDelta, key: str
     ) -> ArApRow:
@@ -248,11 +378,11 @@ class ArApService:
             status=_status_of(amount, settled),
             version=0,
         )
-        self._session.add(row)
         try:
-            self._session.flush()
+            with self._session.begin_nested():
+                self._session.add(row)
+                self._session.flush()
         except IntegrityError as exc:
-            self._session.rollback()
             raise VersionConflict(key=key, expected=0, actual=None) from exc
         return ArApRow(
             ar_ap_id=row.ar_ap_id,

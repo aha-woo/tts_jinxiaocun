@@ -6,12 +6,17 @@
  * （键名直接展示，避免端上臆造业务字段）。
  */
 
-import { ApiError, queryDebt, queryDocs, queryStock } from '../../services/api';
+import { ApiError, listDocs, queryDebt, queryStock, type DocBrief } from '../../services/api';
+import { ensureLogin } from '../../services/auth';
 
 type QueryKind = 'stock' | 'debt' | 'docs';
 
 interface Row {
   text: string;
+}
+
+interface DocView extends DocBrief {
+  dirLabel: string;
 }
 
 interface QueryData {
@@ -20,6 +25,7 @@ interface QueryData {
   loading: boolean;
   title: string;
   rows: Row[];
+  docs: DocView[];
   errorText: string;
 }
 
@@ -42,7 +48,7 @@ const TITLES: Record<QueryKind, string> = {
 };
 
 Page<QueryData, WechatMiniprogram.Page.CustomOption>({
-  data: { kind: 'stock', keyword: '', loading: false, title: TITLES.stock, rows: [], errorText: '' },
+  data: { kind: 'stock', keyword: '', loading: false, title: TITLES.stock, rows: [], docs: [], errorText: '' },
 
   onLoad(query: Record<string, string | undefined>) {
     const kind = String(query['kind'] ?? 'stock') as QueryKind;
@@ -62,21 +68,36 @@ Page<QueryData, WechatMiniprogram.Page.CustomOption>({
   async reload(): Promise<void> {
     this.setData({ loading: true, errorText: '' });
     try {
+      await ensureLogin();
       const keyword = this.data.keyword;
-      const payload =
-        this.data.kind === 'stock'
-          ? await queryStock(keyword)
-          : this.data.kind === 'debt'
-            ? await queryDebt(keyword)
-            : await queryDocs(keyword);
+      if (this.data.kind === 'docs') {
+        const payload = await listDocs(20);
+        const docs: DocView[] = (payload.items ?? []).map((item) => ({
+          ...item,
+          dirLabel: item.intent_id.startsWith('sales.') ? '卖货' : '进货',
+        }));
+        this.setData({ docs, rows: [], loading: false });
+        return;
+      }
+      const payload = this.data.kind === 'stock' ? await queryStock(keyword) : await queryDebt(keyword);
       this.setData({
         rows: (payload.items ?? []).map((item) => flattenRow(item)),
+        docs: [],
         loading: false,
       });
     } catch (error) {
       const message =
         error instanceof ApiError ? `${error.message}（${error.errorCode}）` : String(error);
-      this.setData({ loading: false, errorText: message, rows: [] });
+      this.setData({ loading: false, errorText: message, rows: [], docs: [] });
     }
+  },
+
+  /** 单据行点「改」→ 改单卡（带确定的 doc_id）。 */
+  onOpenDoc(event: WechatMiniprogram.TouchEvent): void {
+    const docId = String(event.currentTarget.dataset['doc'] ?? '');
+    if (docId === '') {
+      return;
+    }
+    wx.navigateTo({ url: `/pages/correct/index?docId=${docId}` });
   },
 });

@@ -21,6 +21,7 @@ import {
   type UsagePayload,
 } from '../../services/api';
 import { canPurchaseHere, pollEntitlement, purchase } from '../../services/virtual-pay';
+import { ensureLogin } from '../../services/auth';
 
 interface GoodsView {
   goodsId: string;
@@ -59,6 +60,7 @@ Page<PayData, WechatMiniprogram.Page.CustomOption>({
   async load(): Promise<void> {
     this.setData({ loading: true, errorText: '' });
     try {
+      await ensureLogin();
       const [usagePayload, entitlementPayload, goodsPayload] = await Promise.all([
         usage(),
         entitlement(),
@@ -66,8 +68,16 @@ Page<PayData, WechatMiniprogram.Page.CustomOption>({
       ]);
       this.setData({
         // 两个口径分别来自各自的包络体，端上**不合并、不互相推导**
-        usage: usagePayload.usage,
-        entitlement: entitlementPayload.entitlement,
+        usage: {
+          ...usagePayload.usage,
+          used: Number(usagePayload.usage?.used ?? 0),
+          quota: Number(usagePayload.usage?.quota ?? 0),
+        },
+        entitlement: {
+          ...entitlementPayload.entitlement,
+          remaining_quota: Number(entitlementPayload.entitlement?.remaining_quota ?? 0),
+          days_left: Number(entitlementPayload.entitlement?.days_left ?? 0),
+        },
         goods: goodsPayload.items.map((item) => ({
           goodsId: item.goods_id,
           name: item.name,

@@ -15,7 +15,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from decimal import Decimal
+from decimal import Decimal, ROUND_HALF_UP
 from typing import TYPE_CHECKING, Any, Callable, Mapping, Sequence
 
 if TYPE_CHECKING:  # 仅类型标注：运行时导入会与 ledger 形成循环
@@ -23,8 +23,8 @@ if TYPE_CHECKING:  # 仅类型标注：运行时导入会与 ledger 形成循环
 
 __all__ = ["EditResult", "apply_slot_updates"]
 
-#: 会触发金额重算的槽位
-_MONEY_AFFECTING: frozenset[str] = frozenset({"Q", "UP", "TA", "U"})
+#: 会触发明细重算的槽位
+_MONEY_AFFECTING: frozenset[str] = frozenset({"P", "Q", "UP", "TA", "U"})
 
 #: 哪些槽位改了要标 ``asr``（用户亲手给的，不再算缺省/换算）
 _USER_SLOTS: frozenset[str] = frozenset({"P", "Q", "U", "UP", "TA", "C", "S", "D", "PS", "N"})
@@ -82,8 +82,17 @@ def apply_slot_updates(
         changes.append((code, old_value, new_value))
 
     lines = [dict(line) for line in payload.lines]
-    if any(change[0] in _MONEY_AFFECTING for change in changes) and lines:
-        lines = _recalc_lines(lines, slots, qty_base_of=qty_base_of)
+    calc_traces = [str(item) for item in payload.calc_traces if str(item).strip()]
+    updated_codes = {change[0] for change in changes}
+    if any(code in _MONEY_AFFECTING for code in updated_codes) and lines:
+        lines = _recalc_lines(
+            lines,
+            slots,
+            source=source,
+            updated_codes=updated_codes,
+            qty_base_of=qty_base_of,
+            calc_traces=calc_traces,
+        )
 
     from app.services.ledger import StoredCardPayload  # 局部导入：打断循环依赖
 
@@ -94,7 +103,9 @@ def apply_slot_updates(
         lines=tuple(lines),
         asr_text=payload.asr_text,
         asr_confidence=payload.asr_confidence,
-        calc_traces=payload.calc_traces,
+        calc_traces=tuple(calc_traces),
+        expires_at=payload.expires_at,
+        edited=payload.edited or bool(changes),
     )
     return EditResult(
         payload=updated,
@@ -105,16 +116,27 @@ def apply_slot_updates(
 
 def _recalc_lines(
     lines: Sequence[Mapping[str, Any]],
-    slots: Mapping[str, Any],
+    slots: dict[str, Any],
     *,
+    source: dict[str, str],
+    updated_codes: set[str],
     qty_base_of: Callable[[str | None, Any, str], Decimal] | None,
+    calc_traces: list[str] | None = None,
 ) -> list[dict[str, Any]]:
-    """按槽位重算每行的数量/单价/金额（单商品卡片直接映射，多商品按比例不动）。"""
+    """按槽位重算每行的商品/数量/单价/金额（不重调 AI）。"""
     recalculated: list[dict[str, Any]] = []
     single = len(lines) == 1
+    ta_explicit = "TA" in updated_codes and slots.get("TA") is not None
+    q_or_up_changed = bool({"Q", "UP"} & updated_codes)
+
     for line in lines:
         row = dict(line)
         if single:
+            if "P" in updated_codes and slots.get("P"):
+                new_label = str(slots["P"])
+                if new_label != str(row.get("product_label") or ""):
+                    row["product_label"] = new_label
+                    row["product_id"] = None
             row["quantity"] = slots.get("Q", row.get("quantity"))
             row["unit"] = str(slots.get("U") or row.get("unit") or "")
             if slots.get("UP") is not None:
@@ -124,15 +146,36 @@ def _recalc_lines(
         if qty_base_of is not None:
             row["qty_base"] = str(qty_base_of(row.get("product_id"), qty, unit))
         unit_price = row.get("unit_price_fen")
-        if slots.get("TA") is not None and single:
+        if ta_explicit and single:
             row["amount_fen"] = int(slots["TA"])
-        elif unit_price is not None and qty is not None:
-            row["amount_fen"] = int(unit_price) * int(_num(qty))
+        elif (q_or_up_changed or slots.get("TA") is None) and unit_price is not None and qty is not None:
+            row["amount_fen"] = int(
+                (Decimal(str(unit_price)) * _num(qty)).quantize(
+                    Decimal("1"), rounding=ROUND_HALF_UP
+                )
+            )
+        elif slots.get("TA") is not None and single:
+            row["amount_fen"] = int(slots["TA"])
         recalculated.append(row)
 
-    if single and recalculated:
+    if single and recalculated and recalculated[0].get("amount_fen") is not None:
         # 让 slots 与行保持一致（否则卡片 ③ 与 ④ 区会互相打脸）
-        slots["TA"] = int(recalculated[0].get("amount_fen") or 0)
+        ta_fen = int(recalculated[0]["amount_fen"])
+        slots["TA"] = ta_fen
+        if not ta_explicit and q_or_up_changed:
+            source["TA"] = "computed"
+            if calc_traces is not None:
+                row0 = recalculated[0]
+                qty0 = row0.get("quantity")
+                unit0 = str(row0.get("unit") or "")
+                up0 = row0.get("unit_price_fen")
+                calc_traces[:] = [t for t in calc_traces if not t.startswith("总金额")]
+                if up0 is not None and qty0 is not None:
+                    calc_traces.append(
+                        f"总金额 = {qty0}{unit0} × ¥{Decimal(int(up0)) / 100:.2f} = ¥{Decimal(ta_fen) / 100:.2f}"
+                    )
+                else:
+                    calc_traces.append(f"总金额 = ¥{Decimal(ta_fen) / 100:.2f}")
     return recalculated
 
 

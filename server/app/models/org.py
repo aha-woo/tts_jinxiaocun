@@ -5,7 +5,7 @@ from __future__ import annotations
 import uuid
 from datetime import datetime
 
-from sqlalchemy import Boolean, CheckConstraint, Index, String, Text, UniqueConstraint
+from sqlalchemy import Boolean, CheckConstraint, Index, Integer, String, Text, UniqueConstraint, text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.models.base import Base, TenantMixin, created_at_column, uuid_pk
@@ -41,6 +41,13 @@ class Member(Base, TenantMixin):
     #: 加密存储（字段级脱敏由 API 序列化层按 role 处理，PRD 7.2）
     phone_enc: Mapped[str | None] = mapped_column(Text, nullable=True)
     status: Mapped[str] = mapped_column(String(16), nullable=False, server_default="active")
+    #: 按人计的新手期语音入账数与一次过数（前 20 笔必出卡）
+    novice_voice_count: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
+    novice_first_pass_count: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
+    #: 是否启用直接记（A 档）
+    auto_post_enabled: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default=text("false")
+    )
     created_at: Mapped[datetime] = created_at_column()
 
     __table_args__ = (

@@ -147,6 +147,44 @@ _STALE_PRICE_MARKERS: tuple[str, ...] = ("老价", "老规矩", "按老", "上�
 _STORE_MARKERS: tuple[str, ...] = ("店", "门市", "仓库", "分仓", "总仓")
 _COLLOQUIAL_NUMBER = ("一百二", "两百三", "三百五", "一千二", "一万二", "两百五", "三百二")
 
+#: 含「退/减/盘/剩」的常见商品名词（剔除后再做字面冲突检查，避免「卖两盒退热贴 / 进两个U盘」误阻断）
+_COMPOUND_NOUN_EXCLUSIONS: tuple[str, ...] = (
+    "退热贴",
+    "退烧贴",
+    "退烧药",
+    "退黑素",
+    "褪黑素",
+    "减肥茶",
+    "减肥药",
+    "减脂",
+    "减糖",
+    "减盐",
+    "u盘",
+    "U盘",
+    "优盘",
+    "硬盘",
+    "固态盘",
+    "光盘",
+    "键盘",
+    "果盘",
+    "托盘",
+    "餐盘",
+    "盘子",
+    "棋盘",
+    "蚊香盘",
+    "剩菜",
+    "剩饭",
+)
+
+
+def _strip_product_compounds(text: str) -> str:
+    """做字面单字冲突检测前剔除含干扰字的商品名词。"""
+    cleaned = text or ""
+    for noun in _COMPOUND_NOUN_EXCLUSIONS:
+        if noun in cleaned:
+            cleaned = cleaned.replace(noun, "")
+    return cleaned
+
 #: 写类意图（负数/退货/撤销会对它们产生错账）
 _WRITE_INTENTS: frozenset[str] = frozenset(
     {
@@ -173,7 +211,7 @@ _INCREMENT_INTENTS: frozenset[str] = frozenset(
 # --------------------------------------------------------------------------- 检测器
 def _detect_snapshot_vs_increment(ctx: ConflictContext) -> Conflict | None:
     """C1：最危险的一类——快照当增量会直接把库存记成两倍。"""
-    text = ctx.text or ""
+    text = _strip_product_compounds(ctx.text or "")
     has_snapshot = any(marker in text for marker in _SNAPSHOT_MARKERS)
     has_increment = any(marker in text for marker in _INCREMENT_MARKERS)
     if has_snapshot and has_increment:
@@ -207,7 +245,7 @@ def _detect_snapshot_vs_increment(ctx: ConflictContext) -> Conflict | None:
 
 def _detect_sale_vs_return(ctx: ConflictContext) -> Conflict | None:
     """C2：说「退」却记成「卖」是最常见的错账。"""
-    text = ctx.text or ""
+    text = _strip_product_compounds(ctx.text or "")
     if not any(marker in text for marker in _RETURN_MARKERS):
         return None
     sales_like = ctx.intent_id in {"sales.create", "sales.create_multi", "purchase.create", "purchase.create_multi"}
@@ -308,7 +346,7 @@ def _detect_negative_or_reversal(ctx: ConflictContext) -> Conflict | None:
        只靠 ``Q < 0`` 就会把「进了负两箱可乐」解析成 +2 箱（**用户想减，系统加**）。
        实测过：「进了-2箱可乐」→ ``Q=2``、``qty_base=48``、``conflicts=[]``。
     """
-    text = ctx.text or ""
+    text = _strip_product_compounds(ctx.text or "")
     qty = ctx.slots.get("Q")
     if isinstance(qty, (int, float)) and qty < 0:
         return Conflict(

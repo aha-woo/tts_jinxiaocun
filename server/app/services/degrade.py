@@ -276,6 +276,40 @@ class DegradeController:
         self._remember(decision)
         return decision
 
+    def try_auto_recover(
+        self,
+        *,
+        error_rate: float = 0.0,
+        usage_ratio: float = 0.0,
+        cost_ratio: float = 0.0,
+    ) -> DegradeDecision | None:
+        """仅当当前因瞬时模型错误进入 L1/L2 且故障与预算已恢复正常时，自动回落 L0。
+
+        注意：``L3``（额度耗尽）/ ``L4``（强制只读）不自动恢复，需运营或续费触发 ``reset``。
+        """
+        if self._policy.force_l4 or self._level not in {"L1", "L2"}:
+            return None
+        policy = self._policy
+        if (
+            usage_ratio < policy.l2_usage_ratio
+            and cost_ratio < policy.l2_cost_ratio
+            and error_rate < (policy.l2_error_rate / 2.0)
+        ):
+            self._level = "L0"
+            decision = DegradeDecision(
+                level="L0",
+                reasons=("auto_recovered",),
+                decided_at=_now_iso(),
+                signals={
+                    "usage_ratio": round(usage_ratio, 4),
+                    "error_rate": round(error_rate, 4),
+                    "cost_ratio": round(cost_ratio, 4),
+                },
+            )
+            self._remember(decision)
+            return decision
+        return None
+
     # ------------------------------------------------------------------ 内部
     def _remember(self, decision: DegradeDecision) -> None:
         """记一条历史（有界）。"""

@@ -1,0 +1,67 @@
+.tb {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: var(--sf, #fffdf8);
+  border-top: 2rpx solid var(--ln, #e7dfd1);
+  padding-bottom: env(safe-area-inset-bottom);
+  z-index: 50;
+}
+
+.tb__inner {
+  display: flex;
+  align-items: center;
+  height: 112rpx;
+}
+
+.tb__i {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8rpx;
+  font-size: 24rpx;
+  color: var(--mu, #7c7367);
+  height: 100%;
+}
+
+.tb__i--on {
+  color: var(--ink, #1f1b16);
+  font-weight: 700;
+}
+
+.tb__dot {
+  width: 8rpx;
+  height: 8rpx;
+  border-radius: 50%;
+  background: var(--ac, #c2410c);
+}
+
+/* 中间留出说话键的位置 */
+.tb__gap {
+  width: 168rpx;
+  flex-shrink: 0;
+}
+
+.tb__mic {
+  position: absolute;
+  left: 50%;
+  bottom: calc(44rpx + env(safe-area-inset-bottom));
+  transform: translateX(-50%);
+  width: 148rpx;
+  height: 148rpx;
+  border-radius: 50%;
+  background: var(--ac, #c2410c);
+  color: #fff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 0 0 20rpx #f3d2c0, 0 16rpx 32rpx -12rpx rgba(194, 65, 12, 0.6);
+}
+
+.tb__mic-t {
+  font-size: 30rpx;
+  font-weight: 700;
+}

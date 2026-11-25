@@ -196,11 +196,11 @@ class VirtualPaymentService:
             pay_status="pending",
             env="prod" if self._env == ENV_PROD else "sandbox",
         )
-        self._session.add(order)
         try:
-            self._session.flush()
+            with self._session.begin_nested():
+                self._session.add(order)
+                self._session.flush()
         except IntegrityError:
-            self._session.rollback()
             existing = self._find_order(out_trade_no, str(tenant_id))
             if existing is None:  # pragma: no cover
                 raise
@@ -244,7 +244,13 @@ class VirtualPaymentService:
             :class:`DeliverResult`。
         """
         payload = DeliverPayload.from_push(body, tenant_id=tenant_id)
-        service = DeliverService(self._session, verifier=self._require_verifier())
+        is_prod_runtime = bool(getattr(self._settings, "is_production", lambda: False)())
+        allow_envs = ("prod",) if (is_prod_runtime and self._env == ENV_PROD) else ("prod", "sandbox")
+        service = DeliverService(
+            self._session,
+            verifier=self._require_verifier(),
+            allow_envs=allow_envs,
+        )
         return service.handle(payload, channel=channel)
 
     # ------------------------------------------------------------------ 查单兜底

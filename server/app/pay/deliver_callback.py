@@ -244,6 +244,16 @@ class DeliverService:
                 detail=f"环境 {payload.env!r} 不允许发货（沙箱密钥不得用于生产）",
             )
 
+        order = self._find_order(tenant_id, payload.out_trade_no)
+        if order is not None and str(order.goods_id) != payload.goods_id:
+            return DeliverResult(
+                delivered=False,
+                reason="goods_mismatch",
+                error_code="E_PAY_SIGN_INVALID",
+                out_trade_no=payload.out_trade_no,
+                detail=f"推送商品 {payload.goods_id!r} 与订单商品 {order.goods_id!r} 不一致，拒绝发货",
+            )
+
         goods = self._find_goods(payload.goods_id)
         if goods is None:
             return DeliverResult(
@@ -268,12 +278,12 @@ class DeliverService:
             grant_quota=quota_amount,
             extend_days=validity_days,
         )
-        self._session.add(event)
         try:
-            self._session.flush()
+            with self._session.begin_nested():
+                self._session.add(event)
+                self._session.flush()
         except IntegrityError:
-            # 并发重复推送：唯一约束兜底，绝不二次发放
-            self._session.rollback()
+            # 并发重复推送：仅回滚 SAVEPOINT，不破坏外层事务和 PG app.tenant_id
             return DeliverResult(
                 delivered=False,
                 reason="duplicate",
@@ -380,11 +390,21 @@ class DeliverService:
             )
             self._session.add(entitlement)
         else:
-            base = active.valid_until if active.valid_until > now else now
+            valid_until = active.valid_until
+            if valid_until.tzinfo is None:
+                valid_until = valid_until.replace(tzinfo=timezone.utc)
+            base = valid_until if valid_until > now else now
             active.valid_until = base + timedelta(days=days)
             active.quota_granted = int(active.quota_granted) + quota_amount
             active.remaining = int(active.remaining) + quota_amount
         self._session.flush()
+
+    def _find_order(self, tenant_id: uuid.UUID | None, out_trade_no: str) -> VirtualOrder | None:
+        """按订单号查找本地订单用于商品校验。"""
+        statement = select(VirtualOrder).where(VirtualOrder.out_trade_no == out_trade_no).limit(1)
+        if tenant_id is not None:
+            statement = statement.where(VirtualOrder.tenant_id == tenant_id)
+        return self._session.execute(statement).scalar_one_or_none()
 
     def _mark_order_paid(
         self, tenant_id: uuid.UUID | None, out_trade_no: str, now: datetime

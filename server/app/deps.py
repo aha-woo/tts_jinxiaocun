@@ -120,11 +120,16 @@ async def require_auth(
         raise AppError("E_AUTH_INVALID", message="登录凭证缺少租户信息") from exc
 
     def _load_tenant() -> tuple[int, str, str]:
-        """线程池里做的阻塞查询：取 tenant 版本 / 状态 / 档位。"""
+        """线程池里做的阻塞查询：取 tenant 版本 / 状态 / 档位，并校验员工在职状态。"""
+        from app.models.org import Member
+
         with database.session(context=context) as session:
             tenant = session.get(Tenant, context.tenant_id)
             if tenant is None:
                 raise AppError("E_TENANT_DENIED", message="租户不存在")
+            member = session.get(Member, context.member_id)
+            if member is None or str(member.status) != "active":
+                raise AppError("E_TENANT_DENIED", message="账号已停用或不存在，请联系老板")
             return int(tenant.version), str(tenant.status), str(tenant.plan_code)
 
     tenant_version, tenant_status, tenant_plan = await run_in_threadpool(_load_tenant)
@@ -132,11 +137,16 @@ async def require_auth(
     if tenant_version != context.tenant_version:
         raise AppError("E_AUTH_INVALID", message="登录状态已失效，请重新进入小程序")
     if tenant_status != "active":
-        raise AppError(
-            "E_TENANT_DENIED",
-            message=f"租户状态为 {tenant_status}，暂不可用",
-            data={"tenant_status": tenant_status},
+        allow_during_deleting = tenant_status == "deleting" and (
+            request.url.path.startswith("/api/v1/exports")
+            or request.url.path.startswith("/api/v1/account/deletion")
         )
+        if not allow_during_deleting:
+            raise AppError(
+                "E_TENANT_DENIED",
+                message=f"租户状态为 {tenant_status}，暂不可用",
+                data={"tenant_status": tenant_status},
+            )
     # 补充 plan（展示用；权限判定仍以 role/tenant_status 为准）
     request.state.tenant_plan = tenant_plan
 

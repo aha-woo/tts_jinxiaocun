@@ -25,8 +25,16 @@ from app.models.base import Base
 from app.models.catalog import Product, ProductAlias, UnitConversion
 from app.models.dict import CorrectionEvent, PersonalDict, Reversal
 from app.models.doc import ArAp, DocHeader, DocLine, Payment
-from app.models.inventory import Inventory
-from app.models.ops import AuditLog, DeletionRequest, ExportJob, PendingTask
+from app.models.inventory import (  # noqa: F401
+    CostAdjustment,
+    CountLine,
+    CountSession,
+    Inventory,
+    InventoryMovement,
+    InventoryPolicy,
+    StockBatch,
+)
+from app.models.ops import Attachment, AuditLog, DeletionRequest, ExportJob, Gap, PendingTask
 from app.models.org import Member, Role, Store
 from app.models.partner import Partner, PartnerAlias
 from app.models.pay import DeliverEvent, Entitlement, GoodsItem, VirtualOrder
@@ -51,6 +59,12 @@ TENANT_SCOPED_MODELS: tuple[type[Base], ...] = (
     Partner,
     PartnerAlias,
     Inventory,
+    InventoryMovement,
+    StockBatch,
+    InventoryPolicy,
+    CountSession,
+    CountLine,
+    CostAdjustment,
     DocHeader,
     DocLine,
     ArAp,
@@ -67,6 +81,8 @@ TENANT_SCOPED_MODELS: tuple[type[Base], ...] = (
     NumNormalizationRule,
     Reversal,
     PendingTask,
+    Gap,
+    Attachment,
     AuditLog,
     DeletionRequest,
     ExportJob,
@@ -93,6 +109,12 @@ __all__ = [
     "Partner",
     "PartnerAlias",
     "Inventory",
+    "InventoryMovement",
+    "StockBatch",
+    "InventoryPolicy",
+    "CountSession",
+    "CountLine",
+    "CostAdjustment",
     "DocHeader",
     "DocLine",
     "ArAp",
@@ -110,6 +132,8 @@ __all__ = [
     "ClarifierTemplate",
     "NumNormalizationRule",
     "PendingTask",
+    "Gap",
+    "Attachment",
     "AuditLog",
     "DeletionRequest",
     "ExportJob",

@@ -15,7 +15,7 @@
  *   （那等于偷偷做了网页版）。
  */
 
-import { listExports, type ExportJobRow } from './api';
+import { getExportContent, listExports, type ExportJobRow } from './api';
 
 /** 交付方式。 */
 export type DeliverMode = 'forward' | 'save' | 'preview' | 'unsupported';
@@ -30,7 +30,16 @@ type FileApi = {
   shareFileMessage?: (params: Record<string, unknown>) => void;
   saveFileToDisk?: (params: Record<string, unknown>) => void;
   openDocument?: (params: Record<string, unknown>) => void;
-  downloadFile?: (params: Record<string, unknown>) => void;
+  getFileSystemManager?: () => {
+    writeFile: (params: {
+      filePath: string;
+      data: string;
+      encoding: string;
+      success?: () => void;
+      fail?: (err: { errMsg?: string }) => void;
+    }) => void;
+  };
+  env?: { USER_DATA_PATH?: string };
 };
 
 function apiOf(): FileApi {
@@ -54,15 +63,9 @@ export function supportedModes(): DeliverMode[] {
 }
 
 /**
- * 把导出任务的结果交付给用户。
- *
- * @param jobId 导出任务 id（服务端异步生成）
- * @param mode 交付方式
- * @returns 实际使用的交付方式与提示文案
+ * 把导出任务的结果交付给用户（经 callContainer 拉取 CSV 并写入微信沙盒文件）。
  */
 export async function deliverExport(jobId: string, mode: DeliverMode): Promise<DeliverResult> {
-  // 服务端**没有**「按 job_id 单查」的接口（`GET /api/v1/exports` 只列最近 N 条），
-  // 所以这里在列表里按 id 找。找不到就是任务过期/不属于本租户，如实说，不猜。
   const listed = await listExports();
   const job: ExportJobRow | undefined = (listed.items ?? []).find(
     (item) => item.job_id === jobId
@@ -73,17 +76,15 @@ export async function deliverExport(jobId: string, mode: DeliverMode): Promise<D
   if (job.status !== 'done') {
     return { mode: 'unsupported', message: '还在生成，稍后到这里取' };
   }
-  if (job.signed_url === null || job.signed_url === '') {
-    return { mode: 'unsupported', message: '生成失败，请重试' };
-  }
 
+  const content = await getExportContent(jobId);
+  const { filePath, fileName } = await writeExportToLocalFile(content.filename, content.csv_content);
   const api = apiOf();
-  const localPath = await downloadToLocal(job.signed_url);
 
   if (mode === 'forward' && typeof api.shareFileMessage === 'function') {
     api.shareFileMessage({
-      filePath: localPath,
-      fileName: `导出_${jobId}.xlsx`,
+      filePath,
+      fileName,
       success: () => undefined,
       fail: () => undefined,
     });
@@ -91,7 +92,7 @@ export async function deliverExport(jobId: string, mode: DeliverMode): Promise<D
   }
   if (mode === 'save' && typeof api.saveFileToDisk === 'function') {
     api.saveFileToDisk({
-      filePath: localPath,
+      filePath,
       success: () => undefined,
       fail: () => undefined,
     });
@@ -99,8 +100,8 @@ export async function deliverExport(jobId: string, mode: DeliverMode): Promise<D
   }
   if (mode === 'preview' && typeof api.openDocument === 'function') {
     api.openDocument({
-      filePath: localPath,
-      fileType: 'xlsx',
+      filePath,
+      fileType: 'csv',
       showMenu: true,
       success: () => undefined,
       fail: () => undefined,
@@ -114,22 +115,27 @@ export async function deliverExport(jobId: string, mode: DeliverMode): Promise<D
   };
 }
 
-/**
- * 用签名 URL 把文件取到本地临时目录。
- *
- * 注意：这是**微信客户端取文件**，不是「提供网页下载地址给用户」。
- */
-function downloadToLocal(signedUrl: string): Promise<string> {
+/** 把服务端返回的 UTF-8 BOM CSV 内容写入微信小程序本地沙盒路径（绝不走 HTTP 下载）。 */
+function writeExportToLocalFile(
+  filename: string,
+  csvContent: string
+): Promise<{ filePath: string; fileName: string }> {
   const api = apiOf();
-  return new Promise<string>((resolve, reject) => {
-    if (typeof api.downloadFile !== 'function') {
-      reject(new Error('当前基础库不支持下载文件'));
+  const safeName = (filename || `export_${Date.now()}.csv`).replace(/[^\w.-]/g, '_');
+  const root = api.env?.USER_DATA_PATH || '';
+  const filePath = `${root}/${safeName}`;
+  return new Promise((resolve, reject) => {
+    if (typeof api.getFileSystemManager !== 'function' || !root) {
+      reject(new Error('当前基础库不支持本地文件写入'));
       return;
     }
-    api.downloadFile({
-      url: signedUrl,
-      success: (res: { tempFilePath: string }) => resolve(res.tempFilePath),
-      fail: (error: { errMsg?: string }) => reject(new Error(error.errMsg ?? '下载失败')),
+    const fs = api.getFileSystemManager();
+    fs.writeFile({
+      filePath,
+      data: csvContent,
+      encoding: 'utf8',
+      success: () => resolve({ filePath, fileName: safeName }),
+      fail: (err) => reject(new Error(err.errMsg ?? '写入本地文件失败')),
     });
   });
 }

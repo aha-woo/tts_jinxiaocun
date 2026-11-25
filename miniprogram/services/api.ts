@@ -15,7 +15,7 @@
  */
 
 import { DEV_MODE, devCall } from './dev-channel';
-import { nextIdempotencyKey } from '../utils/dedupe';
+import { nextIdempotencyKey, resetIdempotencyKey } from './idempotency';
 
 /**
  * 云开发环境 id：**云托管服务所在的那个环境**（不是云开发数据库所在环境也一样）。
@@ -112,6 +112,8 @@ export interface CardLine {
   pending: boolean;
   source_map: Record<string, string>;
   calc_trace: string | null;
+  product_id?: string;
+  similar_products?: { product_id: string; name: string }[];
 }
 
 /** 卡片 ④ 区一行影响预演（`PreviewItem.as_dict()`）。 */
@@ -180,6 +182,8 @@ export interface CardPayload {
   };
   /** 扣次信息（只在建卡响应里有） */
   billing?: { billed: boolean; duplicated: boolean; detail: string };
+  /** 待补缺口（服务端 gaps；空数组 = 没有缺项） */
+  gaps?: PendingGap[];
 }
 
 /** 澄清追问。 */
@@ -191,19 +195,33 @@ export interface ClarifyPayload {
 
 /** 创建会话的返回（含上传票据；**音频不进请求体**）。 */
 export interface SessionPayload {
-  session_id: string;
+  session_id: string | null;
   state: string;
-  audio_object_ref: string;
-  upload_ticket: {
+  message_zh?: string;
+  audio_object_ref?: string;
+  upload_ticket?: {
     ticket_id: string;
     audio_object_ref: string;
     upload_prefix: string;
     expires_at: string;
     max_bytes: number;
   };
-  quota: { remaining_minute: number; scope: string };
+  quota?: { remaining_minute: number; scope: string };
   degrade_level: string;
-  note: string;
+  note?: string;
+}
+
+/** 新手期进度与毕业状态。 */
+export interface NoviceStatus {
+  count: number;
+  first_pass_count: number;
+  target: number;
+  first_pass_rate: number;
+  in_novice: boolean;
+  graduated: boolean;
+  extended: boolean;
+  auto_post_enabled: boolean;
+  just_graduated: boolean;
 }
 
 /** 解析返回（结构随 route 变化，下面把各分支的字段都声明成可选）。 */
@@ -233,8 +251,14 @@ export interface ParsePayload {
   clarify?: ClarifyPayload | null;
   /** route=answer（R0 只读查询结果） */
   answer?: { kind: string; items: unknown[]; note?: string } | null;
-  /** route=card */
+  /** route=card / auto_posted / card_updated */
   card?: CardPayload | null;
+  auto_posted?: boolean;
+  result?: ConfirmPayload;
+  novice?: NoviceStatus;
+  undo_window_seconds?: number;
+  toast_zh?: string;
+  learned_rule?: { from: string; to: string };
   credit_consumed?: boolean;
   /** route=rejected / 失败 */
   error_code?: string;
@@ -257,6 +281,7 @@ export interface ConfirmPayload {
   needs_second_voice: boolean;
   error_code: string | null;
   detail: string;
+  novice?: NoviceStatus;
 }
 
 /** 落账接口的包络体（`app/api/v1/confirm.py` 返回 `{result, idempotency_key}`）。 */
@@ -574,7 +599,55 @@ async function callViaContainer(path: string, options: RequestOptions): Promise<
  * @returns 解包后的业务数据
  * @throws ApiError 业务失败或网络异常
  */
-export async function callApi<T>(path: string, options: RequestOptions = {}): Promise<T> {
+/** 清掉本地 token（登录过期后重登前调用）。 */
+let tokenClearHook: (() => void) | null = null;
+
+export function registerTokenClearHook(hook: () => void): void {
+  tokenClearHook = hook;
+}
+
+export function clearToken(): void {
+  try {
+    wx.removeStorageSync(TOKEN_STORAGE_KEY);
+  } catch (error) {
+    console.warn('[api] 清 token 失败', error);
+  }
+  tokenClearHook?.();
+}
+
+let reloginPending: Promise<void> | null = null;
+
+/** 登录过期时静默重登一次（并发安全，只发一次 wx.login）。 */
+function reloginOnce(): Promise<void> {
+  if (reloginPending !== null) {
+    return reloginPending;
+  }
+  reloginPending = new Promise<void>((resolve, reject) => {
+    wx.login({
+      success: (res: { code: string }) => {
+        login(res.code)
+          .then(() => resolve())
+          .catch((error: unknown) => reject(error));
+      },
+      fail: (error: { errMsg?: string }) => reject(new Error(error.errMsg ?? '登录失败')),
+    });
+  }).then(
+    () => {
+      reloginPending = null;
+    },
+    (error: unknown) => {
+      reloginPending = null;
+      throw error;
+    }
+  );
+  return reloginPending;
+}
+
+function isAuthExpired(error: unknown): boolean {
+  return error instanceof ApiError && error.errorCode === 'E_AUTH_INVALID';
+}
+
+async function doCallApi<T>(path: string, options: RequestOptions): Promise<T> {
   const normalizedPath = path.startsWith('/') ? path : `/${path}`;
   const method: HttpMethod = options.method ?? 'GET';
 
@@ -592,6 +665,38 @@ export async function callApi<T>(path: string, options: RequestOptions = {}): Pr
 
   const raw = await callViaContainer(normalizedPath, options);
   return raw as T;
+}
+
+/**
+ * 调用后端接口并解包。
+ *
+ * 登录过期（`E_AUTH_INVALID`）时：清 token → 静默重登一次 → 原请求重试一次。
+ * 这样用户不会在模拟器里放一晚上后看到「登录已过期」，而是自动续上。
+ */
+export async function callApi<T>(path: string, options: RequestOptions = {}): Promise<T> {
+  const method: HttpMethod = options.method ?? 'GET';
+  const scope = options.idempotencyScope ?? `${method}:${path}`;
+  try {
+    const result = await doCallApi<T>(path, options);
+    if (method !== 'GET' && options.idempotencyKey === undefined) {
+      resetIdempotencyKey(scope);
+    }
+    return result;
+  } catch (error) {
+    if (isAuthExpired(error) && !path.includes('/auth/login')) {
+      clearToken();
+      await reloginOnce();
+      const retried = await doCallApi<T>(path, options);
+      if (method !== 'GET' && options.idempotencyKey === undefined) {
+        resetIdempotencyKey(scope);
+      }
+      return retried;
+    }
+    if (method !== 'GET' && options.idempotencyKey === undefined) {
+      resetIdempotencyKey(scope);
+    }
+    throw error;
+  }
 }
 
 /** 健康检查（首页状态条用）。 */
@@ -629,7 +734,13 @@ export function createVoiceSession(body: {
 /** 解析（只传 `audio_object_ref` 引用或已转好的文本）。 */
 export function parseSession(
   sessionId: string,
-  body: { audio_object_ref?: string; asr_text?: string; asr_confidence?: number; duration_ms?: number }
+  body: {
+    audio_object_ref?: string;
+    asr_text?: string;
+    asr_confidence?: number;
+    duration_ms?: number;
+    active_card_id?: string;
+  }
 ): Promise<ParsePayload> {
   return callApi<ParsePayload>(`/api/v1/voice/sessions/${sessionId}/parse`, {
     method: 'POST',
@@ -669,12 +780,13 @@ export function getCard(cardId: string): Promise<CardPayload> {
 /** 确认落账（**唯一写入口**）。返回 `{result, idempotency_key}`。 */
 export function confirmCard(
   cardId: string,
-  body: { confirm_type: 'button' | 'voice2'; button_fallback?: boolean; spoken_text?: string }
+  body: { confirm_type: 'button' | 'voice2'; button_fallback?: boolean; spoken_text?: string },
+  idempotencyKeyOverride?: string
 ): Promise<ConfirmEnvelope> {
   return callApi<ConfirmEnvelope>(`/api/v1/voice/cards/${cardId}/confirm`, {
     method: 'POST',
     data: body as unknown as Record<string, unknown>,
-    idempotencyKey: `confirm:${cardId}`,
+    idempotencyKey: idempotencyKeyOverride ?? `confirm:${cardId}`,
   });
 }
 
@@ -688,40 +800,406 @@ export function cancelCard(
   });
 }
 
-/** 编辑卡片某个槽位（**本地结构化重算，不重调 AI**）。 */
+/** 编辑卡片槽位（**本地结构化重算，不重调 AI**）。服务端收 `{ slots: [{code,value}] }`。 */
 export function editCard(
   cardId: string,
-  body: { code: string; value: string | number }
-): Promise<CardPayload & { llm_calls: number; note: string }> {
+  slots: { code: string; value: string | number }[]
+): Promise<CardPayload & { llm_calls: number; note: string; toast_zh?: string; learned_rule?: { from: string; to: string } }> {
   return callApi(`/api/v1/voice/cards/${cardId}/edit`, {
+    method: 'PATCH',
+    data: { slots } as unknown as Record<string, unknown>,
+  });
+}
+
+/** 单字段语音重试（0 次大模型调用）。 */
+export function fieldVoiceCard(
+  cardId: string,
+  body: { slot_code: string; spoken_text: string }
+): Promise<CardPayload & { llm_calls: number; parsed_updates: Record<string, unknown>; toast_zh?: string; note: string }> {
+  return callApi(`/api/v1/voice/cards/${cardId}/field-voice`, {
+    method: 'POST',
+    data: body as unknown as Record<string, unknown>,
+  });
+}
+
+/** 「要补」的一项：code 直接给 PATCH 编辑用，label/unit 直接上屏。 */
+export interface PendingGap {
+  code: string;
+  label: string;
+  unit: string;
+  must: boolean;
+  current: string;
+}
+
+/** 待确认列表项：服务端只给摘要（card_id / session_id / intent_id / status / asr_text / gaps），
+ *  **不是**完整 7 区块卡片，金额与明细要打开后再取。 */
+export interface PendingCardRow {
+  card_id: string;
+  session_id: string;
+  intent_id: string;
+  status: string;
+  preview_version: number;
+  asr_text: string;
+  billed: boolean;
+  note?: string;
+  /** 还缺哪些项；空数组 = 只差确认 */
+  gaps?: PendingGap[];
+}
+
+/** 复活超时卡片（复用同一 session，不重复扣次）。 */
+export function reviveCard(cardId: string): Promise<CardPayload> {
+  return callApi(`/api/v1/voice/cards/${cardId}/revive`, { method: 'POST' });
+}
+
+/** 待确认卡片列表。 */
+export function listPending(): Promise<{ items: PendingCardRow[]; note: string }> {
+  return callApi('/api/v1/voice/cards/pending', { method: 'GET' });
+}
+
+/** 只读查询：库存（R0，不建卡、不扣次）。 */
+export function queryStock(name = '', lowOnly = false): Promise<QueryPayload> {
+  const params: string[] = [];
+  if (name !== '') {
+    params.push(`name=${encodeURIComponent(name)}`);
+  }
+  if (lowOnly) {
+    params.push('low_only=true');
+  }
+  const suffix = params.length > 0 ? `?${params.join('&')}` : '';
+  return callApi(`/api/v1/query/stock${suffix}`, { method: 'GET' });
+}
+export function queryDebt(partnerId = ''): Promise<QueryPayload> {
+  const suffix = partnerId !== '' ? `?partner_id=${encodeURIComponent(partnerId)}` : '';
+  return callApi(`/api/v1/query/debt${suffix}`, { method: 'GET' });
+}
+
+/** 只读查询：单据 / 流水。 */
+export function queryDocs(bizDate = '', docType = ''): Promise<QueryPayload> {
+  const params: string[] = [];
+  if (bizDate !== '') {
+    params.push(`biz_date=${encodeURIComponent(bizDate)}`);
+  }
+  if (docType !== '') {
+    params.push(`doc_type=${encodeURIComponent(docType)}`);
+  }
+  const suffix = params.length > 0 ? `?${params.join('&')}` : '';
+  return callApi(`/api/v1/query/docs${suffix}`, { method: 'GET' });
+}
+
+/** 单据摘要（`/query/docs` 的 items 形状）。 */
+export interface DocBrief {
+  doc_id: string;
+  doc_no: string;
+  doc_type: string;
+  intent_id: string;
+  biz_date: string;
+  payment_status: string;
+  status: string;
+  total_amount_fen: number | null;
+  total_amount_display: string;
+  cost_hidden?: boolean;
+}
+
+/** 单据明细行（`/query/docs/{id}` 的 lines 形状）。 */
+export interface DocLineDetail {
+  line_id: string;
+  product_id: string;
+  product_name?: string;
+  qty: string;
+  unit: string;
+  unit_price_fen: number | null;
+  amount_fen: number | null;
+  amount_display: string;
+}
+
+export interface DocDetail {
+  doc: DocBrief;
+  lines: DocLineDetail[];
+  cost_hidden?: boolean;
+  readonly: boolean;
+  billed: boolean;
+}
+
+/** 最近单据（带 doc_id，改单卡靠它定位）。 */
+export function listDocs(limit = 20): Promise<{ items: DocBrief[]; readonly: boolean; billed: boolean }> {
+  return callApi(`/api/v1/query/docs?limit=${limit}`, { method: 'GET' });
+}
+
+/** 单据详情：摘要 + 明细行（改单卡的「改前」）。 */
+export function getDocDetail(docId: string): Promise<DocDetail> {
+  return callApi(`/api/v1/query/docs/${docId}`, { method: 'GET' });
+}
+
+/** 改单候选：ref 为空或「上一单」时返回最近几条，ambiguous=true 必须让人选。 */
+export function listDocCandidates(
+  ref = '',
+  limit = 3
+): Promise<{ items: DocBrief[]; ambiguous: boolean; readonly: boolean }> {
+  return callApi(
+    `/api/v1/query/docs/candidates?ref=${encodeURIComponent(ref)}&limit=${limit}`,
+    { method: 'GET' }
+  );
+}
+
+/** 商品档案待补与商品级配置。 */
+export interface ProductGap {
+  product_id: string;
+  name: string;
+  spec: string;
+  base_unit: string;
+  last_purchase_price_fen: number | null;
+  last_sale_price_fen: number | null;
+  avg_cost_fen?: number | null;
+  track_batch?: boolean;
+  allow_negative?: boolean | null;
+  low_stock_qty?: string | null;
+  cost_hidden?: boolean;
+  status: string;
+}
+
+/** 缺进价的商品清单。 */
+export function listProductGaps(): Promise<{
+  items: ProductGap[];
+  readonly: boolean;
+  kind: string;
+  cost_hidden?: boolean;
+}> {
+  return callApi('/api/v1/products/gaps', { method: 'GET' });
+}
+
+/** 补商品价格 / 批次开关 / 负库存覆盖。 */
+export function patchProductPrice(
+  productId: string,
+  body: {
+    last_purchase_price_fen?: number;
+    last_sale_price_fen?: number;
+    cost_method?: string;
+    track_batch?: boolean;
+    allow_negative?: boolean | null;
+    low_stock_qty?: number | null;
+  }
+): Promise<{ product: ProductGap }> {
+  return callApi(`/api/v1/products/${productId}`, {
     method: 'PATCH',
     data: body as unknown as Record<string, unknown>,
   });
 }
 
-/** 待确认卡片列表。 */
-export function listPending(): Promise<{ items: CardPayload[]; note: string }> {
-  return callApi('/api/v1/voice/cards/pending', { method: 'GET' });
+export interface UnifiedGapRow {
+  gap_id: string;
+  kind: string;
+  ref_entity: string;
+  ref_id: string;
+  title: string;
+  detail_json: Record<string, unknown> | null;
+  priority: number;
+  status: string;
+  created_at: string | null;
 }
 
-/** 只读查询：库存（R0，不建卡、不扣次）。 */
-export function queryStock(keyword = ''): Promise<QueryPayload> {
-  return callApi(`/api/v1/query/stock?keyword=${encodeURIComponent(keyword)}`, { method: 'GET' });
+export function listUnifiedGaps(): Promise<{ items: UnifiedGapRow[]; readonly: boolean }> {
+  return callApi('/api/v1/products/unified-gaps', { method: 'GET' });
 }
 
-/** 只读查询：欠款。 */
-export function queryDebt(keyword = ''): Promise<QueryPayload> {
-  return callApi(`/api/v1/query/debt?keyword=${encodeURIComponent(keyword)}`, { method: 'GET' });
+export function resolveUnifiedGap(gapId: string): Promise<{ gap_id: string; status: string }> {
+  return callApi(`/api/v1/products/unified-gaps/${gapId}/resolve`, { method: 'POST' });
 }
 
-/** 只读查询：单据 / 流水。 */
-export function queryDocs(keyword = ''): Promise<QueryPayload> {
-  return callApi(`/api/v1/query/docs?keyword=${encodeURIComponent(keyword)}`, { method: 'GET' });
+/** 设置单位换算（若拆成更细粒度基本单位则原子升级账目）。 */
+export function setProductUnitRatio(
+  productId: string,
+  body: { from_unit: string; to_unit: string; ratio: number }
+): Promise<{ unit_ratio: Record<string, unknown> }> {
+  return callApi(`/api/v1/products/${productId}/unit-ratio`, {
+    method: 'POST',
+    data: body as unknown as Record<string, unknown>,
+  });
 }
 
-/** 只读查询：报表（`kind=top` 时返回 `top_products`，其余返回 `report`）。 */
-export function queryReport(kind: 'today' | 'month' | 'profit' | 'top'): Promise<QueryPayload> {
-  return callApi(`/api/v1/query/report?kind=${kind}`, { method: 'GET' });
+export interface MeMemberRow {
+  member_id: string;
+  name: string;
+  role: string;
+  status: string;
+  is_self: boolean;
+}
+
+export interface MePayload {
+  member_id: string;
+  tenant_id: string;
+  store_id: string;
+  role: string;
+  display_name: string;
+  store_name: string;
+  plan_code: string;
+  accounting_mode: 'per_txn' | 'count_derive';
+  allow_negative: boolean;
+  staff_can_view_cost: boolean;
+  can_view_cost: boolean;
+  novice: NoviceStatus;
+  auto_post_enabled: boolean;
+  alias_count: number;
+  members: MeMemberRow[];
+}
+
+export function getMe(): Promise<MePayload> {
+  return callApi('/api/v1/me', { method: 'GET' });
+}
+
+export function updatePreferences(body: {
+  auto_post_enabled?: boolean;
+  accounting_mode?: 'per_txn' | 'count_derive';
+  display_name?: string;
+}): Promise<{ display_name: string; accounting_mode: 'per_txn' | 'count_derive'; auto_post_enabled: boolean; novice: NoviceStatus }> {
+  return callApi('/api/v1/me/preferences', {
+    method: 'PATCH',
+    data: body as unknown as Record<string, unknown>,
+  });
+}
+
+export function deleteDict(dictId: string): Promise<{ dict_id: string; deleted: boolean; dict_version: number }> {
+  return callApi(`/api/v1/dict/${dictId}`, { method: 'DELETE' });
+}
+
+/** 库存策略：成本法 + 负库存开关 + 店员成本可见性。 */
+export interface InventoryPolicy {
+  cost_method: 'avg' | 'batch' | 'fifo' | 'fefe' | 'fefo';
+  allow_negative: boolean;
+  staff_can_view_cost?: boolean;
+}
+
+export function getInventoryPolicy(): Promise<InventoryPolicy> {
+  return callApi('/api/v1/inventory/policy', { method: 'GET' });
+}
+
+export function patchInventoryPolicy(body: {
+  cost_method?: 'avg' | 'batch' | 'fifo' | 'fefe' | 'fefo';
+  allow_negative?: boolean;
+  staff_can_view_cost?: boolean;
+}): Promise<InventoryPolicy> {
+  return callApi('/api/v1/inventory/policy', {
+    method: 'PATCH',
+    data: body as unknown as Record<string, unknown>,
+  });
+}
+
+/** 批次余量。 */
+export interface StockBatchRow {
+  batch_id: string;
+  product_id: string;
+  product_name?: string;
+  base_unit?: string;
+  label?: string;
+  is_virtual?: boolean;
+  qty_in: string;
+  qty_left: string;
+  unit_cost_fen: number | null;
+  cost_hidden?: boolean;
+  expiry_date: string | null;
+  status: string;
+  received_at: string;
+}
+
+export function listBatches(
+  productId = ''
+): Promise<{ items: StockBatchRow[]; cost_hidden?: boolean; readonly: boolean }> {
+  const query = productId === '' ? '' : `?product_id=${productId}`;
+  return callApi(`/api/v1/inventory/batches${query}`, { method: 'GET' });
+}
+
+/** 盘点。 */
+export interface CountLineRow {
+  product_id: string;
+  name: string;
+  unit: string;
+  qty_book: string;
+  qty_counted: string | null;
+  diff: string | null;
+  reason: string | null;
+}
+
+export interface CountDetail {
+  count: { count_id: string; status: string; started_at: string; applied_at: string | null };
+  lines: CountLineRow[];
+}
+
+export function startCount(): Promise<{ count_id: string; status: string }> {
+  return callApi('/api/v1/counts', { method: 'POST' });
+}
+
+export function getCount(countId: string): Promise<CountDetail> {
+  return callApi(`/api/v1/counts/${countId}`, { method: 'GET' });
+}
+
+export function fillCountLine(
+  countId: string,
+  productId: string,
+  qtyCounted: string,
+  reason?: string
+): Promise<{ product_id: string; qty_book: string; qty_counted: string }> {
+  return callApi(`/api/v1/counts/${countId}/lines/${productId}`, {
+    method: 'PATCH',
+    data: { qty_counted: qtyCounted, reason: reason ?? null } as unknown as Record<string, unknown>,
+  });
+}
+
+export function applyCount(
+  countId: string
+): Promise<{ result: { count_id: string; adjusted_lines: number; total_qty_diff: string } }> {
+  return callApi(`/api/v1/counts/${countId}/apply`, { method: 'POST' });
+}
+
+/** 撤销一张单（反做单，原单保留）。 */
+export function reverseDoc(
+  docId: string,
+  reason = ''
+): Promise<{ result: { reversal_doc_id?: string; reversal_doc_no?: string; detail?: string }; window_minutes: number }> {
+  return callApi(`/api/v1/docs/${docId}/reversal`, {
+    method: 'POST',
+    data: { reason } as unknown as Record<string, unknown>,
+    idempotencyKey: `reversal:${docId}`,
+  });
+}
+
+/** 一步原子改单（同一事务反做原单 + 新建更正单）。 */
+export function correctDoc(
+  docId: string,
+  body: {
+    lines: Array<{
+      product_id: string;
+      qty: number;
+      unit?: string;
+      unit_price_fen?: number | null;
+    }>;
+    reason?: string;
+  }
+): Promise<{
+  result: {
+    original_doc_id: string;
+    reversal_doc_id: string;
+    new_doc_id: string;
+    new_doc_no: string;
+    total_amount_fen: number;
+    detail: string;
+  };
+}> {
+  return callApi(`/api/v1/docs/${docId}/correct`, {
+    method: 'POST',
+    data: body as unknown as Record<string, unknown>,
+    idempotencyScope: `correct:${docId}`,
+  });
+}
+
+/** 只读查询：报表（`kind=top` 时返回 `top_products`，其余返回 `report`，支持 today/week/month）。 */
+export function queryReport(
+  kind: 'today' | 'week' | 'month' | 'profit' | 'top',
+  period: 'today' | 'week' | 'month' = 'today'
+): Promise<QueryPayload> {
+  if (kind === 'top') {
+    return callApi('/api/v1/query/report?top=true', { method: 'GET' });
+  }
+  const resolvedPeriod = kind === 'week' || kind === 'month' ? kind : period;
+  return callApi(`/api/v1/query/report?period=${resolvedPeriod}`, { method: 'GET' });
 }
 
 /** 用量（**自然月**口径，与权益的 30 天滚动窗口分开）。 */
@@ -786,7 +1264,7 @@ export function createExport(
   return callApi('/api/v1/exports', {
     method: 'POST',
     data: { scope, file_format: fileFormat },
-    idempotencyKey: `export:${scope}:${fileFormat}`,
+    idempotencyScope: `export:${scope}:${fileFormat}`,
   });
 }
 
@@ -817,4 +1295,111 @@ export function teachDict(body: {
     data: body as unknown as Record<string, unknown>,
     idempotencyScope: `teach:${body.raw_text}`,
   });
+}
+
+export interface DeliveryNoteLine {
+  line_index?: number;
+  product_name: string;
+  unit: string;
+  quantity: number;
+  unit_price_fen: number | null;
+  amount_fen: number | null;
+  matched_product_id?: string | null;
+  matched_product_name?: string | null;
+  matched_base_unit?: string | null;
+  is_new_product?: boolean;
+  needs_unit_ratio?: boolean;
+  unit_ratio?: string | null;
+}
+
+export interface DeliveryNoteDraft {
+  attachment_id: string;
+  object_ref: string;
+  supplier_name: string | null;
+  doc_date: string;
+  payment_status: '已结' | '未结' | string;
+  stated_total_fen: number | null;
+  computed_total_fen: number;
+  total_mismatch: boolean;
+  total_diff_fen: number;
+  warnings: string[];
+  lines: DeliveryNoteLine[];
+  notes: string;
+  model: string;
+}
+
+/** 拍进货单识别（调用中国开源视觉模型提取明细，不直接写账）。 */
+export function parseDeliveryNote(body: {
+  image_base64?: string;
+  image_url?: string;
+  object_ref?: string;
+  hint_text?: string;
+}): Promise<DeliveryNoteDraft> {
+  return callApi<DeliveryNoteDraft>('/api/v1/delivery-note/parse', {
+    method: 'POST',
+    data: body as unknown as Record<string, unknown>,
+    idempotencyScope: `dn-parse:${body.object_ref ?? Date.now()}`,
+  });
+}
+
+/** 核对进货单并确认入库（通过 LedgerService 记账并标注 source=photo）。 */
+export function confirmDeliveryNote(
+  attachmentId: string,
+  body: {
+    supplier_name?: string | null;
+    doc_date?: string | null;
+    payment_status?: string;
+    stated_total_fen?: number | null;
+    lines: Array<{
+      product_name: string;
+      unit: string;
+      quantity: number;
+      unit_price_fen?: number | null;
+      amount_fen?: number | null;
+      product_id?: string | null;
+      matched_product_id?: string | null;
+      unit_ratio?: string | number | null;
+    }>;
+  }
+): Promise<{
+  attachment_id: string;
+  doc_id: string;
+  doc_no: string;
+  total_amount_fen: number;
+  payment_status: string;
+  source: string;
+  line_count: number;
+}> {
+  return callApi(`/api/v1/delivery-note/${attachmentId}/confirm`, {
+    method: 'POST',
+    data: body as unknown as Record<string, unknown>,
+    idempotencyScope: `dn-confirm:${attachmentId}`,
+  });
+}
+
+/** 查询最近拍过的进货单与关联单据状态。 */
+export function listDeliveryNotes(limit = 20): Promise<{
+  items: Array<{
+    attachment_id: string;
+    doc_id: string | null;
+    object_ref: string;
+    supplier_name: string | null;
+    computed_total_fen: number | null;
+    line_count: number;
+    created_at: string | null;
+  }>;
+}> {
+  return callApi(`/api/v1/delivery-note/attachments?limit=${limit}`, { method: 'GET' });
+}
+
+/** 获取导出任务的 UTF-8 BOM CSV 内容，供本地写入与微信转发。 */
+export function getExportContent(jobId: string): Promise<{
+  job_id: string;
+  scope: string;
+  filename: string;
+  row_count: number;
+  mime: string;
+  csv_content: string;
+}> {
+  return callApi(`/api/v1/exports/${jobId}/content`, { method: 'GET' });
 }

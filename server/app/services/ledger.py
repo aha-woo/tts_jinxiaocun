@@ -25,9 +25,9 @@ from __future__ import annotations
 import json
 import logging
 import uuid
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import date, datetime, timedelta, timezone
-from decimal import Decimal
+from decimal import ROUND_HALF_UP, Decimal
 from typing import Any, Mapping, Sequence
 
 from sqlalchemy import select, update
@@ -48,16 +48,25 @@ from app.domain.entity_writer import (
 from app.domain.intent_registry import IntentRegistry, default_registry, is_pure_entity_intent
 from app.domain.inventory_service import (
     InventoryDelta,
+    InventoryRow,
     InventoryService,
     NegativeStockBlocked,
 )
 from app.domain.inventory_service import VersionConflict as InvVersionConflict
+from app.models.catalog import Product
+from app.services.gaps import upsert_gap
+from app.utils.date_utils import today_in_tz
 from app.models.doc import DocHeader
+from app.models.partner import Partner
 from app.models.voice import ConfirmCard, VoiceLog
 from app.services.audit import AuditService
+from app.services.movement import reason_of, record_doc_movements
+from app.services import batch as batch_service
+from app.models.inventory import InventoryMovement
 from app.services.reversal import ReversalOutcome, ReversalService
 from app.services.usage_meter import MeterResult, UsageMeter
 from app.voice.card_builder import ConfirmCardBuilder, ConfirmCardView
+from app.voice.gaps import gaps_for
 from app.voice.conflict_detector import Conflict
 from app.voice.correction_edit import apply_slot_updates
 from app.voice.impact_preview import PreviewBundle, items_from_dicts
@@ -123,12 +132,9 @@ class StoredCardPayload:
     asr_confidence: float = 0.0
     calc_traces: tuple[str, ...] = ()
     #: 这张卡的 TTL 截止时刻（ISO 8601，UTC）。
-    #:
-    #: 为什么要落在载荷里，而不是只靠 ``confirm_card.created_at + ttl``：
-    #: 复活（30s 超时后重开）复用**同一行**，``created_at`` 不动；若仍按
-    #: ``created_at`` 判超时，「复活」就只是把状态改回 active，一确认又立刻判过期，
-    #: 卡片永远确认不了。把截止时刻显式存下来，复活时重写它，才有意义。
     expires_at: str = ""
+    #: 是否被人工改过（新手期一次过率判定）
+    edited: bool = False
 
     def to_json(self) -> dict[str, Any]:
         """序列化进 JSON 列。"""
@@ -141,6 +147,7 @@ class StoredCardPayload:
             "asr_confidence": self.asr_confidence,
             "calc_traces": list(self.calc_traces),
             "expires_at": self.expires_at,
+            "edited": bool(self.edited),
         }
 
     @classmethod
@@ -156,7 +163,13 @@ class StoredCardPayload:
             asr_confidence=float(data.get("asr_confidence") or 0.0),
             calc_traces=tuple(str(trace) for trace in data.get("calc_traces") or ()),
             expires_at=str(data.get("expires_at") or ""),
+            edited=bool(data.get("edited", False)),
         )
+
+
+def _pending_gaps(payload: StoredCardPayload) -> list[dict[str, Any]]:
+    """兼容入口：待处理列表与卡片页共用 :mod:`app.voice.gaps` 的判据。"""
+    return gaps_for(payload.intent_id, payload.slots, payload.source)
 
 
 @dataclass(frozen=True)
@@ -229,6 +242,7 @@ class ConfirmOutcome:
     reversal_doc_no: str | None = None
     #: 还需要用户接着做的一步（``sys.correct``：反做已完成 → 请重说一句正确的）
     follow_up: dict[str, Any] | None = None
+    novice: Mapping[str, Any] | None = None
 
     @property
     def confirmed(self) -> bool:
@@ -238,7 +252,7 @@ class ConfirmOutcome:
 
     def as_dict(self) -> dict[str, Any]:
         """JSON 形态。"""
-        return {
+        data = {
             "card_id": self.card_id,
             "doc_id": self.doc_id,
             "doc_no": self.doc_no,
@@ -260,6 +274,9 @@ class ConfirmOutcome:
             "entity_id": self.entity_id,
             "summary": self.summary,
         }
+        if self.novice is not None:
+            data["novice"] = dict(self.novice)
+        return data
 
 
 class LedgerService:
@@ -289,6 +306,7 @@ class LedgerService:
         self._audit = AuditService(session)
         self._card_ttl = int(card_ttl_seconds)
         self._reversal_window = int(reversal_window_minutes)
+        self.last_edit_feedback: dict[str, Any] | None = None
 
     # ------------------------------------------------------------------ 建卡
     def create_card(
@@ -383,12 +401,12 @@ class LedgerService:
                 preview_version=preview.preview_version,
                 status="active",
             )
-            self._session.add(card)
             try:
-                self._session.flush()
+                with self._session.begin_nested():
+                    self._session.add(card)
+                    self._session.flush()
             except IntegrityError:
-                # 并发建同一会话的卡片：回滚后复用已有卡片（不重复建）
-                self._session.rollback()
+                # 并发建同一会话的卡片：SAVEPOINT 回滚后复用已有卡片（不破坏 PG app.tenant_id）
                 card = self._get_card_by_session(tenant_id, session_id)
                 if card is None:  # pragma: no cover - 冲突后必然能查到
                     raise
@@ -589,6 +607,8 @@ class LedgerService:
         # - 行级：``line["pending"] is True``（例如缺单位换算系数，数量口径不明）。
         #   典型后果：缺「1 箱 = 24 瓶」时 ``qty_base`` 退化成原数量，
         #   **5 箱会记成 5 瓶**——数字自洽、账面全错，用户还看不到提示。
+        # 进货且商品没档案：先建档再走 pending 守卫（卖货会在里面直接拒）
+        payload = self._ensure_products(tenant_id=tenant_id, payload=payload)
         required_codes = set(spec.required_slots)
         pending_codes = sorted(
             code
@@ -680,6 +700,14 @@ class LedgerService:
         card.slots = confirmed_payload
         self._session.flush()
 
+        from app.services.novice import record_voice_confirm
+
+        novice_status = record_voice_confirm(
+            self._session,
+            member_id,
+            was_edited=bool(payload.edited),
+        )
+
         inventory_after = self._inventory_after(tenant_id, store_id, payload)
         audit_entity_id = (
             str(outcome.doc_id)
@@ -728,6 +756,7 @@ class LedgerService:
             reversal_doc_id=outcome.reversal.reversal_doc_id if outcome.reversal else None,
             reversal_doc_no=outcome.reversal.reversal_doc_no if outcome.reversal else None,
             follow_up=outcome.follow_up,
+            novice=novice_status,
         )
 
     # ------------------------------------------------------------------ 取消 / 超时 / 复活
@@ -871,6 +900,7 @@ class LedgerService:
         card_id: uuid.UUID,
         updates: Mapping[str, Any],
         preview: PreviewBundle | None = None,
+        qty_base_of: Any = None,
     ) -> ConfirmCardView:
         """编辑卡片槽位：**本地结构化重算，绝不重调 AI**（验收⑥）。
 
@@ -897,7 +927,7 @@ class LedgerService:
             versions=_versions_of(card.impact_preview),
         )
 
-        edited = apply_slot_updates(payload=payload, updates=updates)
+        edited = apply_slot_updates(payload=payload, updates=updates, qty_base_of=qty_base_of)
         card.slots = edited.payload.to_json()
         card.impact_preview = [item.as_dict() for item in bundle.items]
         card.preview_version = bundle.preview_version
@@ -906,8 +936,9 @@ class LedgerService:
         from app.services.correction_feedback import CorrectionFeedbackService
 
         feedback = CorrectionFeedbackService(self._session)
+        self.last_edit_feedback = None
         for slot_code, old_value, new_value in edited.changes:
-            feedback.record(
+            outcome = feedback.record(
                 tenant_id=tenant_id,
                 session_id=uuid.UUID(str(card.session_id)),
                 member_id=member_id,
@@ -918,6 +949,11 @@ class LedgerService:
                 intent_id=edited.payload.intent_id,
                 raw_text=edited.payload.asr_text,
             )
+            if outcome.learned_rule is not None:
+                self.last_edit_feedback = {
+                    "learned_rule": outcome.learned_rule,
+                    "toast_zh": outcome.toast_zh,
+                }
 
         self._audit.record(
             tenant_id=tenant_id,
@@ -968,6 +1004,7 @@ class LedgerService:
                     "asr_text": payload.asr_text,
                     "billed": False,
                     "note": "复活时复用同一 session_id，不会重复扣次",
+                    "gaps": _pending_gaps(payload),
                 }
             )
         return rows
@@ -1259,6 +1296,7 @@ class LedgerService:
             doc_id=target.doc_id,
             member_id=member_id,
             reason="语音撤销（sys.undo）" if not is_correct else "语音更正第一步：反做原单（sys.correct）",
+            ignore_window=is_correct,
         )
         detail = (
             f"已撤销 {target.doc_no}：原单保留且标记为「已撤销」，"
@@ -1315,6 +1353,35 @@ class LedgerService:
         """
         return self._resolve_target_doc(tenant_id=tenant_id, raw_ref=raw_ref)
 
+    def reversal_candidates(
+        self, *, tenant_id: uuid.UUID, raw_ref: Any, limit: int = 3
+    ) -> list[DocHeader]:
+        """给「改哪一单」列候选（只读）：精确引用返回 1 条，含糊引用返回最近几条。
+
+        与 resolve_reversal_target 的区别：后者按「最近一单」直接拍板，用于自动建卡；
+        这里把候选列出来，让端上先让老板确认，避免改错单。
+        """
+        doc_service = DocService(self._session)
+        as_id = _as_uuid(raw_ref)
+        if as_id is not None:
+            found = doc_service.get(tenant_id=tenant_id, doc_id=as_id)
+            return [] if found is None else [found]
+        text_value = str(raw_ref or "").strip()
+        if text_value and text_value not in _LAST_DOC_WORDS:
+            by_no = doc_service.get_by_no(tenant_id=tenant_id, doc_no=text_value)
+            return [] if by_no is None else [by_no]
+        statement = (
+            select(DocHeader)
+            .where(
+                DocHeader.tenant_id == tenant_id,
+                DocHeader.status == "confirmed",
+                DocHeader.reverses_doc_id.is_(None),
+            )
+            .order_by(DocHeader.created_at.desc())
+            .limit(max(1, limit))
+        )
+        return list(self._session.execute(statement).scalars())
+
     def _resolve_target_doc(
         self, *, tenant_id: uuid.UUID, raw_ref: Any
     ) -> DocHeader | None:
@@ -1345,6 +1412,119 @@ class LedgerService:
         )
         return self._session.execute(statement).scalar_one_or_none()
 
+    def _ensure_products(
+        self, *, tenant_id: uuid.UUID, payload: StoredCardPayload
+    ) -> StoredCardPayload:
+        """进货单的商品没有档案时顺手建档；卖货没有档案直接拒。
+
+        只处理「单位就是基本单位」的行（不用换算）：新建商品时 base_unit 直接取这句话
+        的单位，qty_base = qty，口径确定。需要换算（如「2 箱」但没有 1 箱 = 几瓶）的行
+        保持 pending，由确认守卫拦下，避免把箱记成瓶。
+        """
+        lines = [dict(line) for line in payload.lines]
+        if all(line.get("product_id") for line in lines):
+            return payload
+        intent = str(payload.intent_id)
+        if not (intent.startswith("purchase.") or intent.startswith("sales.")):
+            return payload  # 实体意图等：明细行只是占位，不在这里处理
+        if not intent.startswith("purchase."):
+            raise AppError(
+                "E_VALIDATION",
+                message="档案里没有这件货，库存也没有，卖不了；要卖请先记一笔进货",
+            )
+        base_unit = str(payload.slots.get("U") or "").strip()
+        is_multi = len(lines) > 1 or intent.endswith("_multi")
+        changed = False
+        for line in lines:
+            if line.get("product_id"):
+                continue
+            unit = str(line.get("unit") or base_unit or "").strip()
+            quantity = line.get("quantity", line.get("qty"))
+            if unit == "" or quantity in (None, ""):
+                continue  # 需要换算或口径不明 → 留给 pending 守卫
+            if not is_multi and base_unit and unit != base_unit:
+                continue  # 单行未设换算时沿用 base_unit 守卫
+            if is_multi:
+                name = str(
+                    line.get("product_name") or line.get("product_label") or payload.slots.get("P") or ""
+                ).strip()
+                raw_price = (
+                    line.get("unit_price_fen")
+                    if line.get("unit_price_fen") is not None
+                    else payload.slots.get("UP")
+                )
+            else:
+                name = str(
+                    payload.slots.get("P") or line.get("product_name") or line.get("product_label") or ""
+                ).strip()
+                raw_price = (
+                    payload.slots.get("UP")
+                    if payload.slots.get("UP") is not None
+                    else line.get("unit_price_fen")
+                )
+            if name == "":
+                continue
+            price = int(raw_price) if isinstance(raw_price, (int, float)) and not isinstance(raw_price, bool) else None
+            row = self._session.execute(
+                select(Product)
+                .where(
+                    Product.tenant_id == tenant_id,
+                    Product.name == name,
+                    Product.status.in_(("draft", "active")),
+                )
+                .limit(1)
+            ).scalar_one_or_none()
+            if row is None:
+                row = Product(
+                    tenant_id=tenant_id,
+                    name=name,
+                    base_unit=unit,
+                    last_purchase_price_fen=max(0, price) if price is not None else None,
+                    avg_cost_fen=max(0, price) if price is not None else None,
+                    status="active" if price is not None else "draft",
+                )
+                self._session.add(row)
+                self._session.flush()
+            line["product_id"] = str(row.product_id)
+            line["pending"] = False
+            changed = True
+        if not changed:
+            return payload
+        return replace(payload, lines=tuple(lines))
+
+    def _resolve_partner(
+        self, *, tenant_id: uuid.UUID, intent_id: str, slots: Mapping[str, Any]
+    ) -> uuid.UUID | None:
+        """把这句话里的供应商/客户落到 partner 表；占位词不建。"""
+        is_purchase = intent_id.startswith("purchase.") or intent_id.startswith("purchase_return.") or intent_id == "payment.pay"
+        is_sales = intent_id.startswith("sales.") or intent_id.startswith("sales_return.") or intent_id == "payment.receive"
+        if not (is_purchase or is_sales):
+            return None
+        raw = slots.get("S") if is_purchase else slots.get("C")
+        if raw is None and intent_id.startswith("payment."):
+            raw = slots.get("C") or slots.get("S")
+        name = str(raw or "").strip()
+        if name in ("", "待补", "待确认", "散客"):
+            return None
+        as_uuid = _as_uuid(name)
+        if as_uuid is not None:
+            return as_uuid
+        ptype = "supplier" if is_purchase else "customer"
+        row = self._session.execute(
+            select(Partner)
+            .where(
+                Partner.tenant_id == tenant_id,
+                Partner.type.in_((ptype, "both")),
+                Partner.name == name,
+            )
+            .limit(1)
+        ).scalar_one_or_none()
+        if row is None:
+            row = Partner(tenant_id=tenant_id, type=ptype, name=name)
+            self._session.add(row)
+            self._session.flush()
+        return row.partner_id
+
     def _write_documents(
         self,
         *,
@@ -1356,21 +1536,50 @@ class LedgerService:
         spec_intent: str,
         biz_date: date,
     ) -> Any:
-        """CAS 写库存/应收 + 写单据（**同一事务**）。
-
-        Raises:
-            AppError: ``E_PREVIEW_VERSION_CONFLICT``(1202) / ``E_VALIDATION``(422)。
-        """
+        """CAS 写库存/应收 + 写单据（**同一事务**，绝不吞半截状态）。"""
         side_effect = dict(self._registry.require(spec_intent).side_effect or {})
         versions = _versions_of(card.impact_preview)
         payment_status = str(payload.slots.get("PS") or "已结")
+        # 进货单商品没有档案时顺手建档（卖货没有档案会在里面直接拒；此时已过卡片 CAS 抢占）
+        payload = self._ensure_products(tenant_id=tenant_id, payload=payload)
+        partner_id = self._resolve_partner(
+            tenant_id=tenant_id, intent_id=spec_intent, slots=payload.slots
+        )
+        partner_name: str | None = None
+        if partner_id is not None:
+            p_row = self._session.get(Partner, partner_id)
+            partner_name = str(p_row.name) if p_row is not None else None
+
+        inventory_mode = str(side_effect.get("inventory_delta") or "none")
+        ar_mode = str(side_effect.get("ar_ap_delta") or "none")
+        policy = (
+            batch_service.policy_for(self._session, tenant_id)
+            if inventory_mode in {"increase", "decrease", "snapshot"}
+            else None
+        )
+
+        # 多行同商品先按 product_id 合并总出库数量再分配批次，避免重复扣减同一份旧 qty_left
+        sale_plans_by_product: dict[uuid.UUID, list[batch_service.BatchAllocation]] = {}
+        if inventory_mode == "decrease" and policy is not None:
+            aggregated_qty: dict[uuid.UUID, Decimal] = {}
+            for raw_line in payload.lines:
+                product_id = _as_uuid(raw_line.get("product_id"))
+                qty_base = _as_decimal(raw_line.get("qty_base", raw_line.get("quantity", 0)))
+                if product_id is None or qty_base <= 0:
+                    continue
+                aggregated_qty[product_id] = aggregated_qty.get(product_id, Decimal(0)) + qty_base
+            for product_id, total_qty in aggregated_qty.items():
+                sale_plans_by_product[product_id] = batch_service.plan_sale(
+                    self._session,
+                    tenant_id=tenant_id,
+                    store_id=store_id,
+                    product_id=product_id,
+                    qty_base=total_qty,
+                    policy=policy,
+                )
 
         line_drafts: list[DocLineDraft] = []
-        # 同一张卡里同一个商品可能出现多行（「两箱可乐，三箱可乐」是两个 item）。
-        # 若每行各做一次 CAS，第二行时库里 version 已 +1 → **永久 1202**，
-        # 用户怎么重试都不成。所以先按 product_id 合并数量，只做一次 CAS。
         inv_deltas_by_product: dict[uuid.UUID, InventoryDelta] = {}
-        ar_deltas: list[ArApDelta] = []
 
         for line in payload.lines:
             product_id = _as_uuid(line.get("product_id"))
@@ -1383,8 +1592,10 @@ class LedgerService:
             qty = _as_decimal(line.get("quantity", line.get("qty", 0)))
             unit = str(line.get("unit") or "")
             qty_base = _as_decimal(line.get("qty_base", qty))
-            amount_fen = int(line.get("amount_fen") or 0)
-            unit_price_fen = int(line.get("unit_price_fen") or 0)
+            raw_amt = line.get("amount_fen")
+            raw_up = line.get("unit_price_fen")
+            amount_fen = int(raw_amt) if raw_amt is not None else None
+            unit_price_fen = int(raw_up) if raw_up is not None else None
             line_drafts.append(
                 DocLineDraft(
                     product_id=product_id,
@@ -1393,76 +1604,59 @@ class LedgerService:
                     qty_base=qty_base,
                     unit_price_fen=unit_price_fen,
                     amount_fen=amount_fen,
+                    price_source=payload.source.get("UP") or payload.source.get("TA"),
                     source_map=dict(payload.source),
                 )
             )
 
-            mode = str(side_effect.get("inventory_delta") or "none")
-            if mode in {"increase", "decrease", "snapshot"}:
-                sign = -1 if mode == "decrease" else 1
+            if inventory_mode in {"increase", "decrease", "snapshot"}:
+                sign = -1 if inventory_mode == "decrease" else 1
                 merged = inv_deltas_by_product.get(product_id)
                 if merged is None:
                     inv_deltas_by_product[product_id] = InventoryDelta(
                         product_id=product_id,
                         qty_base_delta=qty_base * sign,
                         expected_version=versions.get(str(product_id)),
-                        snapshot=mode == "snapshot",
+                        snapshot=inventory_mode == "snapshot",
                     )
                 else:
                     inv_deltas_by_product[product_id] = InventoryDelta(
                         product_id=product_id,
                         qty_base_delta=merged.qty_base_delta + qty_base * sign,
                         expected_version=merged.expected_version,
-                        snapshot=merged.snapshot or mode == "snapshot",
+                        snapshot=merged.snapshot or inventory_mode == "snapshot",
                     )
 
-            ar_mode = str(side_effect.get("ar_ap_delta") or "none")
-            partner_id = _as_uuid(line.get("partner_id") or payload.slots.get("C") or payload.slots.get("S"))
-            if ar_mode != "none" and partner_id is not None and payment_status != "已结":
-                direction = "receivable" if ar_mode.startswith("receivable") else "payable"
-                ar_deltas.append(
-                    ArApDelta(
-                        partner_id=partner_id,
-                        direction=direction,
-                        amount_fen=amount_fen,
-                        settle=ar_mode.endswith("decrease"),
-                        expected_version=versions.get(f"{partner_id}:{direction}"),
-                    )
-                )
-
-        inv_deltas = list(inv_deltas_by_product.values())
+        inv_rows_by_product: dict[uuid.UUID, InventoryRow] = {}
         try:
-            if inv_deltas:
-                InventoryService(self._session).apply(
-                    tenant_id=tenant_id, store_id=store_id, deltas=inv_deltas
+            for pid, delta in inv_deltas_by_product.items():
+                allow_neg = (
+                    batch_service.effective_allow_negative(self._session, tenant_id, pid, policy)
+                    if policy is not None
+                    else True
                 )
-            if ar_deltas:
-                ArApService(self._session).apply(
-                    tenant_id=tenant_id, store_id=store_id, deltas=ar_deltas
+                applied_rows = InventoryService(self._session).apply(
+                    tenant_id=tenant_id,
+                    store_id=store_id,
+                    deltas=[delta],
+                    allow_negative=allow_neg,
                 )
-        except (InvVersionConflict, ArVersionConflict) as exc:
-            self._session.rollback()
+                for inv_row in applied_rows:
+                    inv_rows_by_product[inv_row.product_id] = inv_row
+        except InvVersionConflict as exc:
             raise AppError(
                 "E_PREVIEW_VERSION_CONFLICT",
                 message=(
-                    "这张卡片预演之后，库存/欠款已被别的操作改过；"
+                    "这张卡片预演之后，库存已被别的操作改过；"
                     "请重新打开卡片（会重新只读预演），不要按旧态落账"
                 ),
                 data={"detail": str(exc)},
             ) from exc
         except NegativeStockBlocked as exc:
-            self._session.rollback()
             raise AppError(
                 "E_VALIDATION",
                 message=str(exc),
                 data={"reason": "negative_stock"},
-            ) from exc
-        except OverSettleBlocked as exc:
-            self._session.rollback()
-            raise AppError(
-                "E_VALIDATION",
-                message=str(exc),
-                data={"reason": "over_settle"},
             ) from exc
 
         doc_service = DocService(self._session)
@@ -1473,9 +1667,221 @@ class LedgerService:
             biz_date=biz_date,
             created_by=member_id,
             payment_status=payment_status,
+            partner_id=partner_id,
             lines=tuple(line_drafts),
         )
-        return doc_service.create(draft)
+        doc = doc_service.create(draft)
+
+        # 先落出真实 doc_id 再记应收应付/收付款，保证 ArAp.doc_id 是外键真值
+        if ar_mode != "none" and partner_id is not None:
+            is_settle = ar_mode.endswith("decrease")
+            if is_settle or payment_status != "已结":
+                direction = "receivable" if ar_mode.startswith("receivable") else "payable"
+                amt = int(doc.total_amount_fen)
+                slot_amt = payload.slots.get("AMT") if payload.slots.get("AMT") is not None else payload.slots.get("TA")
+                if amt <= 0 and slot_amt is not None:
+                    amt = int(slot_amt)
+                if amt > 0:
+                    try:
+                        ar_rows = ArApService(self._session).apply(
+                            tenant_id=tenant_id,
+                            store_id=store_id,
+                            deltas=[
+                                ArApDelta(
+                                    partner_id=partner_id,
+                                    direction=direction,
+                                    amount_fen=amt,
+                                    doc_id=doc.doc_id,
+                                    settle=is_settle,
+                                    expected_version=versions.get(f"{partner_id}:{direction}"),
+                                )
+                            ],
+                        )
+                        if is_settle and ar_rows:
+                            ArApService(self._session).record_payment(
+                                tenant_id=tenant_id,
+                                store_id=store_id,
+                                ar_ap_id=ar_rows[0].ar_ap_id,
+                                amount_fen=amt,
+                                biz_date=biz_date,
+                                idempotency_key=f"doc:{doc.doc_id}",
+                                method=str(payload.slots.get("PM") or "现金"),
+                                note=f"单据 {doc.doc_no}",
+                            )
+                    except ArVersionConflict as exc:
+                        raise AppError(
+                            "E_PREVIEW_VERSION_CONFLICT",
+                            message="往来账款已被并发修改，请重新打开卡片再确认",
+                            data={"detail": str(exc)},
+                        ) from exc
+                    except OverSettleBlocked as exc:
+                        raise AppError(
+                            "E_VALIDATION",
+                            message=str(exc),
+                            data={"reason": "over_settle"},
+                        ) from exc
+
+        reason = reason_of(spec_intent)
+        if reason is not None and inventory_mode in {"increase", "decrease", "snapshot"}:
+            doc_lines = doc_service.lines_of(tenant_id=tenant_id, doc_id=doc.doc_id)
+            if inventory_mode == "increase" and policy is not None:
+                for line in doc_lines:
+                    qty_base = Decimal(line.qty_base)
+                    qty_before = (
+                        inv_rows_by_product[line.product_id].qty_base_before
+                        if line.product_id in inv_rows_by_product
+                        else Decimal(0)
+                    )
+                    if line.amount_fen is not None and qty_base > 0:
+                        unit_cost: int | None = int(
+                            (Decimal(line.amount_fen) / qty_base).quantize(
+                                Decimal(1), rounding=ROUND_HALF_UP
+                            )
+                        )
+                    elif line.unit_price_fen is not None and Decimal(line.qty) == qty_base:
+                        unit_cost = int(line.unit_price_fen)
+                    else:
+                        unit_cost = None
+
+                    created_batch = None
+                    if reason == "purchase" and batch_service.product_tracks_batch(
+                        self._session, tenant_id, line.product_id, policy
+                    ):
+                        created_batch = batch_service.create_batch(
+                            self._session,
+                            tenant_id=tenant_id,
+                            store_id=store_id,
+                            line=line,
+                            partner_id=partner_id,
+                            partner_name=partner_name,
+                            biz_date=biz_date,
+                        )
+                        line.batch_id = created_batch.batch_id
+
+                    batch_service.update_moving_avg_on_purchase(
+                        self._session,
+                        tenant_id=tenant_id,
+                        store_id=store_id,
+                        product_id=line.product_id,
+                        qty_before=qty_before,
+                        qty_in=qty_base,
+                        unit_cost_fen=unit_cost,
+                    )
+                    self._session.add(
+                        InventoryMovement(
+                            tenant_id=tenant_id,
+                            store_id=store_id,
+                            product_id=line.product_id,
+                            batch_id=created_batch.batch_id if created_batch else None,
+                            doc_id=doc.doc_id,
+                            doc_line_id=line.line_id,
+                            reason=reason,
+                            qty_base=qty_base,
+                            unit_cost_fen=unit_cost,
+                            cost_status="final" if unit_cost is not None else "unknown",
+                            partner_id=partner_id,
+                            created_by=member_id,
+                        )
+                    )
+                    if qty_before < 0:
+                        batch_service.settle_oversold_on_purchase(
+                            self._session,
+                            tenant_id=tenant_id,
+                            store_id=store_id,
+                            product_id=line.product_id,
+                            source_doc_id=doc.doc_id,
+                            qty_before=qty_before,
+                            qty_in=qty_base,
+                            unit_cost_fen=unit_cost,
+                            new_batch=created_batch,
+                        )
+                    if reason == "purchase" and unit_cost is None:
+                        prod = self._session.get(Product, line.product_id)
+                        upsert_gap(
+                            self._session,
+                            tenant_id=tenant_id,
+                            store_id=store_id,
+                            kind="missing_cost",
+                            ref_entity="product",
+                            ref_id=line.product_id,
+                            title=f"{prod.name if prod else '商品'} 缺进价",
+                            detail_json={"doc_id": str(doc.doc_id), "doc_no": str(doc.doc_no)},
+                            priority=30,
+                        )
+                self._session.flush()
+            elif inventory_mode == "decrease":
+                all_allocations: list[batch_service.BatchAllocation] = []
+                lines_by_pid: dict[uuid.UUID, list[Any]] = {}
+                for dline in doc_lines:
+                    lines_by_pid.setdefault(dline.product_id, []).append(dline)
+                for _product_id, allocations in sale_plans_by_product.items():
+                    batch_service.apply_sale(self._session, allocations)
+                    all_allocations.extend(allocations)
+                    target_lines = lines_by_pid.get(_product_id, [])
+                    primary_line = target_lines[0] if target_lines else None
+                    for item in allocations:
+                        self._session.add(
+                            InventoryMovement(
+                                tenant_id=tenant_id,
+                                store_id=store_id,
+                                product_id=_product_id,
+                                batch_id=item.batch_id,
+                                doc_id=doc.doc_id,
+                                doc_line_id=primary_line.line_id if primary_line else None,
+                                reason=reason,
+                                qty_base=-item.qty_base,
+                                unit_cost_fen=item.unit_cost_fen,
+                                cost_status=item.cost_status,
+                                partner_id=partner_id,
+                                created_by=member_id,
+                            )
+                        )
+                    line_cogs, line_status = batch_service.cogs_detail_of(allocations)
+                    if primary_line is not None:
+                        primary_line.cost_snapshot_fen = line_cogs
+                        primary_line.cost_status = line_status
+                        if allocations and allocations[0].batch_id is not None:
+                            primary_line.batch_id = allocations[0].batch_id
+                    inv_row = inv_rows_by_product.get(_product_id)
+                    if inv_row is not None and inv_row.qty_base_after < 0:
+                        prod = self._session.get(Product, _product_id)
+                        upsert_gap(
+                            self._session,
+                            tenant_id=tenant_id,
+                            store_id=store_id,
+                            kind="negative_stock",
+                            ref_entity="product",
+                            ref_id=_product_id,
+                            title=f"{prod.name if prod else '商品'} 负库存 {inv_row.qty_base_after}",
+                            detail_json={"qty_base": str(inv_row.qty_base_after), "doc_id": str(doc.doc_id)},
+                            priority=20,
+                        )
+                total_cogs, _ = batch_service.cogs_detail_of(all_allocations)
+                doc.cogs_fen = total_cogs
+                self._session.flush()
+            elif inventory_mode == "snapshot":
+                for line in doc_lines:
+                    inv_row = inv_rows_by_product.get(line.product_id)
+                    if inv_row is None:
+                        continue
+                    diff = inv_row.qty_base_after - inv_row.qty_base_before
+                    if diff != 0:
+                        self._session.add(
+                            InventoryMovement(
+                                tenant_id=tenant_id,
+                                store_id=store_id,
+                                product_id=line.product_id,
+                                doc_id=doc.doc_id,
+                                doc_line_id=line.line_id,
+                                reason="count_adjust",
+                                qty_base=diff,
+                                unit_cost_fen=None,
+                                cost_status="final",
+                                created_by=member_id,
+                            )
+                        )
+                self._session.flush()
+        return doc
 
     def _inventory_after(
         self, tenant_id: uuid.UUID, store_id: uuid.UUID, payload: StoredCardPayload

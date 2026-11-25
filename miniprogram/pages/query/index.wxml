@@ -1,21 +1,44 @@
-<!-- 查询（只读）：不建卡、不扣次 -->
+<!-- 查一查（只读）：库存 / 欠款 / 流水，不建卡、不扣次 -->
 <view class="page">
-  <view class="tabs">
-    <view class="tab {{kind === 'stock' ? 'tab--active' : ''}}" data-kind="stock" bindtap="onTab">库存</view>
-    <view class="tab {{kind === 'debt' ? 'tab--active' : ''}}" data-kind="debt" bindtap="onTab">欠款</view>
-    <view class="tab {{kind === 'docs' ? 'tab--active' : ''}}" data-kind="docs" bindtap="onTab">流水</view>
+  <view class="page__gap">
+    <view class="seg">
+      <view class="seg__item {{kind === 'stock' ? 'seg__item--on' : ''}}" data-kind="stock" bindtap="onTab">库存</view>
+      <view class="seg__item {{kind === 'debt' ? 'seg__item--on' : ''}}" data-kind="debt" bindtap="onTab">欠款</view>
+      <view class="seg__item {{kind === 'docs' ? 'seg__item--on' : ''}}" data-kind="docs" bindtap="onTab">流水</view>
+    </view>
+
+    <view class="search">
+      <input
+        class="search__in"
+        placeholder="商品名 / 客户名（可留空）"
+        placeholder-class="search__ph"
+        value="{{keyword}}"
+        bindinput="onKeyword"
+      />
+      <button class="search__btn" bindtap="reload">查</button>
+    </view>
+
+    <view wx:if="{{loading}}" class="empty">查询中…</view>
+    <view wx:if="{{!loading && rows.length === 0 && docs.length === 0 && !errorText}}" class="empty">没有数据</view>
+
+    <!-- 单据：带 doc_id，可直接进改单卡 -->
+    <view wx:if="{{kind === 'docs'}}" class="card">
+      <view wx:for="{{docs}}" wx:key="doc_id" class="doc">
+        <view class="doc__l">
+          <text class="doc__t">{{item.dirLabel}} · {{item.total_amount_display}}</text>
+          <text class="doc__s">{{item.doc_no}} · {{item.biz_date}} · {{item.payment_status}}</text>
+        </view>
+        <text class="doc__go" catchtap="onOpenDoc" data-doc="{{item.doc_id}}">改 ›</text>
+      </view>
+    </view>
+
+    <view wx:else class="card">
+      <view wx:for="{{rows}}" wx:key="text" class="row">{{item.text}}</view>
+    </view>
+
+    <view wx:if="{{errorText}}" class="bar" style="background:var(--dgrb);border-color:#e0b9b0;color:var(--dgr)">
+      <text>{{errorText}}</text>
+    </view>
+    <text class="hint">查询是只读的：不建卡、不写库、不扣次数。</text>
   </view>
-
-  <view class="search">
-    <input class="search__input" placeholder="商品名 / 客户名（可留空）" value="{{keyword}}" bindinput="onKeyword" />
-    <button class="ui-btn ui-btn--primary search__btn" bindtap="reload">查</button>
-  </view>
-
-  <view class="loading" wx:if="{{loading}}">查询中…</view>
-  <view class="empty" wx:if="{{!loading && rows.length === 0 && !errorText}}">没有数据</view>
-
-  <view wx:for="{{rows}}" wx:key="text" class="row">{{item.text}}</view>
-
-  <view class="error" wx:if="{{errorText}}">{{errorText}}</view>
-  <view class="hint">查询是只读的：不建卡、不写库、不扣次数。</view>
 </view>

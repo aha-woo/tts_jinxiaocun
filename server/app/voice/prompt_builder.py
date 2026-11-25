@@ -38,6 +38,8 @@ DEFAULT_TOP_PRODUCTS = 20
 DEFAULT_RECENT_CONTEXTS = 3
 #: few-shot 条数上限
 DEFAULT_FEW_SHOT = 8
+#: 个人词表段条数上限
+DEFAULT_MAX_ALIASES = 30
 
 
 @dataclass(frozen=True)
@@ -47,6 +49,7 @@ class PromptBudget:
     top_products: int = DEFAULT_TOP_PRODUCTS
     recent_contexts: int = DEFAULT_RECENT_CONTEXTS
     few_shot: int = DEFAULT_FEW_SHOT
+    max_aliases: int = DEFAULT_MAX_ALIASES
 
     def clipped_products(self, count: int) -> int:
         """商品条数裁剪。"""
@@ -65,6 +68,8 @@ class PromptContext:
     today_iso: str
     store_name: str = "主仓"
     tenant_id: str = "-"
+    member_id: str = ""
+    dict_version: int = 0
     contract_version: str = "0"
     domain_hint: str | None = None
     #: 商品 TopN（已按频次降序）
@@ -78,10 +83,23 @@ class PromptContext:
     store_names: Sequence[str] = ()
 
     def products_block(self) -> str:
-        """Top N 商品段（确定性排序：先按传入顺序，再按名字）。"""
-        selected = list(self.products)[: self.budget.clipped_products(len(self.products))]
-        if not selected:
+        """Top N 商品段（先提权与原话有交集的商品，再按传入顺序截断）。"""
+        limit = self.budget.clipped_products(len(self.products))
+        if limit <= 0 or not self.products:
             return "（无）"
+        utterance = (self.user_text or "").strip()
+        if utterance:
+            matched: list[ProductEntry] = []
+            rest: list[ProductEntry] = []
+            for entry in self.products:
+                terms = (entry.name, *entry.aliases)
+                if any(term and (term in utterance or any(ch in utterance for ch in term if len(term) >= 2 and sum(1 for c in term if c in utterance) >= min(2, len(term)))) for term in terms):
+                    matched.append(entry)
+                else:
+                    rest.append(entry)
+            selected = (matched + rest)[:limit]
+        else:
+            selected = list(self.products)[:limit]
         lines = [
             "- {}（基本单位 {}）".format(entry.display_name() or entry.name, entry.base_unit)
             for entry in selected
@@ -89,10 +107,11 @@ class PromptContext:
         return "\n".join(lines)
 
     def aliases_block(self) -> str:
-        """个人词表段（教说法回流；命中时 source=alias）。"""
+        """个人词表段（教说法回流；设上限防爆 token）。"""
         if not self.personal_aliases:
             return "（无）"
-        items = sorted(self.personal_aliases.items())
+        cap = max(1, int(getattr(self.budget, "max_aliases", DEFAULT_MAX_ALIASES)))
+        items = sorted(self.personal_aliases.items())[:cap]
         return "\n".join(f"- {term} = {name}" for term, name in items)
 
     def contexts_block(self) -> str:
@@ -104,10 +123,15 @@ class PromptContext:
 
 
 def _intent_digest(registry: IntentRegistry, domain: str | None, limit: int) -> str:
-    """intent 摘要段（只放 id + 中文名 + 必填槽位，不放大段描述）。"""
-    specs = registry.few_shot_examples(domain=domain, limit=limit)
-    if not specs:
-        specs = registry.few_shot_examples(limit=limit)
+    """intent 摘要段：优先展示目标域，同时覆盖全部非静态意图（避免模型盲区）。"""
+    del limit  # 摘要行极短，保留全量 36 个非静态意图避免误投
+    all_specs = [spec for spec in registry.all() if not spec.is_static]
+    if domain:
+        prioritized = [spec for spec in all_specs if spec.domain == domain]
+        others = [spec for spec in all_specs if spec.domain != domain]
+        specs = prioritized + others
+    else:
+        specs = all_specs
     lines = [
         "- {}｜{}｜必填 {}｜风险 {}/{}".format(
             spec.intent_id,

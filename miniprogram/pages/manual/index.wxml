@@ -1,24 +1,44 @@
-<!-- 手动记账：一次语音都不用，也能完成完整一单（选商品→数量→单价→方向→生成卡片） -->
-<view data-ui="v1" class="page">
-  <view class="tip">不想说话就点着记。和语音走同一条解析、同一条落账链路，最后还要在卡片上确认。</view>
+<!-- 手动记账：不说话也能记完整一单（选商品→数量→单价→方向→生成卡片） -->
+<view class="page">
+  <view class="page__gap">
+    <text class="hint">不想说话就点着记。和语音走同一条解析、同一条落账链路，最后还要在卡片上确认。</text>
 
-  <num-keyboard
-    quantity="{{quantity}}"
-    price="{{price}}"
-    products="{{products}}"
-    product="{{product}}"
-    direction="{{direction}}"
-    bind:product="onProduct"
-    bind:direction="onDirection"
-    bind:input="onInput"
-    bind:submit="onSubmit"
-  />
+    <view class="card pad" style="display:flex;justify-content:space-between;align-items:center">
+      <text style="font-size:26rpx;color:var(--mu)">货品多或刚进完一大单？</text>
+      <button size="mini" type="primary" bindtap="onGoPhoto">📷 拍进货单</button>
+    </view>
 
-  <view class="preview-card">
-    <view class="preview-card__label">会记成这句话</view>
-    <view class="preview-card__text">{{preview}}</view>
+    <view class="card pad">
+      <view style="margin-bottom:16rpx">
+        <text class="c-title">货品名（可点选下方常用货或直接输入新货名）</text>
+        <input
+          value="{{customProduct}}"
+          placeholder="例如：鲜虾 / 可乐 500ml"
+          bindinput="onCustomProductInput"
+          style="margin-top:8rpx;padding:12rpx 16rpx;border:2rpx solid var(--ln);border-radius:12rpx;background:var(--bg)"
+        />
+      </view>
+      <num-keyboard
+        quantity="{{quantity}}"
+        price="{{price}}"
+        products="{{products}}"
+        product="{{product}}"
+        direction="{{direction}}"
+        bind:product="onProduct"
+        bind:direction="onDirection"
+        bind:input="onInput"
+        bind:submit="onSubmit"
+      />
+    </view>
+
+    <view class="card pad">
+      <text class="c-title">会记成这句话</text>
+      <view class="said">{{preview}}</view>
+    </view>
+
+    <view wx:if="{{errorText}}" class="bar" style="background:var(--dgrb);border-color:#e0b9b0;color:var(--dgr)">
+      <text>{{errorText}}</text>
+    </view>
+    <text wx:if="{{submitting}}" class="hint">生成卡片中…</text>
   </view>
-
-  <view class="error" wx:if="{{errorText}}">{{errorText}}</view>
-  <view class="submitting" wx:if="{{submitting}}">生成卡片中…</view>
 </view>

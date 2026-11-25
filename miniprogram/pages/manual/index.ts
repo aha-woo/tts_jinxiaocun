@@ -9,7 +9,7 @@
  * （否则手工会绕过影响预演和 CAS，那是最危险的分叉）。
  */
 
-import { ApiError, createVoiceSession, parseSession } from '../../services/api';
+import { ApiError, createVoiceSession, parseSession, queryStock } from '../../services/api';
 
 /** 把点选结果拼成一句规范话（与口语同构，便于规则层复用）。 */
 export function composeUtterance(input: {
@@ -31,6 +31,7 @@ export function composeUtterance(input: {
 
 interface ManualData {
   product: string;
+  customProduct: string;
   quantity: string;
   price: string;
   direction: 'in' | 'out';
@@ -43,21 +44,59 @@ interface ManualData {
 Page<ManualData, WechatMiniprogram.Page.CustomOption>({
   data: {
     product: '',
+    customProduct: '',
     quantity: '',
     price: '',
     direction: 'in',
-    products: ['可乐', '娃哈哈', '红牛', '矿泉水'],
+    products: [],
     submitting: false,
     errorText: '',
     preview: '',
   },
 
-  onLoad() {
-    this.setData({ preview: composeUtterance({ direction: 'in', product: '', quantity: '', price: '' }) });
+  onLoad(query: Record<string, string | undefined>) {
+    const direction = query['direction'] === 'out' ? 'out' : 'in';
+    const quantity = String(query['qty'] ?? '');
+    const price = String(query['price'] ?? '');
+    this.setData({
+      direction,
+      quantity,
+      price,
+      preview: composeUtterance({ direction, product: '', quantity, price }),
+    });
+    void this.loadCatalog();
+  },
+
+  async loadCatalog(): Promise<void> {
+    try {
+      const res = await queryStock('');
+      const names = Array.from(
+        new Set(
+          (res.items ?? [])
+            .map((item) => String((item as Record<string, unknown>).product_name ?? '').trim())
+            .filter((name) => name !== '')
+        )
+      ).slice(0, 12);
+      this.setData({ products: names });
+    } catch {
+      this.setData({ products: [] });
+    }
   },
 
   onProduct(event: WechatMiniprogram.CustomEvent<{ product: string }>): void {
-    this.setData({ product: event.detail.product }, () => this.refreshPreview());
+    this.setData(
+      { product: event.detail.product, customProduct: event.detail.product },
+      () => this.refreshPreview()
+    );
+  },
+
+  onCustomProductInput(event: WechatMiniprogram.Input): void {
+    const val = String(event.detail.value ?? '').trim();
+    this.setData({ customProduct: val, product: val }, () => this.refreshPreview());
+  },
+
+  onGoPhoto(): void {
+    wx.navigateTo({ url: '/pages/delivery-note/index' });
   },
 
   onDirection(event: WechatMiniprogram.CustomEvent<{ direction: 'in' | 'out' }>): void {
@@ -90,6 +129,10 @@ Page<ManualData, WechatMiniprogram.Page.CustomOption>({
     this.setData({ submitting: true, errorText: '' });
     try {
       const session = await createVoiceSession({ duration_ms: 0, mode: 'tap', source: 'manual' });
+      if (session.session_id === null || session.session_id === '') {
+        this.setData({ errorText: session.message_zh || '暂不能创建会话，请稍后再试' });
+        return;
+      }
       const parsed = await parseSession(session.session_id, {
         asr_text: this.data.preview,
         asr_confidence: 1.0,
@@ -100,6 +143,10 @@ Page<ManualData, WechatMiniprogram.Page.CustomOption>({
         return;
       }
       if (parsed.clarify !== null && parsed.clarify !== undefined) {
+        wx.setStorageSync('dsh:pendingClarify', {
+          sessionId: session.session_id,
+          clarify: parsed.clarify,
+        });
         wx.redirectTo({ url: `/pages/card/index?sessionId=${session.session_id}` });
         return;
       }

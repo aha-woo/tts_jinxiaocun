@@ -1,81 +1,149 @@
-/* 待确认（方案 A）：一张卡一条，金额右对齐，两个整宽等分按钮 */
-.page {
-  min-height: 100vh;
-  background: var(--c-bg);
-  padding: var(--s-3);
-  box-sizing: border-box;
-}
-
-.tip {
-  background: var(--c-warn-bg);
-  color: var(--c-warn-ink);
-  border-radius: var(--r-btn);
-  padding: var(--s-2) var(--s-3);
-  font-size: var(--f-small);
+/* 待处理：紧凑行 + 行内「补」+ 数字键盘 */
+.hint {
+  font-size: 24rpx;
+  color: var(--mu);
   line-height: 1.6;
-  margin-bottom: var(--s-3);
+  padding: 0 8rpx;
 }
 
-.item {
-  background: var(--c-white);
-  border-radius: var(--r-card);
-  padding: var(--s-3) var(--s-4);
-  margin-bottom: var(--s-2);
-  border: 1rpx solid var(--c-line);
-}
-
-.item__main {
+.pend {
   display: flex;
-  align-items: baseline;
-  justify-content: space-between;
+  align-items: center;
+  gap: 16rpx;
+  padding: 22rpx 24rpx;
+  border-top: 2rpx solid var(--ln);
 }
 
-.item__title {
+.pend:first-child {
+  border-top: 0;
+}
+
+.pend:active {
+  background: var(--acs);
+}
+
+.pend__md {
   flex: 1;
   min-width: 0;
-  font-size: var(--f-body);
-  color: var(--c-ink);
-  font-weight: 600;
 }
 
-.item__amount {
-  font-size: var(--f-title);
-  font-weight: 800;
-  color: var(--c-ink);
-  font-variant-numeric: tabular-nums;
-}
-
-.item__meta {
-  margin-top: var(--s-1);
-}
-
-.item__actions {
+.pend__top {
   display: flex;
-  margin-top: var(--s-3);
+  align-items: center;
+  gap: 12rpx;
 }
 
-.item__btn {
-  flex: 1;
-  margin-right: var(--s-2);
+.pend__t {
+  font-weight: 700;
+  font-size: 30rpx;
 }
 
-.item__btn:last-child {
-  margin-right: 0;
+.pend__said {
+  display: block;
+  margin-top: 6rpx;
+  font-size: 24rpx;
+  color: var(--mu);
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
 }
 
-.empty,
-.loading {
-  padding: var(--s-4) 0;
+.pend__go {
+  flex-shrink: 0;
+  font-size: 24rpx;
+  font-weight: 700;
+  color: var(--act);
+}
+
+/* 补数字 */
+.kpsheet {
+  position: fixed;
+  inset: 0;
+  background: rgba(31, 27, 22, 0.45);
+  display: flex;
+  align-items: flex-end;
+  z-index: 70;
+}
+
+.kpsheet__in {
+  width: 100%;
+  background: var(--sf);
+  border-radius: 36rpx 36rpx 0 0;
+  padding: 32rpx 32rpx calc(32rpx + env(safe-area-inset-bottom));
+}
+
+.kpsheet__h {
+  display: block;
+  font-family: 'Songti SC', 'Noto Serif SC', serif;
+  font-size: 30rpx;
+  font-weight: 700;
   text-align: center;
-  font-size: var(--f-small);
-  color: var(--c-ink-3);
+  color: var(--mu);
 }
 
-.error {
-  margin-top: var(--s-2);
-  padding: var(--s-2) var(--s-3);
-  background: var(--c-danger-soft);
-  color: var(--c-danger);
-  border-radius: var(--r-btn);
-  font-size: var(--f-small);
+.kpsheet__v {
+  display: block;
+  text-align: center;
+  font-family: 'Songti SC', 'Noto Serif SC', serif;
+  font-size: 72rpx;
+  font-weight: 700;
+  padding: 8rpx 0 20rpx;
+  border-bottom: 2rpx solid var(--ink);
+}
+
+.kpsheet__u {
+  font-size: 30rpx;
+  color: var(--mu);
+  margin-left: 8rpx;
+}
+
+.kp {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 12rpx;
+  margin-top: 20rpx;
+}
+
+.kp__k {
+  height: 100rpx;
+  border-radius: 18rpx;
+  background: var(--bg);
+  font-family: 'Songti SC', 'Noto Serif SC', serif;
+  font-size: 38rpx;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.kp__k:active {
+  background: var(--acs);
+}
+
+.kp__acts {
+  display: flex;
+  gap: 16rpx;
+  margin-top: 16rpx;
+}
+
+.kp__c,
+.kp__ok {
+  flex: 1;
+  height: 96rpx;
+  border-radius: 20rpx;
+  font-size: 30rpx;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.kp__c {
+  border: 2rpx solid var(--ln);
+  background: var(--sf);
+}
+
+.kp__ok {
+  background: var(--ac);
+  color: #fff;
+  font-weight: 700;
 }

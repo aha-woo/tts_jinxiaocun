@@ -30,6 +30,7 @@
 
 'use strict';
 
+const crypto = require('crypto');
 const cloud = require('wx-server-sdk');
 
 cloud.init({ env: cloud.DYNAMIC_CURRENT_ENV });
@@ -74,12 +75,31 @@ function verifySign(event) {
     console.error('[deliver] 缺少 XPAY_APP_KEY，拒绝发货');
     return false;
   }
-  const signature = event && (event.PaySig || event.signature);
+  const signature = event && (event.PaySig || event.signature || event.sign);
   if (typeof signature !== 'string' || signature.length === 0) {
     return false;
   }
-  // TODO(T03): 真实验签实现占位——当前仅做「有签名 + 有密钥」的保守判定
-  return true;
+  // 微信虚拟支付签名：HMAC-SHA256(appKey, canonical_payload)，使用常量时间比较
+  const rawBody =
+    typeof event.rawBody === 'string' && event.rawBody.length > 0
+      ? event.rawBody
+      : JSON.stringify(
+          Object.keys(event)
+            .filter((k) => !['PaySig', 'signature', 'sign', 'rawBody'].includes(k))
+            .sort()
+            .reduce((acc, k) => {
+              acc[k] = event[k];
+              return acc;
+            }, {})
+        );
+  const signBase = event.signUri ? `${event.signUri}&${rawBody}` : rawBody;
+  const expectedHex = crypto.createHmac('sha256', appKey).update(signBase).digest('hex');
+  const sigBuf = Buffer.from(signature.toLowerCase(), 'utf8');
+  const expBuf = Buffer.from(expectedHex.toLowerCase(), 'utf8');
+  if (sigBuf.length !== expBuf.length) {
+    return false;
+  }
+  return crypto.timingSafeEqual(sigBuf, expBuf);
 }
 
 /**
@@ -128,15 +148,18 @@ async function callServerDeliver(event, outTradeNo, tenantId) {
   const timer = setTimeout(() => controller.abort(), CALLBACK_TIMEOUT_MS);
   let response;
   try {
+    const headers = {
+      'Content-Type': 'application/json',
+      // 服务端只认通道白名单 + 服务间令牌（常量时间比较）；缺省 tenantId 时由服务端反查
+      'X-Wx-Channel': 'cloudfunc',
+      'X-Service-Token': serviceToken,
+    };
+    if (tenantId) {
+      headers['X-Tenant-Id'] = String(tenantId);
+    }
     response = await fetch(callbackUrl, {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        // 服务端只认这两个头：通道白名单 + 服务间令牌（常量时间比较）
-        'X-Wx-Channel': 'cloudfunc',
-        'X-Service-Token': serviceToken,
-        'X-Tenant-Id': tenantId,
-      },
+      headers,
       body: JSON.stringify(event),
       signal: controller.signal,
     });
@@ -202,12 +225,12 @@ exports.main = async (event) => {
 
   console.log('[deliver] 收到发货推送', { outTradeNo, tenantId });
 
-  if (!outTradeNo || !tenantId) {
-    console.error('[deliver] 推送缺少 outTradeNo / tenant_id', { outTradeNo, tenantId });
+  if (!outTradeNo) {
+    console.error('[deliver] 推送缺少 outTradeNo', { outTradeNo, tenantId });
     return {
       code: CODES.VALIDATION,
       data: { error_code: ERROR_CODES.VALIDATION },
-      message: '发货推送缺少 outTradeNo / tenant_id',
+      message: '发货推送缺少 outTradeNo',
     };
   }
 

@@ -19,6 +19,7 @@ from sqlalchemy.orm import Session
 from app.common.errors import AppError
 from app.config import Settings
 from app.models.org import Store
+from app.models.tenant import Tenant
 from app.services.deletion_request import DeletionService
 from app.services.voice_runtime import VoiceRuntime, build_runtime
 from app.tenant.context import TenantContext
@@ -29,6 +30,7 @@ __all__ = [
     "WRITE_ROLES",
     "IdSet",
     "assert_writable",
+    "can_view_cost",
     "ids_of",
     "require_roles",
     "resolve_store_name",
@@ -87,6 +89,15 @@ def assert_writable(session: Session, tenant_id: uuid.UUID) -> None:
         AppError: ``E_TENANT_DENIED``(403)。
     """
     DeletionService(session).assert_writable(tenant_id=tenant_id)
+
+
+def can_view_cost(session: Session, context: TenantContext) -> bool:
+    """进价/成本/毛利可见性：老板与店长默认可见，其余员工取决于店长开关。"""
+    role = (context.role_code or "").strip().lower()
+    if role in ("boss", "manager"):
+        return True
+    tenant = session.get(Tenant, context.tenant_id)
+    return bool(tenant.staff_can_view_cost) if tenant is not None else False
 
 
 def resolve_store_name(session: Session, *, tenant_id: uuid.UUID, store_id: uuid.UUID) -> str:

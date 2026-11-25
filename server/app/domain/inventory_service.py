@@ -133,6 +133,7 @@ class InventoryService:
         tenant_id: uuid.UUID,
         store_id: uuid.UUID,
         deltas: Sequence[InventoryDelta],
+        allow_negative: bool = True,
     ) -> tuple[InventoryRow, ...]:
         """按 CAS 应用一批库存改动（**同一事务**，只 flush 不 commit）。
 
@@ -140,13 +141,14 @@ class InventoryService:
             tenant_id: 租户。
             store_id: 门店。
             deltas: 改动行。
+            allow_negative: 是否允许库存为负（默认允许，禁止时抛 NegativeStockBlocked）。
 
         Returns:
             每行改动后的快照。
 
         Raises:
             VersionConflict: 某行的 version 已不是预演时的值。
-            NegativeStockBlocked: 改动后为负（DB CHECK 会拒，这里先给出人话原因）。
+            NegativeStockBlocked: 禁止负库存且改动后为负。
         """
         results: list[InventoryRow] = []
         for delta in deltas:
@@ -158,31 +160,37 @@ class InventoryService:
                     product_id=delta.product_id, expected=int(delta.expected_version), actual=None
                 )
             if row is None:
-                results.append(self._create(tenant_id, store_id, delta))
+                results.append(self._create(tenant_id, store_id, delta, allow_negative=allow_negative))
                 continue
-            results.append(self._update(row, delta))
+            results.append(self._update(row, delta, allow_negative=allow_negative))
         return tuple(results)
 
     def _create(
-        self, tenant_id: uuid.UUID, store_id: uuid.UUID, delta: InventoryDelta
+        self,
+        tenant_id: uuid.UUID,
+        store_id: uuid.UUID,
+        delta: InventoryDelta,
+        *,
+        allow_negative: bool = True,
     ) -> InventoryRow:
-        """新建库存行（首次进货 / 首次盘点）。"""
+        """新建库存行（首次进货 / 首次负库存卖出 / 首次盘点）。"""
         after = delta.qty_base_delta
-        if after < 0:
+        if after < 0 and not allow_negative:
             raise NegativeStockBlocked(product_id=delta.product_id, after=after)
         row = Inventory(
             tenant_id=tenant_id,
             store_id=store_id,
             product_id=delta.product_id,
             qty_base=after,
+            negative_flag=(after < 0),
             version=0,
         )
-        self._session.add(row)
         try:
-            self._session.flush()
+            with self._session.begin_nested():
+                self._session.add(row)
+                self._session.flush()
         except IntegrityError as exc:
-            # 并发下别人刚插入同一 (tenant, store, product) → 视为版本冲突
-            self._session.rollback()
+            # 并发下别人刚插入同一 (tenant, store, product) → 视为版本冲突（SAVEPOINT 不破坏外层事务）
             raise VersionConflict(
                 product_id=delta.product_id, expected=0, actual=None
             ) from exc
@@ -195,11 +203,13 @@ class InventoryService:
             created=True,
         )
 
-    def _update(self, row: Inventory, delta: InventoryDelta) -> InventoryRow:
+    def _update(
+        self, row: Inventory, delta: InventoryDelta, *, allow_negative: bool = True
+    ) -> InventoryRow:
         """CAS 更新库存行。"""
         before = Decimal(row.qty_base)
         after = delta.qty_base_delta if delta.snapshot else before + delta.qty_base_delta
-        if after < 0:
+        if after < 0 and not allow_negative:
             raise NegativeStockBlocked(product_id=delta.product_id, after=after)
         expected = int(row.version) if delta.expected_version is None else int(delta.expected_version)
         statement = (
@@ -209,7 +219,7 @@ class InventoryService:
                 Inventory.tenant_id == row.tenant_id,
                 Inventory.version == expected,
             )
-            .values(qty_base=after, version=expected + 1)
+            .values(qty_base=after, negative_flag=(after < 0), version=expected + 1)
             .execution_options(synchronize_session=False)
         )
         outcome = self._session.execute(statement)

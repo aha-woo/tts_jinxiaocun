@@ -1,0 +1,80 @@
+/* 我的页 */
+.est {
+  padding: 28rpx;
+}
+
+.est__k {
+  display: block;
+  font-size: 24rpx;
+  color: var(--mu);
+}
+
+.est__v {
+  display: block;
+  font-size: 48rpx;
+  font-weight: 700;
+  margin-top: 4rpx;
+}
+
+.est__note {
+  display: block;
+  font-size: 22rpx;
+  color: var(--wn);
+  margin-top: 8rpx;
+}
+
+.sec {
+  font-size: 24rpx;
+  color: var(--mu);
+  padding: 0 8rpx;
+  margin-top: 8rpx;
+}
+
+.mine-card {
+  padding: 24rpx;
+  display: flex;
+  flex-direction: column;
+  gap: 16rpx;
+}
+
+.mine-hint {
+  font-size: 24rpx;
+  color: var(--mu);
+  line-height: 1.6;
+}
+
+.mi {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 16rpx;
+  padding: 26rpx 24rpx;
+  border-top: 2rpx solid var(--ln);
+  width: 100%;
+  text-align: left;
+}
+
+.mi:first-child {
+  border-top: 0;
+}
+
+.mi:active {
+  background: var(--acs);
+}
+
+.mi__t {
+  display: block;
+  font-size: 30rpx;
+}
+
+.mi__s {
+  display: block;
+  font-size: 22rpx;
+  color: var(--mu);
+  margin-top: 4rpx;
+}
+
+.mi__ar {
+  color: var(--mu);
+  font-size: 32rpx;
+}

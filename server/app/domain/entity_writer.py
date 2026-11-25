@@ -230,9 +230,10 @@ class EntityWriter:
             )
             extras.append(f"别名「{alias_text}」")
 
+        price_text = _fen_text(product.last_purchase_price_fen) if product.last_purchase_price_fen is not None else "待补"
         summary = (
             f"{'新建' if created else '商品已存在，复用'}商品「{product.name}」"
-            f"（基本单位 {product.base_unit}，进价 {_fen_text(product.last_purchase_price_fen)}）"
+            f"（基本单位 {product.base_unit}，进价 {price_text}）"
         )
         if extras:
             summary += "；" + "；".join(extras)
@@ -613,13 +614,19 @@ class EntityWriter:
         existing = self._find_product_by_name(tenant_id, name)
         if existing is not None:
             changed = False
-            if purchase_fen is not None and int(existing.last_purchase_price_fen or 0) != purchase_fen:
+            if purchase_fen is not None and existing.last_purchase_price_fen != purchase_fen:
                 existing.last_purchase_price_fen = purchase_fen
                 changed = True
-            if sale_fen is not None and int(existing.last_sale_price_fen or 0) != sale_fen:
+            if sale_fen is not None and existing.last_sale_price_fen != sale_fen:
                 existing.last_sale_price_fen = sale_fen
                 changed = True
             if changed:
+                if (
+                    str(existing.status) == "draft"
+                    and existing.last_purchase_price_fen is not None
+                    and existing.last_sale_price_fen is not None
+                ):
+                    existing.status = "active"
                 self._session.flush()
             return existing, False
         product = tenant_repository(self._session, Product).add(
@@ -627,9 +634,10 @@ class EntityWriter:
                 name=name,
                 spec="",
                 base_unit=unit or "个",
-                last_purchase_price_fen=int(purchase_fen or 0),
-                last_sale_price_fen=int(sale_fen or 0),
-                status="active",
+                last_purchase_price_fen=purchase_fen,
+                last_sale_price_fen=sale_fen,
+                avg_cost_fen=purchase_fen,
+                status="active" if (purchase_fen is not None and sale_fen is not None) else "active",
             )
         )
         self._session.flush()
@@ -863,11 +871,7 @@ def _strip_alias_cue(text: str, *, product_name: str = "") -> str:
 
 
 def _money_fen(value: Any) -> int | None:
-    """金额槽位转「分」。
-
-    ``UP`` / ``TA`` / ``AMT`` 按契约已经是 ``money_fen``（整数分）；
-    ``TV`` 是 ``dynamic``，可能是「3 块 5」这种口语，交给 ``parse_cny_text``。
-    """
+    """金额槽位转「分」；字符串纯数字按「元」解析（\"35\" → 3500 分，不是 35 分）。"""
     if value is None or value == "":
         return None
     if isinstance(value, bool):
@@ -879,8 +883,6 @@ def _money_fen(value: Any) -> int | None:
     text_value = str(value).strip()
     if not text_value:
         return None
-    if text_value.isdigit() or (text_value.startswith("-") and text_value[1:].isdigit()):
-        return int(text_value)
     return parse_cny_text(text_value)
 
 

@@ -1,0 +1,56 @@
+<!-- 盘点（接后端） -->
+<view class="page">
+  <view class="page__gap">
+    <view class="cstat">
+      <text>已数 <text class="cstat__b">{{counted}}</text> 样</text>
+      <text class="cstat__mu">共 {{lines.length}} 样 · 没填的不算 0</text>
+    </view>
+
+    <view wx:if="{{loading}}" class="empty">正在开盘点…</view>
+    <view wx:elif="{{lines.length === 0}}" class="empty">还没有库存可以盘</view>
+
+    <view wx:else class="card">
+      <view
+        wx:for="{{lines}}"
+        wx:key="product_id"
+        class="ci {{item.qty_counted !== null ? 'ci--done' : ''}}"
+        data-product="{{item.product_id}}"
+        bindtap="onRow"
+      >
+        <view class="ci__md">
+          <text class="ci__n">{{item.name || item.product_id}}</text>
+          <text class="ci__s">账面 {{item.qty_book}} {{item.unit}}</text>
+        </view>
+        <view class="ci__rt">
+          <text class="ci__q">{{item.qty_counted !== null ? item.qty_counted : '没数'}}</text>
+          <text class="ci__d" wx:if="{{item.hasDiff}}">
+            {{item.diffPositive ? '多' : '少'}} {{item.absDiff}}
+          </text>
+        </view>
+      </view>
+    </view>
+
+    <button class="cta cta--ink" bindtap="onApply" loading="{{applying}}" disabled="{{counted === 0 || applying}}">
+      {{counted === 0 ? '先数几样再应用' : '应用盘点（写差异流水）'}}
+    </button>
+
+    <view wx:if="{{errorText}}" class="bar" style="background:var(--dgrb);border-color:#e0b9b0;color:var(--dgr)">
+      <text>{{errorText}}</text>
+    </view>
+  </view>
+
+  <!-- 数字键盘 -->
+  <view class="kpsheet" wx:if="{{editing}}">
+    <view class="kpsheet__in">
+      <text class="kpsheet__h">填实盘数</text>
+      <text class="kpsheet__v">{{keypad || '0'}}</text>
+      <view class="kp">
+        <view wx:for="{{['1','2','3','4','5','6','7','8','9','.','0','del']}}" wx:key="*this" class="kp__k" data-key="{{item}}" bindtap="onKey">{{item === 'del' ? '删' : item}}</view>
+      </view>
+      <view class="kp__acts">
+        <button class="kp__c" bindtap="onKeyClose">取消</button>
+        <button class="kp__ok" bindtap="onKeyOk">确定</button>
+      </view>
+    </view>
+  </view>
+</view>

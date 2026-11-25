@@ -1,0 +1,153 @@
+.dn-hero {
+  display: flex;
+  flex-direction: column;
+  gap: 14rpx;
+}
+
+.dn-btn {
+  margin-top: 8rpx;
+  width: 100%;
+  border-radius: 20rpx;
+}
+
+.dn-thumb {
+  margin-top: 16rpx;
+  width: 100%;
+  height: 260rpx;
+  border-radius: 16rpx;
+  background: var(--bg);
+}
+
+.dn-head {
+  display: flex;
+  flex-direction: column;
+  gap: 16rpx;
+}
+
+.dn-field {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16rpx;
+}
+
+.dn-lbl {
+  width: 140rpx;
+  font-size: 26rpx;
+  color: var(--mu);
+}
+
+.dn-inp {
+  flex: 1;
+  padding: 12rpx 16rpx;
+  border: 2rpx solid var(--ln);
+  border-radius: 12rpx;
+  background: var(--bg);
+  font-size: 28rpx;
+}
+
+.dn-sum {
+  flex: 1;
+  font-size: 26rpx;
+  font-weight: 600;
+  color: var(--ink);
+  text-align: right;
+}
+
+.dn-lines-top {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 16rpx;
+}
+
+.dn-add {
+  font-size: 26rpx;
+  color: var(--ac);
+  font-weight: 600;
+}
+
+.dn-line {
+  padding: 18rpx 0;
+  border-top: 2rpx solid var(--ln);
+  display: flex;
+  flex-direction: column;
+  gap: 12rpx;
+}
+
+.dn-line__top {
+  display: flex;
+  align-items: center;
+  gap: 12rpx;
+}
+
+.dn-name {
+  flex: 1;
+  font-size: 30rpx;
+  font-weight: 600;
+  padding: 8rpx 12rpx;
+  background: var(--bg);
+  border-radius: 10rpx;
+}
+
+.dn-del {
+  font-size: 24rpx;
+  color: var(--dgr);
+  padding: 6rpx 12rpx;
+}
+
+.dn-line__nums {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 10rpx;
+}
+
+.dn-num {
+  display: flex;
+  flex-direction: column;
+  gap: 4rpx;
+}
+
+.dn-num__k {
+  font-size: 22rpx;
+  color: var(--mu);
+}
+
+.dn-num__v {
+  padding: 8rpx 10rpx;
+  border: 2rpx solid var(--ln);
+  border-radius: 10rpx;
+  background: var(--bg);
+  font-size: 26rpx;
+}
+
+.dn-ratio {
+  display: flex;
+  align-items: center;
+  gap: 12rpx;
+  padding: 10rpx 12rpx;
+  background: #fff7e6;
+  border-radius: 10rpx;
+}
+
+.dn-ratio__lbl {
+  font-size: 24rpx;
+  color: #a66b00;
+}
+
+.dn-ratio__inp {
+  flex: 1;
+  padding: 6rpx 10rpx;
+  background: #fff;
+  border: 2rpx solid #f0c975;
+  border-radius: 8rpx;
+  font-size: 26rpx;
+}
+
+.dn-confirm {
+  margin-top: 8rpx;
+  width: 100%;
+  border-radius: 24rpx;
+  font-size: 30rpx;
+  font-weight: 700;
+}

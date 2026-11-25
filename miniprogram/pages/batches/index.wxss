@@ -1,0 +1,67 @@
+/* 批次余量 */
+.hint {
+  display: block;
+  font-size: 24rpx;
+  color: var(--mu);
+  line-height: 1.6;
+  padding: 0 8rpx;
+}
+
+.bt {
+  display: flex;
+  align-items: center;
+  gap: 16rpx;
+  padding: 24rpx;
+  border-top: 2rpx solid var(--ln);
+}
+
+.bt:first-child {
+  border-top: 0;
+}
+
+.bt__l {
+  flex: 1;
+  min-width: 0;
+}
+
+.bt__t {
+  display: block;
+  font-size: 28rpx;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+.bt__s {
+  display: block;
+  font-size: 22rpx;
+  color: var(--mu);
+  margin-top: 4rpx;
+}
+
+.bt__e {
+  display: block;
+  font-size: 22rpx;
+  color: var(--wn);
+  margin-top: 4rpx;
+}
+
+.bt__tag {
+  flex-shrink: 0;
+  font-size: 22rpx;
+  color: var(--mu);
+  border: 2rpx solid var(--ln);
+  border-radius: var(--r-pill);
+  padding: 6rpx 16rpx;
+}
+
+.bt__tag--open {
+  color: var(--act);
+  border-color: var(--act);
+  background: var(--acs);
+}
+
+.bt__tag--virtual {
+  color: var(--dgr);
+  border-color: #e0b9b0;
+  background: var(--dgrb);
+}

@@ -1,51 +1,57 @@
-<!-- 套餐与购买：本月用量（自然月）与 30 天权益分开显示，不拼成一个进度条 -->
+<!-- 套餐与购买：自然月用量 与 30 天权益 分开显示，不拼成一个进度条 -->
 <view class="page">
-  <!-- 口径一：自然月用量 -->
-  <view class="card">
-    <view class="card__title">本月已用</view>
-    <view class="stats">
-      <text class="stats__num">{{usage.used}}</text>
-      <text class="stats__unit">/ {{usage.quota}} 次</text>
-    </view>
-    <view class="hint">每月 1 号重新计算；超出后仍可手动记账。</view>
-  </view>
-
-  <!-- 口径二：30 天滚动窗口权益 -->
-  <view class="card">
-    <view class="card__title">我的套餐</view>
-    <view class="entitle__name">{{entitlement.plan_name}}</view>
-    <view class="stats">
-      <text class="stats__num">{{entitlement.remaining_quota}}</text>
-      <text class="stats__unit">次剩余</text>
-      <text class="stats__num stats__num--days">{{entitlement.days_left}}</text>
-      <text class="stats__unit">天剩余</text>
-    </view>
-    <view class="hint">到期：{{entitlement.valid_until}}</view>
-    <view class="hint">到期不会自动扣费，续费靠你自己决定。</view>
-  </view>
-
-  <!-- 道具（价格由服务端按 goods.json 下发，端上不硬编码） -->
-  <view class="card">
-    <view class="card__title">可以买</view>
-    <view wx:for="{{goods}}" wx:key="goodsId" class="goods">
-      <view class="goods__main">
-        <text class="goods__name">{{item.name}}</text>
-        <text class="goods__price">{{item.priceText}}</text>
+  <view class="page__gap">
+    <view class="card pad">
+      <text class="c-title">本月已用</text>
+      <view class="num">
+        <text class="num__v serif-num">{{usage.used}}</text>
+        <text class="num__u">/ {{usage.quota}} 次</text>
       </view>
-      <view class="goods__desc">{{item.desc}}</view>
-      <button
-        class="ui-btn ui-btn--primary ui-btn--block goods__buy"
-        data-goods="{{item.goodsId}}"
-        bindtap="onBuy"
-        loading="{{paying === item.goodsId}}"
-      >购买</button>
+      <text class="hint">每月 1 号重新计算；超出后仍可手动记账。</text>
     </view>
-    <view class="warn" wx:if="{{!canBuyHere}}">
-      当前环境不支持小程序内购买，请在手机端微信里完成（没有网页版入口）。
-    </view>
-  </view>
 
-  <view class="message" wx:if="{{message}}">{{message}}</view>
-  <view class="error" wx:if="{{errorText}}">{{errorText}}</view>
-  <view class="hint">付款成功后额度由微信服务端推送后自动到账，页面只做查询，不会本地加次数。</view>
+    <view class="card pad">
+      <text class="c-title">我的套餐</text>
+      <text class="plan">{{entitlement.plan_name}}</text>
+      <view class="num">
+        <text class="num__v serif-num">{{entitlement.remaining_quota}}</text>
+        <text class="num__u">次剩余</text>
+        <text class="num__v serif-num num__v--gap">{{entitlement.days_left}}</text>
+        <text class="num__u">天剩余</text>
+      </view>
+      <text class="hint">到期：{{entitlement.valid_until}}</text>
+      <text class="hint">到期不会自动扣费，续费靠你自己决定。</text>
+    </view>
+
+    <view class="card">
+      <view class="pad-b">
+        <text class="c-title">可以买</text>
+      </view>
+      <view wx:for="{{goods}}" wx:key="goodsId" class="goods">
+        <view class="goods__top">
+          <text class="goods__name">{{item.name}}</text>
+          <text class="goods__price serif-num">{{item.priceText}}</text>
+        </view>
+        <text class="goods__desc">{{item.desc}}</text>
+        <button
+          class="cta"
+          data-goods="{{item.goodsId}}"
+          bindtap="onBuy"
+          loading="{{paying === item.goodsId}}"
+          disabled="{{paying !== '' || !canBuyHere}}"
+        >购买</button>
+      </view>
+      <view wx:if="{{!canBuyHere}}" class="bar" style="margin:24rpx">
+        <text>当前环境不支持小程序内购买，请在手机端微信里完成。</text>
+      </view>
+    </view>
+
+    <view wx:if="{{message}}" class="bar" style="background:var(--okb);border-color:#c7dcc7;color:var(--ok)">
+      <text>{{message}}</text>
+    </view>
+    <view wx:if="{{errorText}}" class="bar" style="background:var(--dgrb);border-color:#e0b9b0;color:var(--dgr)">
+      <text>{{errorText}}</text>
+    </view>
+    <text class="hint">付款成功后额度由微信服务端推送后自动到账，页面只做查询，不会本地加次数。</text>
+  </view>
 </view>

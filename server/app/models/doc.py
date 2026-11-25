@@ -10,7 +10,7 @@ import uuid
 from datetime import date, datetime
 from decimal import Decimal
 
-from sqlalchemy import BigInteger, CheckConstraint, Date, Index, Integer, Numeric, String, Text, UniqueConstraint
+from sqlalchemy import BigInteger, CheckConstraint, Date, Index, Integer, Numeric, String, Text, UniqueConstraint, Uuid
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.models.base import Base, JSONType, StoreScopedMixin, TenantMixin, created_at_column, uuid_pk
@@ -25,19 +25,22 @@ class DocHeader(Base, TenantMixin, StoreScopedMixin):
     doc_no: Mapped[str] = mapped_column(String(32), nullable=False)
     intent_id: Mapped[str] = mapped_column(String(64), nullable=False)
     doc_type: Mapped[str] = mapped_column(String(32), nullable=False)
+    #: 往来对象（供应商/客户）。现结单据也记，历史单据为空。
+    partner_id: Mapped[uuid.UUID | None] = mapped_column(nullable=True)
     biz_date: Mapped[date] = mapped_column(Date, nullable=False)
     payment_status: Mapped[str] = mapped_column(String(16), nullable=False, server_default="已结")
     total_amount_fen: Mapped[int] = mapped_column(BigInteger, nullable=False, server_default="0")
+    #: 销售成本（分，仅卖货单有意义；NULL=含未知成本行，毛利排除）
+    cogs_fen: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
     #: confirmed / reversed（撤销走反做单，原单保留）
     status: Mapped[str] = mapped_column(String(16), nullable=False, server_default="confirmed")
     reversed_by: Mapped[uuid.UUID | None] = mapped_column(nullable=True)
     #: **反做单指向的原单**（``NULL`` = 正常单据）。
-    #:
-    #: 为什么必须有这一列：反做单继承了原单的 ``intent_id``（``purchase.create``），
-    #: 于是「这张单是 +48 还是 −48」在单头上完全丢失 —— 既导致「撤销的撤销」再减一次，
-    #: 又让日报把反做单当成又一笔采购。现在靠它把「反做单」从正常单据里区分出来：
-    #: 反做单（非空）不参与报表汇总、不能被再次撤销、「上一单」也不会选中它。
     reverses_doc_id: Mapped[uuid.UUID | None] = mapped_column(nullable=True)
+    #: 一步改单后的新单据指向被更正的原单
+    corrects_doc_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True)
+    #: 单据来源：voice | manual | photo | count
+    source: Mapped[str] = mapped_column(String(16), nullable=False, server_default="voice")
     created_by: Mapped[uuid.UUID] = mapped_column(nullable=False)
     created_at: Mapped[datetime] = created_at_column()
 
@@ -48,31 +51,43 @@ class DocHeader(Base, TenantMixin, StoreScopedMixin):
         CheckConstraint("total_amount_fen >= 0", name="ck_doc_header_amount_nonneg"),
         CheckConstraint("payment_status IN ('已结','未结','部分')", name="ck_doc_header_payment_status"),
         CheckConstraint("status IN ('confirmed','reversed')", name="ck_doc_header_status"),
+        CheckConstraint("source IN ('voice','manual','photo','count')", name="ck_doc_header_source"),
     )
 
 
 class DocLine(Base, TenantMixin, StoreScopedMixin):
-    """单据行。`source_map` 记录每个槽位的 source（asr/default/computed/alias/pending）。"""
+    """单据行。价格/金额允许 NULL（待补），带成本快照与成本状态。"""
 
     __tablename__ = "doc_line"
 
     line_id: Mapped[uuid.UUID] = uuid_pk()
     doc_id: Mapped[uuid.UUID] = mapped_column(nullable=False)
     product_id: Mapped[uuid.UUID] = mapped_column(nullable=False)
+    #: 绑定批次（可空）
+    batch_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True)
     #: 原话数量与单位（双显回显用）
     qty: Mapped[Decimal] = mapped_column(Numeric(18, 4), nullable=False)
     unit: Mapped[str] = mapped_column(String(16), nullable=False)
     #: 折算到 base_unit 的数量（与 inventory.qty_base 同口径）
     qty_base: Mapped[Decimal] = mapped_column(Numeric(18, 4), nullable=False, server_default="0")
-    unit_price_fen: Mapped[int] = mapped_column(BigInteger, nullable=False, server_default="0")
-    amount_fen: Mapped[int] = mapped_column(BigInteger, nullable=False, server_default="0")
+    #: 单价/金额（分；NULL=待补，0=明确赠品/免费）
+    unit_price_fen: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    amount_fen: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    price_source: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    #: 销售成本快照（分，基本单位/总成本由 cost_status 配合）
+    cost_snapshot_fen: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    cost_status: Mapped[str] = mapped_column(String(16), nullable=False, server_default="final")
     source_map: Mapped[dict | None] = mapped_column(JSONType, nullable=True)
     created_at: Mapped[datetime] = created_at_column()
 
     __table_args__ = (
         Index("ix_doc_line_tenant_id_doc_id", "tenant_id", "doc_id"),
-        CheckConstraint("amount_fen >= 0 AND unit_price_fen >= 0", name="ck_doc_line_amount_nonneg"),
+        CheckConstraint(
+            "(amount_fen IS NULL OR amount_fen >= 0) AND (unit_price_fen IS NULL OR unit_price_fen >= 0)",
+            name="ck_doc_line_amount_nonneg",
+        ),
         CheckConstraint("qty >= 0", name="ck_doc_line_qty_nonneg"),
+        CheckConstraint("cost_status IN ('final','provisional','unknown')", name="ck_doc_line_cost_status"),
     )
 
 

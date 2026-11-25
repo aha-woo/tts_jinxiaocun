@@ -84,6 +84,8 @@ def _envelope_from_spec(contracts: ContractBundle, code: str, message: str | Non
 
 def register_exception_handlers(app: FastAPI) -> None:
     """注册 AppError / 校验失败 / 404 等处理器，保证任何响应都是包络。"""
+    from app.services.upload_ticket import AudioTooLargeError
+    from app.tenant.context import TenantContextMissing
 
     @app.exception_handler(AppError)
     async def _handle_app_error(_request: Request, exc: AppError) -> JSONResponse:
@@ -112,3 +114,24 @@ def register_exception_handlers(app: FastAPI) -> None:
         )
         # 保留原始 HTTP 状态码（404 仍是 404），包络 code 用契约 numeric
         return JSONResponse(status_code=exc.status_code, content=payload)
+
+    @app.exception_handler(AudioTooLargeError)
+    async def _handle_audio_too_large(_request: Request, exc: AudioTooLargeError) -> JSONResponse:
+        contracts = get_contracts()
+        payload, status = _envelope_from_spec(contracts, "E_AUDIO_TOO_LARGE", str(exc))
+        payload["data"] = {"error_code": "E_AUDIO_TOO_LARGE"}
+        return JSONResponse(status_code=status, content=payload)
+
+    @app.exception_handler(TenantContextMissing)
+    async def _handle_tenant_missing(_request: Request, exc: TenantContextMissing) -> JSONResponse:
+        contracts = get_contracts()
+        payload, status = _envelope_from_spec(contracts, "E_TENANT_DENIED", exc.detail)
+        payload["data"] = {"error_code": "E_TENANT_DENIED"}
+        return JSONResponse(status_code=status, content=payload)
+
+    @app.exception_handler(Exception)
+    async def _handle_unexpected_error(_request: Request, _exc: Exception) -> JSONResponse:
+        contracts = get_contracts()
+        payload, status = _envelope_from_spec(contracts, FALLBACK_ERROR_CODE)
+        payload["data"] = {"error_code": FALLBACK_ERROR_CODE}
+        return JSONResponse(status_code=status, content=payload)

@@ -143,6 +143,10 @@ class ProductLexicon:
         """全部商品档案。"""
         return tuple(self._entries.values())
 
+    def get_by_id(self, product_id: str) -> ProductEntry | None:
+        """按 ``product_id`` 精确取档案（个人词表按 ID 映射时用）。"""
+        return self._entries.get(str(product_id))
+
     @property
     def terms(self) -> tuple[str, ...]:
         """全部可命中词（按词长降序，最长匹配优先）。"""
@@ -294,23 +298,31 @@ class AliasResolver:
         if cleaned:
             self._personal[cleaned] = product_id
 
+    def _lookup_target(self, target: str) -> ProductEntry | None:
+        """兼容按 ``product_id`` 或正名两种 personal_aliases 映射。"""
+        by_id = self._lexicon.get_by_id(target)
+        if by_id is not None:
+            return by_id
+        entry = self._lexicon.lookup(target)
+        return entry.product if entry is not None else None
+
     # ------------------------------------------------------------------ 解析
     def resolve(self, text: str) -> AliasHit | None:
-        """整串视为一个商品词（澄清点选回填时用）。"""
+        """整串视为一个商品词（澄清点选回填与明细解析时用）。"""
         cleaned = (text or "").strip()
         if not cleaned:
             return None
         target = self._personal.get(cleaned)
         if target is not None:
-            entry = self._lexicon.lookup(target)
-            if entry is not None and entry.product is not None:
+            product = self._lookup_target(target)
+            if product is not None:
                 return AliasHit(
                     text=cleaned,
                     start=0,
                     end=len(cleaned),
                     matched_term=cleaned,
-                    product=entry.product,
-                    candidates=(entry.product,),
+                    product=product,
+                    candidates=(product,),
                     is_alias=True,
                     confidence=0.97,
                 )
@@ -319,19 +331,78 @@ class AliasResolver:
             return hit
         for term, product_id in self._personal.items():
             if term in cleaned:
-                entry = self._lexicon.lookup(product_id)
-                if entry is not None and entry.product is not None:
+                product = self._lookup_target(product_id)
+                if product is not None:
                     return AliasHit(
                         text=cleaned,
                         start=cleaned.index(term),
                         end=cleaned.index(term) + len(term),
                         matched_term=term,
-                        product=entry.product,
-                        candidates=(entry.product,),
+                        product=product,
+                        candidates=(product,),
                         is_alias=True,
                         confidence=0.9,
                     )
         return None
+
+    def fuzzy_match(
+        self, text: str, *, min_score: float = 0.72, margin: float = 0.08
+    ) -> AliasHit | None:
+        """同音/方言模糊匹配（高确信且大幅领先第 2 名才命中，相近则转候选澄清）。"""
+        from app.voice.phonetic import find_similar as _find_similar
+
+        cleaned = (text or "").strip()
+        if not cleaned or not self._lexicon.entries:
+            return None
+        ranked = _find_similar(
+            cleaned,
+            [(entry, entry.all_terms()) for entry in self._lexicon.entries],
+            limit=3,
+            min_score=min_score,
+        )
+        if not ranked:
+            return None
+        top_entry, top_score = ranked[0]
+        second_score = ranked[1][1] if len(ranked) > 1 else 0.0
+        if top_score >= 0.84 and (top_score - second_score) >= margin:
+            return AliasHit(
+                text=cleaned,
+                start=0,
+                end=len(cleaned),
+                matched_term=top_entry.name,
+                product=top_entry,
+                candidates=(top_entry,),
+                is_alias=False,
+                confidence=top_score,
+            )
+        candidates = tuple(entry for entry, _score in ranked)
+        return AliasHit(
+            text=cleaned,
+            start=0,
+            end=len(cleaned),
+            matched_term=top_entry.name,
+            product=None,
+            candidates=candidates,
+            is_alias=False,
+            confidence=top_score * 0.6,
+        )
+
+    def find_similar(
+        self, name: str, *, limit: int = 3, min_score: float = 0.60
+    ) -> tuple[ProductEntry, ...]:
+        """新货建档前的近似老货推荐（避免方言/同音字造成一货多档）。"""
+        from app.voice.phonetic import find_similar as _find_similar
+
+        cleaned = (name or "").strip()
+        if not cleaned or not self._lexicon.entries:
+            return ()
+        ranked = _find_similar(
+            cleaned,
+            [(entry, entry.all_terms()) for entry in self._lexicon.entries],
+            limit=limit,
+            min_score=min_score,
+        )
+        return tuple(entry for entry, _score in ranked)
 
     def scan(self, text: str) -> tuple[AliasHit, ...]:
         """从整句里扫出商品（个人词表优先，其次最长匹配词表）。"""
@@ -342,8 +413,8 @@ class AliasResolver:
             start = text.find(term)
             if start < 0:
                 continue
-            entry = self._lexicon.lookup(product_id)
-            if entry is None or entry.product is None:
+            product = self._lookup_target(product_id)
+            if product is None:
                 continue
             hits.append(
                 AliasHit(
@@ -351,8 +422,8 @@ class AliasResolver:
                     start=start,
                     end=start + len(term),
                     matched_term=term,
-                    product=entry.product,
-                    candidates=(entry.product,),
+                    product=product,
+                    candidates=(product,),
                     is_alias=True,
                     confidence=0.97,
                 )

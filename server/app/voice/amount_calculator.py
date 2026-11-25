@@ -72,6 +72,25 @@ _MONEY_FRAGMENT = re.compile(
     r"|\d+(?:\.\d+)?"
 )
 
+_STRONG_UP_HINTS: tuple[str, ...] = (
+    "每件",
+    "每箱",
+    "每瓶",
+    "每斤",
+    "每个",
+    "单价",
+)
+
+_UNIT_ONE_PRICE_HINT = re.compile(
+    r"(?:一件|一箱|一瓶|一斤|一个|一条)\s*(?:是|卖|算|进|为)?\s*(?:\d|[零〇一幺二两俩三仨四五六七八九勾拐十百千万])"
+)
+
+
+def _has_up_hint(text: str) -> bool:
+    """只有「每X / 单价」或「一X + 金额」才算单价线索（避免把数量「进了一箱可乐」当单价）。"""
+    return any(hint in text for hint in _STRONG_UP_HINTS) or _UNIT_ONE_PRICE_HINT.search(text) is not None
+
+
 #: 「线索词 + 中文数字」（口语里「一件三十五」**不会**带「块/元」）
 #:
 #: 为什么单独一条正则：``_MONEY_FRAGMENT`` 要求中文数字后面必须跟「块/元」，
@@ -173,7 +192,7 @@ def compute_amounts(
     if fen is None or fen <= 0:
         return AmountOutcome(rule="money_unparsed", money_text=money_text, qty=quantity, needs_clarify=True)
 
-    has_up_hint = any(hint in text for hint in UP_HINTS)
+    has_up_hint = _has_up_hint(text)
     has_ta_hint = any(hint in text for hint in TA_HINTS)
 
     if has_up_hint and not has_ta_hint:

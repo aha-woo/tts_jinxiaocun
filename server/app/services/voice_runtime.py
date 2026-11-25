@@ -18,18 +18,22 @@
 
 from __future__ import annotations
 
+import threading
 import uuid
 from dataclasses import dataclass, field
-from decimal import Decimal
+from decimal import Decimal, ROUND_HALF_UP
 from typing import Any, Iterable, Mapping, Sequence
 
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
 
 from app.config import Settings
 from app.domain.intent_registry import IntentRegistry, default_registry, is_pure_entity_intent
 from app.models.catalog import Product, ProductAlias, UnitConversion
+from app.models.dict import PersonalDict
 from app.models.partner import Partner, PartnerAlias
+from app.services.cost_monitor import CostMonitor
+from app.services.degrade import DegradeController
 from app.voice.alias_resolver import AliasResolver, ProductEntry
 from app.voice.asr_provider import AsrProvider, build_asr_provider
 from app.voice.clarify_fsm import ClarifyFSM
@@ -39,29 +43,82 @@ from app.voice.llm_provider import CountingLlmProvider, LlmProvider, build_llm_p
 from app.voice.non_command_filter import NonCommandFilter
 from app.voice.output_schema import ParseResult
 from app.voice.pipeline import VoicePipeline
-from app.voice.prompt_builder import PromptContext
+from app.voice.prompt_builder import PromptBudget, PromptContext
 from app.voice.prompt_cache import PromptCache
 from app.voice.template_engine import TemplateEngine
+from app.voice.unit_converter import standard_weight_ratio
 
 __all__ = [
+    "CATALOG_MATCH_LIMIT",
     "LedgerLine",
+    "SharedVoiceState",
     "VoiceRuntime",
     "build_runtime",
+    "invalidate_shared_prompt_cache",
     "lines_of_result",
     "load_partner_lexicon",
     "load_product_lexicon",
+    "reset_shared_voice_state",
+    "shared_voice_state",
 ]
 
-#: 装进解析器的商品上限（架构 §2.4 H12：Top20，禁止全量）
+#: 装进 G4 LLM prompt 的商品上限（架构 §2.4 H12：Top20，禁止全量）
 PROMPT_TOP_PRODUCTS = 20
+
+#: 本机规则/实体匹配词表上限（不进 prompt，只给规则与模糊消歧，避免 20 个以后的商品失明）
+CATALOG_MATCH_LIMIT = 500
 
 #: 往来单位上限（欠款查询/收款用不到全部）
 PROMPT_TOP_PARTNERS = 50
 
 
 @dataclass
+class SharedVoiceState:
+    """进程级共享语音观测与缓存状态（避免每请求重建空缓存与空成本监控）。"""
+
+    prompt_cache: PromptCache
+    cost_monitor: CostMonitor
+    degrade: DegradeController
+
+
+_VOICE_STATE_LOCK = threading.Lock()
+_SHARED_VOICE_STATE: SharedVoiceState | None = None
+
+
+def shared_voice_state(settings: Settings | None = None) -> SharedVoiceState:
+    """取（或初始化）进程级共享 PromptCache / CostMonitor / DegradeController。"""
+    global _SHARED_VOICE_STATE
+    with _VOICE_STATE_LOCK:
+        if _SHARED_VOICE_STATE is None:
+            max_entries = int(getattr(settings, "prompt_cache_max_entries", 256) or 256)
+            ttl = int(getattr(settings, "prompt_cache_ttl_seconds", 3600) or 3600)
+            cache = PromptCache(max_entries=max_entries, ttl_seconds=ttl)
+            _SHARED_VOICE_STATE = SharedVoiceState(
+                prompt_cache=cache,
+                cost_monitor=CostMonitor(prompt_cache=cache),
+                degrade=DegradeController(),
+            )
+        return _SHARED_VOICE_STATE
+
+
+def invalidate_shared_prompt_cache(tenant_id: str) -> int:
+    """商品或个人词表变更时击穿共享 PromptCache。"""
+    state = _SHARED_VOICE_STATE
+    if state is None:
+        return 0
+    return state.prompt_cache.invalidate_tenant(tenant_id)
+
+
+def reset_shared_voice_state() -> None:
+    """清空共享状态（仅给测试用）。"""
+    global _SHARED_VOICE_STATE
+    with _VOICE_STATE_LOCK:
+        _SHARED_VOICE_STATE = None
+
+
+@dataclass
 class VoiceRuntime:
-    """一条装配好的语音运行时（每请求一份，不跨请求共享状态）。"""
+    """一条装配好的语音运行时（词表按请求隔离，缓存与观测共享）。"""
 
     pipeline: VoicePipeline
     provider: CountingLlmProvider
@@ -71,11 +128,10 @@ class VoiceRuntime:
     store_name: str
     contract_version: str
     registry: IntentRegistry = field(default_factory=default_registry)
-    #: **按类型分开**的往来单位词表（方向判据 ``partner.type`` 的来源）。
-    #: 上游客商同名不同型是常态（``uq_partner_tenant_id_type_name`` 允许同名两行），
-    #: 所以「命中哪张表」就是类型，不需要再查库。
     customers: AliasResolver = field(default_factory=lambda: AliasResolver(()))
     suppliers: AliasResolver = field(default_factory=lambda: AliasResolver(()))
+    personal_fixes: Mapping[str, str] = field(default_factory=dict)
+    dict_version: int = 0
 
     def llm_calls(self) -> int:
         """本次运行时累计模型调用次数（成本归因）。"""
@@ -87,23 +143,13 @@ def load_product_lexicon(
     *,
     tenant_id: uuid.UUID,
     member_id: uuid.UUID | None = None,
-    limit: int = PROMPT_TOP_PRODUCTS,
+    limit: int = CATALOG_MATCH_LIMIT,
 ) -> list[ProductEntry]:
-    """从库里装商品词表（正名 + 别名 + 已审核的换算系数）。
-
-    Args:
-        session: 会话（已绑定租户上下文）。
-        tenant_id: 租户。
-        member_id: 当前员工（个人别名优先生效）。
-        limit: 上限（**不装全量**）。
-
-    Returns:
-        ``ProductEntry`` 列表。
-    """
+    """从库里装商品词表（正名 + 别名 + 已审核换算系数，含个人与租户别名隔离）。"""
     products = list(
         session.execute(
             select(Product)
-            .where(Product.tenant_id == tenant_id, Product.status == "active")
+            .where(Product.tenant_id == tenant_id, Product.status.in_(("draft", "active")))
             .order_by(Product.created_at.desc())
             .limit(max(1, limit))
         ).scalars()
@@ -112,12 +158,19 @@ def load_product_lexicon(
         return []
     ids = [product.product_id for product in products]
 
-    aliases: dict[uuid.UUID, list[tuple[str, str]]] = {}
-    for row in session.execute(
-        select(ProductAlias).where(
-            ProductAlias.tenant_id == tenant_id, ProductAlias.product_id.in_(ids)
+    alias_stmt = select(ProductAlias).where(
+        ProductAlias.tenant_id == tenant_id,
+        ProductAlias.product_id.in_(ids),
+    )
+    if member_id is not None:
+        alias_stmt = alias_stmt.where(
+            or_(ProductAlias.member_id.is_(None), ProductAlias.member_id == member_id)
         )
-    ).scalars():
+    else:
+        alias_stmt = alias_stmt.where(ProductAlias.member_id.is_(None))
+
+    aliases: dict[uuid.UUID, list[tuple[str, str]]] = {}
+    for row in session.execute(alias_stmt).scalars():
         aliases.setdefault(row.product_id, []).append((str(row.alias_text), str(row.source)))
 
     ratios: dict[uuid.UUID, dict[str, float]] = {}
@@ -133,7 +186,6 @@ def load_product_lexicon(
     entries: list[ProductEntry] = []
     for product in products:
         rows = aliases.get(product.product_id, [])
-        # 个人别名优先（命中时 source=alias 的语义就是这个）
         rows.sort(key=lambda item: 0 if item[1] == "personal" else 1)
         entries.append(
             ProductEntry(
@@ -142,12 +194,51 @@ def load_product_lexicon(
                 base_unit=str(product.base_unit),
                 spec=str(product.spec or ""),
                 aliases=tuple(text for text, _source in rows),
-                last_purchase_price_fen=int(product.last_purchase_price_fen) or None,
-                last_sale_price_fen=int(product.last_sale_price_fen) or None,
+                last_purchase_price_fen=(
+                    int(product.last_purchase_price_fen)
+                    if product.last_purchase_price_fen is not None
+                    else None
+                ),
+                last_sale_price_fen=(
+                    int(product.last_sale_price_fen)
+                    if product.last_sale_price_fen is not None
+                    else None
+                ),
                 ratios=ratios.get(product.product_id, {}),
             )
         )
     return entries
+
+
+def _load_member_personal_dict(
+    session: Session,
+    *,
+    tenant_id: uuid.UUID,
+    member_id: uuid.UUID | None,
+    products: Sequence[ProductEntry],
+) -> tuple[dict[str, str], dict[str, str], int]:
+    """从 ``personal_dict`` 读个人商品映射与个人口癖版本。"""
+    if member_id is None:
+        return {}, {}, 0
+    rows = list(
+        session.execute(
+            select(PersonalDict).where(
+                PersonalDict.tenant_id == tenant_id,
+                PersonalDict.member_id == member_id,
+            )
+        ).scalars()
+    )
+    by_id = {entry.product_id: entry for entry in products}
+    personal_aliases: dict[str, str] = {}
+    personal_fixes: dict[str, str] = {}
+    max_version = 0
+    for row in rows:
+        max_version = max(max_version, int(row.version or 0))
+        if row.mapped_type == "product" and row.mapped_id is not None:
+            pid = str(row.mapped_id)
+            if pid in by_id:
+                personal_aliases[str(row.raw_text)] = pid
+    return personal_aliases, personal_fixes, max_version
 
 
 def load_partner_lexicon(
@@ -218,7 +309,16 @@ def build_runtime(
     """
     reg = registry or default_registry()
     product_entries = load_product_lexicon(
-        session, tenant_id=tenant_id, member_id=member_id, limit=settings.prompt_top_products
+        session,
+        tenant_id=tenant_id,
+        member_id=member_id,
+        limit=max(CATALOG_MATCH_LIMIT, int(settings.prompt_top_products)),
+    )
+    personal_aliases, personal_fixes, dict_version = _load_member_personal_dict(
+        session,
+        tenant_id=tenant_id,
+        member_id=member_id,
+        products=product_entries,
     )
     partner_entries = load_partner_lexicon(session, tenant_id=tenant_id)
     # 方向判据要「命中哪张表就是什么类型」，所以按 partner.type 各装一份
@@ -230,16 +330,17 @@ def build_runtime(
     )
 
     provider: LlmProvider = build_llm_provider(settings)
-    counter = CountingLlmProvider(provider)
-    cache = PromptCache(
-        max_entries=settings.prompt_cache_max_entries,
-        ttl_seconds=settings.prompt_cache_ttl_seconds,
+    counter = provider if isinstance(provider, CountingLlmProvider) else CountingLlmProvider(provider)
+    state = shared_voice_state(settings)
+    budget = PromptBudget(
+        top_products=int(settings.prompt_top_products),
+        recent_contexts=int(settings.prompt_recent_contexts),
     )
     pipeline = VoicePipeline(
         engine=TemplateEngine(registry=reg, store_name=store_name),
         fallback=LlmFallback(
             counter,
-            cache=cache,
+            cache=state.prompt_cache,
             max_retries=settings.llm_schema_retry,
             registry=reg,
         ),
@@ -248,6 +349,7 @@ def build_runtime(
         clarify=ClarifyFSM(registry=reg),
         registry=reg,
         provider=counter,
+        budget=budget,
         contract_version=reg.version,
         store_name=store_name,
     )
@@ -255,13 +357,15 @@ def build_runtime(
         pipeline=pipeline,
         provider=counter,
         asr=build_asr_provider(settings),
-        products=AliasResolver(product_entries),
+        products=AliasResolver(product_entries, personal_aliases=personal_aliases),
         partners=AliasResolver(partner_entries),
         customers=AliasResolver(customer_entries),
         suppliers=AliasResolver(supplier_entries),
         store_name=store_name,
         contract_version=reg.version,
         registry=reg,
+        personal_fixes=personal_fixes,
+        dict_version=dict_version,
     )
 
 
@@ -280,10 +384,11 @@ class LedgerLine:
     payment_status: str = "已结"
     calc_trace: str | None = None
     pending: bool = False
+    similar_products: tuple[Mapping[str, str], ...] = ()
 
     def as_dict(self) -> dict[str, Any]:
         """JSON 形态（``confirm_card.slots.lines`` 里存的就是它）。"""
-        return {
+        data: dict[str, Any] = {
             "product_id": self.product_id,
             "product_label": self.product_label,
             "quantity": self.quantity,
@@ -296,6 +401,9 @@ class LedgerLine:
             "calc_trace": self.calc_trace,
             "pending": self.pending,
         }
+        if self.similar_products:
+            data["similar_products"] = [dict(item) for item in self.similar_products]
+        return data
 
 
 def lines_of_result(
@@ -342,6 +450,14 @@ def lines_of_result(
             amount_fen = int(getattr(item, "total_fen", 0) or 0)
             unit_price_fen = getattr(item, "unit_price_fen", None)
             qty_base, ratio_resolved = _qty_base_of(product, quantity, unit)
+            similars = (
+                tuple(
+                    {"product_id": e.product_id, "name": e.display_name()}
+                    for e in runtime.products.find_similar(str(name or ""), limit=3)
+                )
+                if product is None and name
+                else ()
+            )
             lines.append(
                 LedgerLine(
                     product_id=None if product is None else product.product_id,
@@ -358,13 +474,10 @@ def lines_of_result(
                         if unit_price_fen is None
                         else f"{quantity}{unit}×{unit_price_fen}分={amount_fen}分"
                     ),
-                    # 缺换算系数也算「待确认」：qty_base 此时按 1:1 记，
-                    # 而 1 箱 ≠ 1 瓶——不标 pending 就会把 5 箱记成 5 瓶。
-                    # 纯实体意图（product.create 等）例外：商品本来就还不存在、
-                    # 数量也没有，一并标 pending 会把唯一入口堵死，所以整行不参与判定。
                     pending=False
                     if entity_only
                     else (product is None or quantity is None or not ratio_resolved),
+                    similar_products=similars,
                 )
             )
         if lines:
@@ -376,9 +489,21 @@ def lines_of_result(
     unit = str(result.slots.get("U") or (product.base_unit if product else ""))
     amount_fen = int(result.slots.get("TA") or result.slots.get("AMT") or 0)
     if amount_fen == 0 and result.slots.get("UP") is not None and quantity is not None:
-        amount_fen = int(result.slots["UP"]) * int(quantity)
+        amount_fen = int(
+            (Decimal(str(result.slots["UP"])) * _as_decimal(quantity)).quantize(
+                Decimal("1"), rounding=ROUND_HALF_UP
+            )
+        )
     up = result.slots.get("UP")
     qty_base, ratio_resolved = _qty_base_of(product, quantity, unit)
+    similars = (
+        tuple(
+            {"product_id": e.product_id, "name": e.display_name()}
+            for e in runtime.products.find_similar(str(product_slot or ""), limit=3)
+        )
+        if product is None and product_slot
+        else ()
+    )
     return [
         LedgerLine(
             product_id=None if product is None else product.product_id,
@@ -391,7 +516,6 @@ def lines_of_result(
             partner_id=partner_id,
             payment_status=payment_status,
             calc_trace=result.calc_traces[0] if result.calc_traces else None,
-            # 同上：纯实体意图（product.create）的商品还不存在，不能据此标 pending
             pending=False
             if entity_only
             else (
@@ -400,16 +524,13 @@ def lines_of_result(
                 or product is None
                 or not ratio_resolved
             ),
+            similar_products=similars,
         )
     ]
 
 
 def _resolve(resolver: AliasResolver, name: Any) -> ProductEntry | None:
-    """用词表把名字解析成商品/往来单位（解析不到返回 ``None``，不猜）。
-
-    两段式：先按「整串就是一个词」查（含个人词表），再退到词表精确查
-    （解析结果里的 ``P`` 已经是 ``可乐 500ml`` 这种带规格的形式）。
-    """
+    """用词表把名字解析成商品/往来单位（支持精确、个人别名与高确信拼音模糊）。"""
     if not name:
         return None
     text_value = str(name).strip()
@@ -431,6 +552,14 @@ def _resolve(resolver: AliasResolver, name: Any) -> ProductEntry | None:
             entry = None
         if entry is not None and getattr(entry, "product", None) is not None:
             return entry.product
+    fuzzy_fn = getattr(resolver, "fuzzy_match", None)
+    if callable(fuzzy_fn):
+        try:
+            fuzzy_hit = fuzzy_fn(text_value, min_score=0.84, margin=0.08)
+        except Exception:  # noqa: BLE001
+            fuzzy_hit = None
+        if fuzzy_hit is not None and getattr(fuzzy_hit, "product", None) is not None:
+            return fuzzy_hit.product
     return None
 
 
@@ -444,24 +573,19 @@ def _label_of(product: ProductEntry | None, fallback: Any) -> str:
 def _qty_base_of(
     product: ProductEntry | None, quantity: Any, unit: str
 ) -> tuple[Decimal, bool]:
-    """折算到 base_unit：返回 ``(折算数量, 是否已解析出换算系数)``。
-
-    **缺系数不臆造**（契约 C3：绝不猜「一箱 24 瓶」）。
-    但「不臆造」不等于「静默按 1:1 记账」——上一版就是只 ``return qty``：
-    「进了五箱矿泉水」→ ``qty_base=5``（瓶），库存少记 115 瓶，卡片还不标待补。
-    所以这里把「有没有真正解析出系数」一并返回，调用方据此标 ``pending``，
-    由 confirm 的 pending 守卫拦住，**不落账**。
-    """
+    """折算到 base_unit：先查已审核档案系数，再查标准度量衡常数；缺包装系数不臆造。"""
     qty = _as_decimal(quantity)
     if product is None:
         return qty, False
     if not unit or unit == product.base_unit:
-        # 说的就是基本单位（5 瓶），不需要系数
         return qty, True
     ratio = product.ratios.get(unit)
-    if ratio is None:
-        return qty, False
-    return qty * Decimal(str(ratio)), True
+    if ratio is not None:
+        return qty * Decimal(str(ratio)), True
+    std = standard_weight_ratio(unit, product.base_unit)
+    if std is not None:
+        return qty * std, True
+    return qty, False
 
 
 def _as_decimal(value: Any) -> Decimal:

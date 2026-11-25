@@ -232,7 +232,7 @@ def _first_quantity(text: str, *, allow_zero: bool) -> tuple[SlotSpan, ...]:
                 text=match.group(0),
                 start=match.start(),
                 end=match.end(),
-                value=int(value) if isinstance(value, Decimal) else value,
+                value=value,
                 source="asr",
                 confidence=parsed.confidence,
                 note=parsed.trace,

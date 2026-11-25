@@ -1,6 +1,4 @@
 {
-  "navigationBarTitleText": "语音记账",
-  "usingComponents": {
-    "big-button": "/components/big-button/big-button"
-  }
+  "navigationBarTitleText": "今天",
+  "usingComponents": {}
 }

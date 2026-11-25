@@ -1,0 +1,31 @@
+<view class="tb">
+  <view class="tb__inner">
+    <view
+      wx:for="{{left}}"
+      wx:key="pagePath"
+      class="tb__i {{selected === item.index ? 'tb__i--on' : ''}}"
+      data-index="{{item.index}}"
+      bindtap="onTab"
+    >
+      <text>{{item.text}}</text>
+      <view class="tb__dot" wx:if="{{selected === item.index}}"></view>
+    </view>
+
+    <view class="tb__gap"></view>
+
+    <view
+      wx:for="{{right}}"
+      wx:key="pagePath"
+      class="tb__i {{selected === item.index ? 'tb__i--on' : ''}}"
+      data-index="{{item.index}}"
+      bindtap="onTab"
+    >
+      <text>{{item.text}}</text>
+      <view class="tb__dot" wx:if="{{selected === item.index}}"></view>
+    </view>
+  </view>
+
+  <view class="tb__mic" bindtap="onMic">
+    <text class="tb__mic-t">说</text>
+  </view>
+</view>

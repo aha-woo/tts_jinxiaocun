@@ -24,16 +24,12 @@ EXPECTED_SOURCES = 5
 EXPECTED_DOMAINS = 12
 MIN_ERROR_CODES = 20
 
-#: 数据层表数（架构 §4.3.2 有 33 行清单，其中 template_rule/template_candidate 同一行 → 34 张表）
-EXPECTED_TABLES = 34
+#: 数据层表数（含 M0 新增 cost_adjustment / gap / attachment 共 42 张）
+EXPECTED_TABLES = 42
 
 #: PG 上的 RLS 策略总数（单一来源，迁移与 ``/readyz`` 都读它）
-#:
-#: 组成：32 张租户表 × 1 条 ``*_tenant_isolation``
-#: + 2 条「鸡生蛋」引导策略（``member_login_lookup`` / ``xpay_deliver_lookup``）= 34。
-#: 上次这个数字散落在两处（``rls.py`` 与 DDL 断言），加策略时只改了一处；
-#: 现在统一收在这里，DDL 断言直接 import，避免再次漂移。
-EXPECTED_RLS_POLICIES = 34
+#: 组成：40 张租户表 × 1 条 ``*_tenant_isolation`` + 2 条引导策略 = 42。
+EXPECTED_RLS_POLICIES = 42
 
 #: 单一真相源所在的仓库相对路径（server/app/config.py -> 仓库根）
 _REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -108,11 +104,22 @@ class Settings:
     # ---- LLM 兜底（T03，G4 唯一计费点）----
     # 默认 fake：**永不联网**，避免本地/CI 误调现网烧钱；real 必须显式注入凭证
     llm_provider: str = os.getenv("LLM_PROVIDER", "fake")
+    llm_vendor: str = os.getenv("LLM_VENDOR", "openai_compat")
     llm_model: str = os.getenv("LLM_MODEL", "fake-parse-v1")
     llm_api_key: str = os.getenv("LLM_API_KEY", "")
     llm_base_url: str = os.getenv("LLM_BASE_URL", "")
+    llm_backup_api_key: str = os.getenv("LLM_BACKUP_API_KEY", "")
+    llm_backup_base_url: str = os.getenv("LLM_BACKUP_BASE_URL", "")
+    llm_backup_model: str = os.getenv("LLM_BACKUP_MODEL", "")
+    llm_strong_model: str = os.getenv("LLM_STRONG_MODEL", "")
     llm_timeout_seconds: float = float(os.getenv("LLM_TIMEOUT_SECONDS", "6"))
     llm_max_tokens: int = int(os.getenv("LLM_MAX_TOKENS", "1024"))
+    vision_provider: str = os.getenv("VISION_PROVIDER", "fake")
+    vision_vendor: str = os.getenv("VISION_VENDOR", "openai_compat")
+    vision_model: str = os.getenv("VISION_MODEL", "Qwen/Qwen2.5-VL-72B-Instruct")
+    vision_api_key: str = os.getenv("VISION_API_KEY", "")
+    vision_base_url: str = os.getenv("VISION_BASE_URL", "")
+    vision_timeout_seconds: float = float(os.getenv("VISION_TIMEOUT_SECONDS", "20"))
     #: Schema 校验失败后的修正重试次数（PRD 4.4：最多 1 次；失败不扣次）
     llm_schema_retry: int = int(os.getenv("LLM_SCHEMA_RETRY", "1"))
     #: prompt 前缀缓存（Q15）：静态前缀 + 契约版本做 key，命中即省一次 in 计费

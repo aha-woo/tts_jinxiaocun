@@ -1,0 +1,106 @@
+/* 货品页：chips + 列表行（其余继承 app.wxss） */
+.chips {
+  display: flex;
+  gap: 12rpx;
+  flex-wrap: wrap;
+}
+
+.chip {
+  border: 2rpx solid var(--ln);
+  background: var(--sf);
+  border-radius: var(--r-pill);
+  padding: 10rpx 24rpx;
+  font-size: 26rpx;
+  color: var(--ink);
+}
+
+.chip--on {
+  background: var(--ink);
+  color: var(--sf);
+  border-color: var(--ink);
+}
+
+.gi {
+  display: flex;
+  align-items: center;
+  gap: 16rpx;
+  padding: 24rpx 24rpx;
+  border-top: 2rpx solid var(--ln);
+  width: 100%;
+  text-align: left;
+}
+
+.gi:first-child {
+  border-top: 0;
+}
+
+.gi:active {
+  background: var(--acs);
+}
+
+.gi__md {
+  flex: 1;
+  min-width: 0;
+}
+
+.gi__top {
+  display: flex;
+  align-items: center;
+  gap: 10rpx;
+  flex-wrap: wrap;
+}
+
+.gi__name {
+  font-weight: 700;
+  font-size: 30rpx;
+}
+
+.gi__pill {
+  font-size: 20rpx;
+  padding: 2rpx 12rpx;
+  border-radius: var(--r-pill);
+  border: 2rpx solid var(--ln);
+  color: var(--mu);
+}
+
+.gi__pill--neg {
+  color: var(--dgr);
+  border-color: #e0b9b0;
+  background: var(--dgrb);
+}
+
+.gi__sub {
+  display: block;
+  font-size: 24rpx;
+  color: var(--mu);
+  margin-top: 4rpx;
+}
+
+.gi__sub--warn {
+  color: var(--wn);
+  font-weight: 700;
+}
+
+.gi__rt {
+  font-family: 'Songti SC', 'Noto Serif SC', serif;
+  font-weight: 700;
+  font-size: 34rpx;
+  text-align: right;
+  white-space: nowrap;
+}
+
+.gi__rt--low {
+  color: var(--ac);
+}
+
+.gi__rt--neg {
+  color: var(--dgr);
+}
+
+.gi__unit {
+  font-family: -apple-system, 'PingFang SC', sans-serif;
+  font-size: 22rpx;
+  font-weight: 400;
+  color: var(--mu);
+  margin-left: 4rpx;
+}

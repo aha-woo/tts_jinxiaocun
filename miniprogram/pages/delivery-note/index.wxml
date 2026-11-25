@@ -1,0 +1,92 @@
+<view class="page">
+  <view class="page__gap">
+    <view class="card pad">
+      <view class="dn-hero">
+        <text class="c-title">拍张进货单，整单认出来再入库</text>
+        <text class="hint">识别出明细和合计数后会先给你核对；档案里没有的新货会自动建档，原始照片随单存好。</text>
+        <button class="dn-btn" type="primary" loading="{{loading}}" bindtap="onChooseImage">
+          {{draft ? '重新拍照 / 换一张' : '📷 拍照或选进货单'}}
+        </button>
+      </view>
+      <image wx:if="{{previewImagePath}}" src="{{previewImagePath}}" mode="aspectFit" class="dn-thumb" />
+    </view>
+
+    <view wx:if="{{errorText}}" class="bar" style="background:var(--dgrb);border-color:#e0b9b0;color:var(--dgr)">
+      <text>{{errorText}}</text>
+    </view>
+
+    <block wx:if="{{draft}}">
+      <view wx:for="{{draft.warnings}}" wx:key="*this" class="bar">
+        <text>{{item}}</text>
+      </view>
+
+      <!-- 单头信息 -->
+      <view class="card pad dn-head">
+        <view class="dn-field">
+          <text class="dn-lbl">供应商</text>
+          <input class="dn-inp" value="{{supplierName}}" placeholder="可不填（现结）" data-field="supplierName" bindinput="onHeaderInput" />
+        </view>
+        <view class="dn-field">
+          <text class="dn-lbl">进货日期</text>
+          <input class="dn-inp" value="{{docDate}}" placeholder="YYYY-MM-DD" data-field="docDate" bindinput="onHeaderInput" />
+        </view>
+        <view class="dn-field">
+          <text class="dn-lbl">结款方式</text>
+          <view class="seg">
+            <view class="seg__item {{paymentStatus === '已结' ? 'seg__item--on' : ''}}" data-ps="已结" bindtap="onTogglePaymentStatus">已结现付</view>
+            <view class="seg__item {{paymentStatus === '未结' ? 'seg__item--on' : ''}}" data-ps="未结" bindtap="onTogglePaymentStatus">未结赊账</view>
+          </view>
+        </view>
+        <view class="dn-field">
+          <text class="dn-lbl">合计对比</text>
+          <text class="dn-sum">单面 ¥{{statedTotalYuan || '--'}} / 逐行计算 ¥{{computedTotalYuan}}</text>
+        </view>
+      </view>
+
+      <!-- 明细行 -->
+      <view class="card pad">
+        <view class="dn-lines-top">
+          <text class="c-title">识别明细 · {{lines.length}} 样货</text>
+          <text class="dn-add" bindtap="onAddEmptyLine">+ 加一行</text>
+        </view>
+
+        <view wx:for="{{lines}}" wx:key="index" class="dn-line">
+          <view class="dn-line__top">
+            <input class="dn-name" value="{{item.product_name}}" placeholder="商品名" data-index="{{index}}" data-field="product_name" bindinput="onLineInput" />
+            <text wx:if="{{item.is_new_product}}" class="tg tg--in">新货自动建档</text>
+            <text wx:else class="tg tg--sell">已匹配</text>
+            <text class="dn-del" data-index="{{index}}" bindtap="onRemoveLine">删</text>
+          </view>
+
+          <view class="dn-line__nums">
+            <view class="dn-num">
+              <text class="dn-num__k">数量</text>
+              <input class="dn-num__v" type="digit" value="{{item.quantity}}" data-index="{{index}}" data-field="quantity" bindinput="onLineInput" />
+            </view>
+            <view class="dn-num">
+              <text class="dn-num__k">单位</text>
+              <input class="dn-num__v" value="{{item.unit}}" data-index="{{index}}" data-field="unit" bindinput="onLineInput" />
+            </view>
+            <view class="dn-num">
+              <text class="dn-num__k">单价(元)</text>
+              <input class="dn-num__v" type="digit" value="{{item.unit_price_yuan}}" data-index="{{index}}" data-field="unit_price_yuan" bindinput="onLineInput" />
+            </view>
+            <view class="dn-num">
+              <text class="dn-num__k">行金额</text>
+              <input class="dn-num__v" type="digit" value="{{item.amount_yuan}}" data-index="{{index}}" data-field="amount_yuan" bindinput="onLineInput" />
+            </view>
+          </view>
+
+          <view wx:if="{{item.needs_unit_ratio}}" class="dn-ratio">
+            <text class="dn-ratio__lbl">1 {{item.unit}} = ？{{item.matched_base_unit}}</text>
+            <input class="dn-ratio__inp" type="digit" placeholder="填入换算数量（如 24）" value="{{item.unit_ratio_input}}" data-index="{{index}}" data-field="unit_ratio_input" bindinput="onLineInput" />
+          </view>
+        </view>
+      </view>
+
+      <button class="dn-confirm" type="primary" loading="{{submitting}}" bindtap="onConfirm">
+        确认无误 · 入库记账（¥{{computedTotalYuan}}）
+      </button>
+    </block>
+  </view>
+</view>

@@ -27,10 +27,16 @@ from app.api.v1 import (
     cards,
     clarify,
     confirm,
+    counts,
+    delivery_note,
     dict as dict_api,
     entitlement,
     exports,
     health,
+    counts,
+    inventory,
+    me,
+    products,
     query,
     reversal,
     tasks,
@@ -310,9 +316,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(clarify.router, prefix="/api/v1")
     app.include_router(cards.router, prefix="/api/v1")
     app.include_router(confirm.router, prefix="/api/v1")
+    app.include_router(delivery_note.router, prefix="/api/v1")
     app.include_router(reversal.router, prefix="/api/v1")
     # ---- 只读查询与用量
     app.include_router(query.router, prefix="/api/v1")
+    app.include_router(counts.router, prefix="/api/v1")
+    app.include_router(inventory.router, prefix="/api/v1")
+    app.include_router(products.router, prefix="/api/v1")
+    app.include_router(me.router, prefix="/api/v1")
     app.include_router(usage.router, prefix="/api/v1")
     # ---- 词表 / 导出 / 待办 / 账号
     app.include_router(dict_api.router, prefix="/api/v1")

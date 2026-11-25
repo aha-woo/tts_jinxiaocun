@@ -75,6 +75,7 @@ def cancel_card(
     session: TenantSessionDep,
 ) -> JSONResponse:
     """取消卡片：**不写业务库**；卡片生成时那一笔不退回（已发生）。"""
+    require_roles(context, WRITE_ROLES)
     ids = ids_of(context)
     assert_writable(session, ids.tenant_id)
     cancelled = LedgerService(session).cancel(

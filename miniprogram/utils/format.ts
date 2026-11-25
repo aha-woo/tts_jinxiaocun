@@ -73,3 +73,30 @@ export function formatQuantity(value: number): string {
 export function layoutClass(windowWidth: number): string {
   return windowWidth >= 768 ? 'wide-layout' : 'container';
 }
+
+/** 数字键盘按键校验：禁止多小数点、前置 '.' 自动补 '0.'、最多 2 位小数、长度上限 8。 */
+export function appendNumericKey(current: string, key: string, maxLen = 8): string {
+  if (key === 'del') {
+    return current.slice(0, -1);
+  }
+  if (key === '.') {
+    if (current.includes('.')) {
+      return current;
+    }
+    return current === '' ? '0.' : `${current}.`;
+  }
+  if (!/^\d$/.test(key)) {
+    return current;
+  }
+  if (current === '0') {
+    return key;
+  }
+  const dotAt = current.indexOf('.');
+  if (dotAt !== -1 && current.length - dotAt > 2) {
+    return current;
+  }
+  if (current.length >= maxLen) {
+    return current;
+  }
+  return current + key;
+}

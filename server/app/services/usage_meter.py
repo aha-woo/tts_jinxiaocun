@@ -147,24 +147,25 @@ class UsageMeter:
                 detail="同一会话已计过次（唯一约束兜底），本次不重复扣",
             )
 
-        if card is not None:
-            self._session.add(card)
-            self._session.flush()
-        quota = self._get_or_create_quota(tenant_id, bucket)
-        ledger = UsageLedger(
-            tenant_id=tenant_id,
-            session_id=session_id,
-            event_type=event_type,
-            cost_estimate_fen=cost_estimate_fen if cost_estimate_fen is not None else self._cost_estimate_fen,
-        )
-        self._session.add(ledger)
-        quota.used_count = int(quota.used_count) + 1
         try:
-            # **只 flush 不 commit**：与卡片插入同事务，由调用方统一提交
-            self._session.flush()
+            # **只 flush 不 commit**：与卡片插入同事务，由调用方统一提交；冲突仅回滚 SAVEPOINT
+            with self._session.begin_nested():
+                if card is not None:
+                    self._session.add(card)
+                quota = self._get_or_create_quota(tenant_id, bucket)
+                ledger = UsageLedger(
+                    tenant_id=tenant_id,
+                    session_id=session_id,
+                    event_type=event_type,
+                    cost_estimate_fen=cost_estimate_fen
+                    if cost_estimate_fen is not None
+                    else self._cost_estimate_fen,
+                )
+                self._session.add(ledger)
+                quota.used_count = int(quota.used_count) + 1
+                self._session.flush()
         except IntegrityError:
-            # 并发下唯一约束兜底：回滚本次加分后按「已计次」返回
-            self._session.rollback()
+            # 并发下唯一约束兜底：SAVEPOINT 自动回滚，不破坏外层事务和 PG app.tenant_id
             return MeterResult(
                 billed=False,
                 reason="duplicated",

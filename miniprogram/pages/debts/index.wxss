@@ -1,0 +1,65 @@
+/* 欠款页：合计卡 + 往来行 */
+.dsum {
+  padding: 28rpx;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.dsum__k {
+  display: block;
+  font-size: 24rpx;
+  color: var(--mu);
+}
+
+.dsum__v {
+  display: block;
+  font-size: 52rpx;
+  font-weight: 700;
+  margin-top: 4rpx;
+}
+
+.dsum__n {
+  font-size: 24rpx;
+  color: var(--mu);
+}
+
+.al {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 16rpx;
+  padding: 26rpx 24rpx;
+  border-top: 2rpx solid var(--ln);
+}
+
+.al:first-child {
+  border-top: 0;
+}
+
+.al:active {
+  background: var(--acs);
+}
+
+.al__l {
+  min-width: 0;
+}
+
+.al__name {
+  display: block;
+  font-weight: 700;
+  font-size: 30rpx;
+}
+
+.al__sub {
+  display: block;
+  font-size: 22rpx;
+  color: var(--mu);
+  margin-top: 4rpx;
+}
+
+.al__amt {
+  font-size: 32rpx;
+  font-weight: 700;
+  white-space: nowrap;
+}

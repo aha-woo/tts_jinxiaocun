@@ -139,6 +139,10 @@ class MemoryQuotaStore:
         """线程安全地扣 1（``now`` 可注入，便于测试固定窗口）。"""
         moment = now if now is not None else time.time()
         with self._lock:
+            if len(self._counts) > 1024:
+                expired = [k for k, (_c, exp) in self._counts.items() if moment >= exp]
+                for k in expired:
+                    del self._counts[k]
             count, expires_at = self._counts.get(key, (0, moment + window_seconds))
             if moment >= expires_at:
                 count, expires_at = 0, moment + window_seconds
@@ -242,6 +246,31 @@ def shared_memory_store(limits: "QuotaLimits") -> "MemoryQuotaStore":
         return store
 
 
+_REDIS_CLIENTS: dict[str, Any] = {}
+_REDIS_CLIENTS_LOCK = threading.Lock()
+
+
+def _lazy_redis_client(redis_url: str) -> Any | None:
+    """按 URL 复用进程级 Redis 客户端；不可达返回 ``None`` 并降级内存桶。"""
+    cleaned = (redis_url or "").strip()
+    if not cleaned:
+        return None
+    with _REDIS_CLIENTS_LOCK:
+        cached = _REDIS_CLIENTS.get(cleaned)
+    if cached is not None:
+        return cached
+    try:  # pragma: no cover - 仅当外部真配了 REDIS_URL 时触发
+        import redis
+
+        client = redis.Redis.from_url(cleaned, socket_connect_timeout=1.0, socket_timeout=1.0)
+        client.ping()
+    except Exception:  # noqa: BLE001
+        return None
+    with _REDIS_CLIENTS_LOCK:
+        _REDIS_CLIENTS[cleaned] = client
+    return client
+
+
 def reset_shared_memory_stores() -> None:
     """清空共享内存桶（**只给测试用**）。"""
     with _MEMORY_STORES_LOCK:
@@ -281,7 +310,12 @@ class QuotaService:
         )
         if redis_client is not None:
             return cls(RedisQuotaStore(redis_client), limits=limits, expected_redis=True)
-        expected = bool(getattr(settings, "redis_url", ""))
+        redis_url = str(getattr(settings, "redis_url", "") or "").strip()
+        if redis_url:
+            client = _lazy_redis_client(redis_url)
+            if client is not None:  # pragma: no cover
+                return cls(RedisQuotaStore(client), limits=limits, expected_redis=True)
+        expected = bool(redis_url)
         return cls(shared_memory_store(limits), limits=limits, expected_redis=expected)
 
     # ------------------------------------------------------------------ 判定
@@ -295,15 +329,12 @@ class QuotaService:
         Returns:
             :class:`QuotaDecision`；``allowed=False`` 时映射 ``E_QUOTA_EXCEEDED``。
         """
-        day_bucket, minute_bucket = _now_buckets(now)
+        minute_bucket, day_bucket = _now_buckets(now)
         day_key = quota_key(tenant_id, "day", day_bucket)
         minute_key = quota_key(tenant_id, "min", minute_bucket)
 
         day_limit = self._limits.limit_of("day")
-        day_ok, day_remaining = self._store.take(
-            day_key, day_limit, self._limits.window_of("day"), now=now
-        )
-        if not day_ok:
+        if self._store.peek(day_key, day_limit, now=now) <= 0:
             decision = QuotaDecision(
                 allowed=False,
                 scope="day",
@@ -333,6 +364,22 @@ class QuotaService:
             self._remember(decision)
             return decision
 
+        day_ok, day_remaining = self._store.take(
+            day_key, day_limit, self._limits.window_of("day"), now=now
+        )
+        if not day_ok:
+            decision = QuotaDecision(
+                allowed=False,
+                scope="day",
+                limit=day_limit,
+                remaining=0,
+                reason="quota_exceeded",
+                degraded=self._degraded,
+                error_code="E_QUOTA_EXCEEDED",
+            )
+            self._remember(decision)
+            return decision
+
         decision = QuotaDecision(
             allowed=True,
             scope="min",
@@ -346,7 +393,7 @@ class QuotaService:
 
     def peek(self, tenant_id: str, *, now: float | None = None) -> Mapping[str, int]:
         """只看余量（前端展示「今天还能录几次」）。"""
-        day_bucket, minute_bucket = _now_buckets(now)
+        minute_bucket, day_bucket = _now_buckets(now)
         return {
             "day": self._store.peek(
                 quota_key(tenant_id, "day", day_bucket), self._limits.limit_of("day"), now=now
@@ -358,7 +405,7 @@ class QuotaService:
 
     def reset(self, tenant_id: str, *, now: float | None = None) -> None:
         """重置某租户当前窗口（人工补偿/测试用）。"""
-        day_bucket, minute_bucket = _now_buckets(now)
+        minute_bucket, day_bucket = _now_buckets(now)
         self._store.reset(quota_key(tenant_id, "day", day_bucket))
         self._store.reset(quota_key(tenant_id, "min", minute_bucket))
 

@@ -73,12 +73,20 @@ def result_key(
     contract_version: str,
     domain: str | None,
     text: str,
+    today_iso: str = "",
+    member_id: str = "",
+    dict_version: int = 0,
+    context_hash: str = "",
 ) -> str:
-    """解析结果缓存 key。"""
-    return "result:{}:{}:{}:{}".format(
+    """解析结果缓存 key（含日期 / 成员 / 词表版本 / 上下文摘要，防止跨日或词表更新后串缓存）。"""
+    return "result:{}:{}:{}:{}:{}:{}:{}:{}".format(
         tenant_id or "-",
+        member_id or "-",
         contract_version or "-",
+        today_iso or "-",
+        int(dict_version or 0),
         domain or "-",
+        context_hash or "-",
         _digest(normalize_for_cache(text)),
     )
 

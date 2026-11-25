@@ -12,7 +12,7 @@ from fastapi import APIRouter, Header, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field
 
-from app.api.v1._shared import BIG_SCREEN_HINT, ids_of
+from app.api.v1._shared import BIG_SCREEN_HINT, BOSS_ONLY, ids_of, require_roles
 from app.common.envelope import ok
 from app.deps import AuthContextDep, TenantSessionDep
 from app.services.pending_task import BIG_SCREEN_DEVICE, PendingTaskService
@@ -36,7 +36,8 @@ def list_tasks(
     session: TenantSessionDep,
     limit: int = 50,
 ) -> JSONResponse:
-    """R3 待办列表：**只有 R3 高风险动作**会出现在这里（澄清失败不会）。"""
+    """R3 待办列表：**只有老板可看，只收 R3 高风险动作**。"""
+    require_roles(context, BOSS_ONLY)
     ids = ids_of(context)
     rows = PendingTaskService(session).list_pending(tenant_id=ids.tenant_id, limit=limit)
     return JSONResponse(

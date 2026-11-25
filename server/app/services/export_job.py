@@ -16,6 +16,9 @@
 
 from __future__ import annotations
 
+import csv
+import io
+import json
 import uuid
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta, timezone
@@ -26,7 +29,12 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.common.errors import AppError
-from app.models.ops import ExportJob
+from app.models.catalog import Product
+from app.models.doc import ArAp, DocHeader
+from app.models.inventory import Inventory
+from app.models.ops import AuditLog, ExportJob
+from app.models.partner import Partner
+from app.models.quota import UsageQuota
 from app.services.audit import AuditService
 
 __all__ = [
@@ -180,11 +188,11 @@ class ExportService:
             status="queued",
             idempotency_key=idempotency_key,
         )
-        self._session.add(job)
         try:
-            self._session.flush()
+            with self._session.begin_nested():
+                self._session.add(job)
+                self._session.flush()
         except IntegrityError:
-            self._session.rollback()
             existing = self._find_by_key(tenant_id, idempotency_key)
             if existing is None:  # pragma: no cover
                 raise
@@ -239,7 +247,181 @@ class ExportService:
             detail="生成完毕：经微信转发/保存/预览，不提供网页下载",
         )
 
-    # ------------------------------------------------------------------ 查询
+    # ------------------------------------------------------------------ 查询与真实导出
+    def get_job(self, *, tenant_id: uuid.UUID, job_id: uuid.UUID) -> ExportJob:
+        """按租户获取导出任务，不存在/越权一律 E_NOT_FOUND。"""
+        job = self._get(tenant_id, job_id)
+        if job is None:
+            raise AppError("E_NOT_FOUND", message="导出任务不存在或无权访问")
+        return job
+
+    def render_csv(
+        self,
+        *,
+        tenant_id: uuid.UUID,
+        scope: str,
+        period: str | None = None,
+    ) -> tuple[str, int]:
+        """生成 UTF-8 BOM CSV 文本与导出行数（强制 tenant_id 隔离 + CSV 注入防护）。"""
+        if scope not in EXPORT_SCOPES:
+            raise AppError(
+                "E_VALIDATION",
+                message=f"不支持的导出范围 {scope!r}",
+                data={"allowed": list(EXPORT_SCOPES)},
+            )
+
+        columns: list[str]
+        raw_rows: list[dict[str, Any]] = []
+
+        if scope == "docs":
+            stmt = select(DocHeader).where(DocHeader.tenant_id == tenant_id)
+            if period:
+                start, end = period_range(period)
+                stmt = stmt.where(DocHeader.biz_date >= start, DocHeader.biz_date <= end)
+            stmt = stmt.order_by(DocHeader.biz_date.desc(), DocHeader.created_at.desc())
+            assert_tenant_scoped(str(stmt))
+            docs = list(self._session.execute(stmt).scalars())
+            columns = [
+                "doc_no",
+                "biz_date",
+                "doc_type",
+                "intent_id",
+                "payment_status",
+                "total_amount_yuan",
+                "cogs_yuan",
+                "status",
+                "source",
+            ]
+            for d in docs:
+                raw_rows.append(
+                    {
+                        "tenant_id": str(d.tenant_id),
+                        "doc_no": d.doc_no,
+                        "biz_date": d.biz_date.isoformat(),
+                        "doc_type": d.doc_type,
+                        "intent_id": d.intent_id,
+                        "payment_status": d.payment_status,
+                        "total_amount_yuan": f"{int(d.total_amount_fen) / 100:.2f}",
+                        "cogs_yuan": f"{int(d.cogs_fen) / 100:.2f}" if d.cogs_fen is not None else "",
+                        "status": d.status,
+                        "source": d.source,
+                    }
+                )
+        elif scope == "stock":
+            stmt = (
+                select(Inventory, Product)
+                .join(
+                    Product,
+                    (Product.tenant_id == Inventory.tenant_id)
+                    & (Product.product_id == Inventory.product_id),
+                )
+                .where(Inventory.tenant_id == tenant_id, Product.tenant_id == tenant_id)
+                .order_by(Product.name.asc())
+            )
+            assert_tenant_scoped(str(stmt))
+            rows = self._session.execute(stmt).all()
+            columns = [
+                "product_name",
+                "spec",
+                "base_unit",
+                "qty_base",
+                "avg_cost_yuan",
+                "negative_flag",
+            ]
+            for inv, prod in rows:
+                raw_rows.append(
+                    {
+                        "tenant_id": str(inv.tenant_id),
+                        "product_name": prod.name,
+                        "spec": prod.spec or "",
+                        "base_unit": prod.base_unit,
+                        "qty_base": str(inv.qty_base),
+                        "avg_cost_yuan": f"{int(inv.avg_cost_fen) / 100:.2f}" if inv.avg_cost_fen is not None else "",
+                        "negative_flag": "是" if inv.negative_flag else "否",
+                    }
+                )
+        elif scope == "debt":
+            stmt = (
+                select(ArAp, Partner)
+                .join(
+                    Partner,
+                    (Partner.tenant_id == ArAp.tenant_id) & (Partner.partner_id == ArAp.partner_id),
+                )
+                .where(ArAp.tenant_id == tenant_id, Partner.tenant_id == tenant_id)
+                .order_by(ArAp.created_at.desc())
+            )
+            assert_tenant_scoped(str(stmt))
+            rows = self._session.execute(stmt).all()
+            columns = [
+                "partner_name",
+                "direction",
+                "amount_yuan",
+                "settled_yuan",
+                "outstanding_yuan",
+                "status",
+            ]
+            for ar, partner in rows:
+                outstanding = max(0, int(ar.amount_fen) - int(ar.settled_amount_fen))
+                raw_rows.append(
+                    {
+                        "tenant_id": str(ar.tenant_id),
+                        "partner_name": partner.name,
+                        "direction": "应收" if ar.direction == "receivable" else "应付",
+                        "amount_yuan": f"{int(ar.amount_fen) / 100:.2f}",
+                        "settled_yuan": f"{int(ar.settled_amount_fen) / 100:.2f}",
+                        "outstanding_yuan": f"{outstanding / 100:.2f}",
+                        "status": ar.status,
+                    }
+                )
+        elif scope == "audit":
+            stmt = (
+                select(AuditLog)
+                .where(AuditLog.tenant_id == tenant_id)
+                .order_by(AuditLog.created_at.desc())
+                .limit(500)
+            )
+            assert_tenant_scoped(str(stmt))
+            logs = list(self._session.execute(stmt).scalars())
+            columns = ["created_at", "action", "entity", "entity_id", "detail"]
+            for log in logs:
+                raw_rows.append(
+                    {
+                        "tenant_id": str(log.tenant_id),
+                        "created_at": log.created_at.isoformat() if log.created_at else "",
+                        "action": log.action,
+                        "entity": log.entity,
+                        "entity_id": log.entity_id or "",
+                        "detail": json.dumps(log.detail or {}, ensure_ascii=False),
+                    }
+                )
+        else:  # usage
+            stmt = (
+                select(UsageQuota)
+                .where(UsageQuota.tenant_id == tenant_id)
+                .order_by(UsageQuota.period.desc())
+            )
+            assert_tenant_scoped(str(stmt))
+            quotas = list(self._session.execute(stmt).scalars())
+            columns = ["period", "free_quota", "used_count", "degrade_level"]
+            for q in quotas:
+                raw_rows.append(
+                    {
+                        "tenant_id": str(q.tenant_id),
+                        "period": q.period,
+                        "free_quota": q.free_quota,
+                        "used_count": q.used_count,
+                        "degrade_level": q.degrade_level,
+                    }
+                )
+
+        cleaned = self.sanitize(raw_rows)
+        buf = io.StringIO()
+        writer = csv.writer(buf)
+        writer.writerow(columns)
+        for row in cleaned:
+            writer.writerow([_csv_safe_cell(row.get(col, "")) for col in columns])
+        return "\ufeff" + buf.getvalue(), len(cleaned)
+
     def list_jobs(self, *, tenant_id: uuid.UUID, limit: int = 20) -> list[ExportOutcome]:
         """列出导出任务。"""
         statement = (
@@ -319,6 +501,19 @@ class ExportService:
             row_count=row_count,
             detail=detail,
         )
+
+
+def _csv_safe_cell(value: Any) -> str:
+    """中性化 CSV 公式注入（保留负数数值，对 =/+/@/- 开头危险串前置单引号）。"""
+    text = "" if value is None else str(value)
+    if text and text[0] in ("=", "+", "@", "\t", "\r"):
+        return "'" + text
+    if text.startswith("-"):
+        try:
+            float(text)
+        except ValueError:
+            return "'" + text
+    return text
 
 
 def period_range(period: str | None) -> tuple[date, date]:

@@ -55,7 +55,25 @@ def create_db_engine(url: str, *, echo: bool = False) -> Engine:
         if ":memory:" in url:
             # 内存库必须共享同一连接，否则每个 session 看到不同的空库
             kwargs["poolclass"] = StaticPool
-        return create_engine(url, **kwargs)
+        engine = create_engine(url, **kwargs)
+
+        # 修复 Python sqlite3 仅在 DML 前发 BEGIN、遇到 SAVEPOINT 不开外层事务导致
+        # RELEASE SAVEPOINT 隐式提交的问题：仅在执行 SAVEPOINT 前若尚未在事务中则先 BEGIN。
+        @event.listens_for(engine, "before_cursor_execute")
+        def _sqlite_begin_before_savepoint(
+            conn: Any,
+            cursor: Any,
+            statement: str,
+            _parameters: Any,
+            _context: Any,
+            _executemany: bool,
+        ) -> None:
+            if statement.lstrip().upper().startswith("SAVEPOINT "):
+                raw_conn = getattr(conn.connection, "dbapi_connection", conn.connection)
+                if raw_conn is not None and not getattr(raw_conn, "in_transaction", True):
+                    cursor.execute("BEGIN")
+
+        return engine
     return create_engine(
         url,
         echo=echo,
@@ -87,6 +105,7 @@ def _apply_tenant_scope(execute_state: Any) -> None:  # noqa: ANN401 - SQLAlchem
     if execute_state.session.info.get(BYPASS_SCOPE_KEY):
         return
 
+    from app.models.inventory import InventoryPolicy  # 局部导入：避免循环依赖
     from app.tenant.context import get as get_context  # 局部导入：避免循环依赖
 
     context = get_context()
@@ -98,6 +117,11 @@ def _apply_tenant_scope(execute_state: Any) -> None:  # noqa: ANN401 - SQLAlchem
     execute_state.statement = execute_state.statement.options(
         with_loader_criteria(
             TenantMixin,
+            lambda cls: cls.tenant_id == tenant_id,
+            include_aliases=True,
+        ),
+        with_loader_criteria(
+            InventoryPolicy,
             lambda cls: cls.tenant_id == tenant_id,
             include_aliases=True,
         ),

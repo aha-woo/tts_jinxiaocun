@@ -105,8 +105,26 @@ class AuthService:
             rls.set_auth_bootstrap(session, True)
             member = self._find_member_by_openid(session, identity.openid)
             if member is None:
-                tenant, store, member, role = self._provision(session, identity)
+                try:
+                    with session.begin_nested():
+                        tenant, store, member, role = self._provision(session, identity)
+                except Exception:
+                    rls.set_auth_bootstrap(session, True)
+                    member = self._find_member_by_openid(session, identity.openid)
+                    if member is None:
+                        raise
+                    if str(member.status) != "active":
+                        raise AppError("E_TENANT_DENIED", message="账号已停用，请联系老板")
+                    rls.set_tenant_guc(session, member.tenant_id)
+                    rls.set_auth_bootstrap(session, False)
+                    tenant = session.get(Tenant, member.tenant_id)
+                    if tenant is None:
+                        raise AppError("E_TENANT_DENIED", message="租户不存在")
+                    store = self._resolve_store(session, tenant.tenant_id, store_hint)
+                    role = self._resolve_role(session, tenant.tenant_id, member.member_id, store.store_id)
             else:
+                if str(member.status) != "active":
+                    raise AppError("E_TENANT_DENIED", message="账号已停用，请联系老板")
                 # 拿到 tenant_id 后立即绑 GUC，关闭引导标志（后续查询走正常 RLS）
                 rls.set_tenant_guc(session, member.tenant_id)
                 rls.set_auth_bootstrap(session, False)

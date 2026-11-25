@@ -20,8 +20,8 @@ from __future__ import annotations
 import uuid
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta, timezone
-from decimal import Decimal
-from typing import Any, Mapping
+from decimal import ROUND_HALF_UP, Decimal
+from typing import Any, Mapping, Sequence
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -30,12 +30,17 @@ from app.common.errors import AppError
 from app.domain.ar_ap_service import ArApDelta, ArApService
 from app.domain.doc_service import DocDraft, DocLineDraft, DocService, REVERSAL_SUFFIX
 from app.domain.intent_registry import IntentRegistry, default_registry
-from app.domain.inventory_service import InventoryDelta, InventoryService
+from app.domain.inventory_service import InventoryDelta, InventoryRow, InventoryService
 from app.models.doc import ArAp, DocHeader, DocLine, Payment
 from app.models.dict import Reversal
+from app.models.inventory import InventoryMovement
+from app.services import batch as batch_service
 from app.services.audit import AuditService
+from app.services.movement import reason_of, record_doc_movements
+from app.services.batch import restore_on_reversal
 
 __all__ = [
+    "CorrectionOutcome",
     "DEFAULT_REVERSAL_WINDOW_MINUTES",
     "ReferenceLink",
     "ReversalOutcome",
@@ -83,6 +88,31 @@ class ReversalOutcome:
             "reversal_doc_id": self.reversal_doc_id,
             "reversal_doc_no": self.reversal_doc_no,
             "idempotent": self.idempotent,
+            "inventory_after": dict(self.inventory_after),
+            "detail": self.detail,
+        }
+
+
+@dataclass(frozen=True)
+class CorrectionOutcome:
+    """一步改单结果（同一事务：反做原单 + 新建更正单）。"""
+
+    original_doc_id: str
+    reversal_doc_id: str
+    new_doc_id: str
+    new_doc_no: str
+    total_amount_fen: int
+    inventory_after: Mapping[str, str] = field(default_factory=dict)
+    detail: str = "已更正：原单已反做，新单已生效"
+
+    def as_dict(self) -> dict[str, Any]:
+        """JSON 形态。"""
+        return {
+            "original_doc_id": self.original_doc_id,
+            "reversal_doc_id": self.reversal_doc_id,
+            "new_doc_id": self.new_doc_id,
+            "new_doc_no": self.new_doc_no,
+            "total_amount_fen": self.total_amount_fen,
             "inventory_after": dict(self.inventory_after),
             "detail": self.detail,
         }
@@ -182,35 +212,21 @@ class ReversalService:
         member_id: uuid.UUID,
         reason: str = "",
         now: datetime | None = None,
+        ignore_window: bool = False,
     ) -> ReversalOutcome:
-        """撤销一张单据（生成反做单，原单保留）。
-
-        Args:
-            tenant_id: 租户。
-            store_id: 门店。
-            doc_id: 原单 id。
-            member_id: 操作人。
-            reason: 撤销原因（进审计）。
-            now: 注入时间。
-
-        Returns:
-            :class:`ReversalOutcome`。
-
-        Raises:
-            AppError: ``E_REVERSAL_WINDOW_CLOSED``(1203) / ``E_DOC_REFERENCED``(1204) /
-                ``E_VALIDATION``(422，单据不存在或不可撤销)。
-        """
+        """撤销一张单据（生成反做单，原单保留）。"""
         moment = now or datetime.now(timezone.utc)
         doc_service = DocService(self._session)
-        doc = doc_service.get(tenant_id=tenant_id, doc_id=doc_id)
+        doc_stmt = select(DocHeader).where(
+            DocHeader.tenant_id == tenant_id, DocHeader.doc_id == doc_id
+        ).limit(1)
+        bind = getattr(self._session, "bind", None)
+        if getattr(getattr(bind, "dialect", None), "name", "") == "postgresql":
+            doc_stmt = doc_stmt.with_for_update()
+        doc = self._session.execute(doc_stmt).scalar_one_or_none()
         if doc is None:
             raise AppError("E_VALIDATION", message="单据不存在或不属于当前租户")
 
-        # ➓ 拒绝「撤销的撤销」（P0-3 的错账根因）
-        #
-        # 反做单继承了原单的 ``intent_id``，方向只按契约取反 —— 于是「撤销一张反做单」
-        # 会**再减一次**（240 → 192 → 144）。语义上用户自己也困惑，所以直接拒绝，
-        # 并给出可执行的两条路（重新录一句 / 用 PATCH 改卡片）。
         if doc.reverses_doc_id is not None:
             raise AppError(
                 "E_VALIDATION",
@@ -244,10 +260,10 @@ class ReversalService:
                 detail="该单已撤销过，幂等返回已有反做单（不重复反做）",
             )
 
-        # ① 窗口
+        # ① 窗口（老板撤单 / 改单流程传入 ignore_window=True 时跳过硬限制）
         window = int(reversal_spec.get("window_minutes") or DEFAULT_REVERSAL_WINDOW_MINUTES)
         created = doc.created_at
-        if created is not None:
+        if created is not None and not ignore_window:
             if created.tzinfo is None:
                 created = created.replace(tzinfo=timezone.utc)
             if moment > created + timedelta(minutes=window):
@@ -284,6 +300,7 @@ class ReversalService:
             biz_date=date.today() if moment is None else moment.date(),
             created_by=member_id,
             payment_status=str(doc.payment_status),
+            partner_id=doc.partner_id,
             # 反做单必须自报「我撤的是谁」：报表据此排除、也据此拒绝「撤销的撤销」
             reversal_of=doc_id,
             lines=tuple(
@@ -292,8 +309,12 @@ class ReversalService:
                     qty=Decimal(line.qty),
                     unit=str(line.unit),
                     qty_base=Decimal(line.qty_base),
-                    unit_price_fen=int(line.unit_price_fen),
-                    amount_fen=int(line.amount_fen),
+                    unit_price_fen=line.unit_price_fen,
+                    amount_fen=line.amount_fen,
+                    price_source=line.price_source,
+                    cost_snapshot_fen=line.cost_snapshot_fen,
+                    cost_status=str(line.cost_status or "final"),
+                    batch_id=line.batch_id,
                     source_map=dict(line.source_map or {}),
                 )
                 for line in lines
@@ -304,12 +325,29 @@ class ReversalService:
             tenant_id=tenant_id,
             store_id=store_id,
             intent_id=str(doc.intent_id),
+            original_doc_id=doc_id,
             lines=lines,
             reversal_doc_id=reversal_doc.doc_id,
         )
 
         doc.status = "reversed"
         doc.reversed_by = reversal_doc.doc_id
+        move_reason = reason_of(str(doc.intent_id))
+        if move_reason is not None:
+            restore_on_reversal(self._session, tenant_id=tenant_id, doc_id=doc_id)
+            side_effect = dict(spec.side_effect or {}) if spec is not None else {}
+            inv_mode = str(side_effect.get("inventory_delta") or "none")
+            reversal_sign = 1 if inv_mode == "decrease" else -1
+            record_doc_movements(
+                self._session,
+                tenant_id=tenant_id,
+                store_id=store_id,
+                doc_id=reversal_doc.doc_id,
+                member_id=member_id,
+                reason=move_reason,
+                sign=reversal_sign,
+                partner_id=doc.partner_id,
+            )
         self._session.add(
             Reversal(
                 tenant_id=tenant_id,
@@ -333,6 +371,7 @@ class ReversalService:
                 "reversal_doc_no": str(reversal_doc.doc_no),
                 "reason": reason,
                 "window_minutes": window,
+                "ignore_window": ignore_window,
             },
         )
         return ReversalOutcome(
@@ -341,6 +380,273 @@ class ReversalService:
             reversal_doc_no=str(reversal_doc.doc_no),
             inventory_after=self._inventory_after(tenant_id, store_id, lines),
             detail="已生成反做单，原单保留（两笔都可查、可导出）",
+        )
+
+    # -------------------------------------------------------------- 一步原子改单
+    def correct_doc(
+        self,
+        *,
+        tenant_id: uuid.UUID,
+        store_id: uuid.UUID,
+        doc_id: uuid.UUID,
+        member_id: uuid.UUID,
+        lines: Sequence[Mapping[str, Any]],
+        reason: str = "",
+        biz_date: date | None = None,
+        payment_status: str | None = None,
+        now: datetime | None = None,
+    ) -> CorrectionOutcome:
+        """一步改单（单事务：反做原单 + 新建 ``corrects_doc_id=doc_id`` 更正单）。"""
+        if not lines:
+            raise AppError("E_VALIDATION", message="更正后的明细行不能为空")
+        doc_service = DocService(self._session)
+        orig = doc_service.get(tenant_id=tenant_id, doc_id=doc_id)
+        if orig is None:
+            raise AppError("E_VALIDATION", message="单据不存在或不属于当前租户")
+        orig_lines = doc_service.lines_of(tenant_id=tenant_id, doc_id=doc_id)
+        orig_by_pid = {str(line.product_id): line for line in orig_lines}
+
+        # 1) 同事务反做原单（不受 10 分钟窗口限制）
+        rev_out = self.reverse(
+            tenant_id=tenant_id,
+            store_id=store_id,
+            doc_id=doc_id,
+            member_id=member_id,
+            reason=reason or "一步改单：反做原单",
+            now=now,
+            ignore_window=True,
+        )
+        if rev_out.reversal_doc_id is None:
+            raise AppError("E_VALIDATION", message="反做原单失败")
+
+        # 2) 按新明细构造并落账更正单
+        intent_id = str(orig.intent_id)
+        spec = self._registry.require(intent_id)
+        side_effect = dict(spec.side_effect or {})
+        inv_mode = str(side_effect.get("inventory_delta") or "none")
+        ar_mode = str(side_effect.get("ar_ap_delta") or "none")
+        target_biz_date = biz_date or orig.biz_date
+        target_ps = payment_status or str(orig.payment_status)
+        policy = (
+            batch_service.policy_for(self._session, tenant_id)
+            if inv_mode in {"increase", "decrease"}
+            else None
+        )
+
+        new_line_drafts: list[DocLineDraft] = []
+        inv_deltas_by_pid: dict[uuid.UUID, InventoryDelta] = {}
+        agg_sale_qty: dict[uuid.UUID, Decimal] = {}
+
+        for raw in lines:
+            pid = uuid.UUID(str(raw["product_id"]))
+            prev = orig_by_pid.get(str(pid))
+            qty = Decimal(str(raw.get("qty", raw.get("quantity", prev.qty if prev else 0))))
+            if qty <= 0:
+                raise AppError("E_VALIDATION", message="更正后的数量必须大于 0")
+            unit = str(raw.get("unit") or (prev.unit if prev else "个"))
+            if raw.get("qty_base") is not None:
+                qty_base = Decimal(str(raw["qty_base"]))
+            elif prev is not None and Decimal(prev.qty) > 0 and unit == str(prev.unit):
+                ratio = Decimal(prev.qty_base) / Decimal(prev.qty)
+                qty_base = qty * ratio
+            else:
+                qty_base = qty
+
+            unit_price_fen: int | None = (
+                int(raw["unit_price_fen"])
+                if raw.get("unit_price_fen") is not None
+                else (prev.unit_price_fen if prev is not None else None)
+            )
+            if raw.get("amount_fen") is not None:
+                amount_fen: int | None = int(raw["amount_fen"])
+            elif unit_price_fen is not None:
+                amount_fen = int(
+                    (Decimal(unit_price_fen) * qty).quantize(Decimal(1), rounding=ROUND_HALF_UP)
+                )
+            else:
+                amount_fen = None
+
+            new_line_drafts.append(
+                DocLineDraft(
+                    product_id=pid,
+                    qty=qty,
+                    unit=unit,
+                    qty_base=qty_base,
+                    unit_price_fen=unit_price_fen,
+                    amount_fen=amount_fen,
+                    price_source="asr",
+                    source_map=dict(prev.source_map or {}) if prev else {},
+                )
+            )
+            if inv_mode in {"increase", "decrease"}:
+                sign = -1 if inv_mode == "decrease" else 1
+                prev_delta = inv_deltas_by_pid.get(pid)
+                inv_deltas_by_pid[pid] = InventoryDelta(
+                    product_id=pid,
+                    qty_base_delta=(prev_delta.qty_base_delta if prev_delta else Decimal(0)) + qty_base * sign,
+                )
+                if inv_mode == "decrease":
+                    agg_sale_qty[pid] = agg_sale_qty.get(pid, Decimal(0)) + qty_base
+
+        sale_plans: dict[uuid.UUID, list[batch_service.BatchAllocation]] = {}
+        if inv_mode == "decrease" and policy is not None:
+            for pid, t_qty in agg_sale_qty.items():
+                sale_plans[pid] = batch_service.plan_sale(
+                    self._session,
+                    tenant_id=tenant_id,
+                    store_id=store_id,
+                    product_id=pid,
+                    qty_base=t_qty,
+                    policy=policy,
+                )
+
+        inv_rows_by_pid: dict[uuid.UUID, InventoryRow] = {}
+        for pid, delta in inv_deltas_by_pid.items():
+            allow_neg = (
+                batch_service.effective_allow_negative(self._session, tenant_id, pid, policy)
+                if policy is not None
+                else True
+            )
+            for row in InventoryService(self._session).apply(
+                tenant_id=tenant_id, store_id=store_id, deltas=[delta], allow_negative=allow_neg
+            ):
+                inv_rows_by_pid[row.product_id] = row
+
+        new_doc = doc_service.create(
+            DocDraft(
+                tenant_id=tenant_id,
+                store_id=store_id,
+                intent_id=intent_id,
+                biz_date=target_biz_date,
+                created_by=member_id,
+                payment_status=target_ps,
+                partner_id=orig.partner_id,
+                corrects_doc_id=doc_id,
+                source=str(orig.source or "manual"),
+                lines=tuple(new_line_drafts),
+            )
+        )
+
+        if ar_mode != "none" and orig.partner_id is not None and target_ps != "已结":
+            direction = "receivable" if ar_mode.startswith("receivable") else "payable"
+            if int(new_doc.total_amount_fen) > 0:
+                ArApService(self._session).apply(
+                    tenant_id=tenant_id,
+                    store_id=store_id,
+                    deltas=[
+                        ArApDelta(
+                            partner_id=orig.partner_id,
+                            direction=direction,
+                            amount_fen=int(new_doc.total_amount_fen),
+                            doc_id=new_doc.doc_id,
+                            settle=False,
+                        )
+                    ],
+                )
+
+        move_reason = reason_of(intent_id)
+        created_lines = doc_service.lines_of(tenant_id=tenant_id, doc_id=new_doc.doc_id)
+        if move_reason is not None and inv_mode == "increase" and policy is not None:
+            for dline in created_lines:
+                qb = Decimal(dline.qty_base)
+                qty_before = (
+                    inv_rows_by_pid[dline.product_id].qty_base_before
+                    if dline.product_id in inv_rows_by_pid
+                    else Decimal(0)
+                )
+                uc = (
+                    int((Decimal(dline.amount_fen) / qb).quantize(Decimal(1), rounding=ROUND_HALF_UP))
+                    if dline.amount_fen is not None and qb > 0
+                    else None
+                )
+                created_batch = None
+                if move_reason == "purchase" and batch_service.product_tracks_batch(
+                    self._session, tenant_id, dline.product_id, policy
+                ):
+                    created_batch = batch_service.create_batch(
+                        self._session,
+                        tenant_id=tenant_id,
+                        store_id=store_id,
+                        line=dline,
+                        partner_id=orig.partner_id,
+                        biz_date=target_biz_date,
+                    )
+                    dline.batch_id = created_batch.batch_id
+                batch_service.update_moving_avg_on_purchase(
+                    self._session,
+                    tenant_id=tenant_id,
+                    store_id=store_id,
+                    product_id=dline.product_id,
+                    qty_before=qty_before,
+                    qty_in=qb,
+                    unit_cost_fen=uc,
+                )
+                self._session.add(
+                    InventoryMovement(
+                        tenant_id=tenant_id,
+                        store_id=store_id,
+                        product_id=dline.product_id,
+                        batch_id=created_batch.batch_id if created_batch else None,
+                        doc_id=new_doc.doc_id,
+                        doc_line_id=dline.line_id,
+                        reason=move_reason,
+                        qty_base=qb,
+                        unit_cost_fen=uc,
+                        cost_status="final" if uc is not None else "unknown",
+                        partner_id=orig.partner_id,
+                        created_by=member_id,
+                    )
+                )
+            self._session.flush()
+        elif move_reason is not None and inv_mode == "decrease":
+            all_allocs: list[batch_service.BatchAllocation] = []
+            lines_by_pid: dict[uuid.UUID, DocLine] = {ln.product_id: ln for ln in created_lines}
+            for pid, allocs in sale_plans.items():
+                batch_service.apply_sale(self._session, allocs)
+                all_allocs.extend(allocs)
+                dline = lines_by_pid.get(pid)
+                for item in allocs:
+                    self._session.add(
+                        InventoryMovement(
+                            tenant_id=tenant_id,
+                            store_id=store_id,
+                            product_id=pid,
+                            batch_id=item.batch_id,
+                            doc_id=new_doc.doc_id,
+                            doc_line_id=dline.line_id if dline else None,
+                            reason=move_reason,
+                            qty_base=-item.qty_base,
+                            unit_cost_fen=item.unit_cost_fen,
+                            cost_status=item.cost_status,
+                            partner_id=orig.partner_id,
+                            created_by=member_id,
+                        )
+                    )
+                if dline is not None:
+                    dline.cost_snapshot_fen, dline.cost_status = batch_service.cogs_detail_of(allocs)
+            new_doc.cogs_fen = batch_service.cogs_of(all_allocs)
+            self._session.flush()
+
+        self._audit.record(
+            tenant_id=tenant_id,
+            action="doc.correct",
+            entity="doc_header",
+            entity_id=str(doc_id),
+            member_id=member_id,
+            detail={
+                "reversal_doc_id": str(rev_out.reversal_doc_id),
+                "new_doc_id": str(new_doc.doc_id),
+                "new_doc_no": str(new_doc.doc_no),
+                "reason": reason,
+            },
+        )
+        return CorrectionOutcome(
+            original_doc_id=str(doc_id),
+            reversal_doc_id=str(rev_out.reversal_doc_id),
+            new_doc_id=str(new_doc.doc_id),
+            new_doc_no=str(new_doc.doc_no),
+            total_amount_fen=int(new_doc.total_amount_fen),
+            inventory_after=self._inventory_after(tenant_id, store_id, created_lines),
         )
 
     # ------------------------------------------------------------------ 内部
@@ -359,10 +665,12 @@ class ReversalService:
         tenant_id: uuid.UUID,
         store_id: uuid.UUID,
         intent_id: str,
+        original_doc_id: uuid.UUID,
         lines: list[DocLine],
         reversal_doc_id: uuid.UUID,
     ) -> None:
         """把原单的库存/应收效果**反向**应用一次。"""
+        del reversal_doc_id
         spec = self._registry.get(intent_id)
         side_effect = dict(spec.side_effect or {}) if spec is not None else {}
         inventory_mode = str(side_effect.get("inventory_delta") or "none")
@@ -370,19 +678,21 @@ class ReversalService:
 
         if inventory_mode in {"increase", "decrease"}:
             sign = 1 if inventory_mode == "decrease" else -1
+            deltas_by_pid: dict[uuid.UUID, InventoryDelta] = {}
+            for line in lines:
+                prev = deltas_by_pid.get(line.product_id)
+                delta_qty = Decimal(line.qty_base) * sign
+                deltas_by_pid[line.product_id] = InventoryDelta(
+                    product_id=line.product_id,
+                    qty_base_delta=(prev.qty_base_delta if prev else Decimal(0)) + delta_qty,
+                )
             InventoryService(self._session).apply(
                 tenant_id=tenant_id,
                 store_id=store_id,
-                deltas=[
-                    InventoryDelta(
-                        product_id=line.product_id,
-                        qty_base_delta=Decimal(line.qty_base) * sign,
-                    )
-                    for line in lines
-                ],
+                deltas=list(deltas_by_pid.values()),
+                allow_negative=True,
             )
         elif inventory_mode == "snapshot":
-            # 盘点快照**无法反做**（当时的前值没留档）；DB 也不允许猜
             raise AppError(
                 "E_VALIDATION",
                 message="盘点快照没有留档前值，不能反做；请重新盘一次覆盖当前数量",
@@ -390,25 +700,9 @@ class ReversalService:
             )
 
         if ar_mode != "none":
-            deltas: list[ArApDelta] = []
-            for line in lines:
-                partner_id = self._partner_of(tenant_id, line)
-                if partner_id is None:
-                    continue
-                direction = "receivable" if ar_mode.startswith("receivable") else "payable"
-                deltas.append(
-                    ArApDelta(
-                        partner_id=partner_id,
-                        direction=direction,
-                        amount_fen=int(line.amount_fen),
-                        doc_id=reversal_doc_id,
-                        settle=True,
-                    )
-                )
-            if deltas:
-                ArApService(self._session).apply(
-                    tenant_id=tenant_id, store_id=store_id, deltas=deltas
-                )
+            ArApService(self._session).reverse_doc_ar_ap(
+                tenant_id=tenant_id, doc_id=original_doc_id
+            )
 
     def _partner_of(self, tenant_id: uuid.UUID, line: DocLine) -> uuid.UUID | None:
         """从原单对应的应收应付反查往来单位。"""

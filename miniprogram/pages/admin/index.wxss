@@ -25,8 +25,9 @@
 }
 
 .content__title {
+  font-family: 'Songti SC', 'Noto Serif SC', serif;
   font-size: var(--f-h1);
-  font-weight: 800;
+  font-weight: 700;
   color: var(--c-ink);
 }
 

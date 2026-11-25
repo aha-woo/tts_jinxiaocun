@@ -195,8 +195,14 @@ def test_only_ledger_and_reversal_write_documents() -> None:
         "domain/inventory_service.py",
         "domain/ar_ap_service.py",
     }
-    assert writers == {"services/ledger.py", "services/reversal.py"}, (
-        f"出现了第三个写账入口（可能绕过了确认卡片）：{sorted(writers)}"
+    # 第三条路径是盘点：库存调整本来就没有单据，允许在 counts 服务里写，
+    # 但必须有 movement(reason=count_adjust) 留痕，且仍然只能被 API 调用、不能直接调 ORM。
+    assert writers == {
+        "services/ledger.py",
+        "services/reversal.py",
+        "services/counts.py",
+    }, (
+        f"出现了第四个写账入口（可能绕过了确认卡片）：{sorted(writers)}"
     )
     api_writers = {path for path in writers if path.startswith("api/")}
     assert api_writers == set(), f"API 层直接写库了：{sorted(api_writers)}"

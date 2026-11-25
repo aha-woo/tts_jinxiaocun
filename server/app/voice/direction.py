@@ -106,11 +106,16 @@ NEUTRAL_TRADE_WORDS: tuple[str, ...] = (
 )
 
 #: 「对方给钱」类信号（我方**收钱**）→ 销售。
-#: 只认「给(我) + 金额」这种明确表述；「给了他」是付钱，见下一张表。
+#: 只认「给(我) + 金额 / 收款」等明确收款信号；「现结 / 付了70」属于中性结算信号，见下表。
 _RECEIVE_MONEY_PATTERNS: tuple[re.Pattern[str], ...] = (
-    re.compile(r"(?:给了|给|付了|付)\s*(?:我\s*)?[\d零〇一二两三四五六七八九十百千万]+"),
+    re.compile(r"(?:给了|给)\s*(?:我\s*)?[\d零〇一二两三四五六七八九十百千万]+"),
     re.compile(r"(?:微信|支付宝|现金|扫码)?\s*转(?:给)?我"),
     re.compile(r"收(?:了|到)(?:钱|款|账)"),
+)
+
+#: 仅当全句既无强方向词也无往来伙伴时才参考的弱结算信号（「一件矿泉水，现结」→ 销售）
+_WEAK_CASH_PATTERNS: tuple[re.Pattern[str], ...] = (
+    re.compile(r"(?:付了|付)\s*[\d零〇一二两三四五六七八九十百千万]+"),
     re.compile(r"现结|当场付|当场给|付清了|结清了|一次付清"),
 )
 
@@ -269,6 +274,7 @@ def resolve_direction(
     # ---- 判据三：收付信号
     receive = _first_match(cleaned, _RECEIVE_MONEY_PATTERNS)
     pay = _first_match(cleaned, _PAY_MONEY_PATTERNS)
+    weak_cash = _first_match(cleaned, _WEAK_CASH_PATTERNS)
     money: str | None = None
     money_evidence: tuple[str, ...] = ()
     if receive and not pay:
@@ -277,6 +283,9 @@ def resolve_direction(
         money, money_evidence = PURCHASE, (pay,)
     elif receive and pay:
         money = None  # 既收又付，判不了
+    elif weak_cash and strong is None and not has_customer and not has_supplier:
+        # 「一件矿泉水，现结」无主语/无方向词时按散客现结处理；有「进了」或供应商时不制造冲突
+        money, money_evidence = SALES, (weak_cash,)
 
     # ---- 合成：任一类给出方向就比，矛盾则一律不判
     signals = [

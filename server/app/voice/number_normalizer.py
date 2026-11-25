@@ -64,8 +64,11 @@ CN_DIGITS: dict[str, int] = {
 #: 量级词
 CN_UNITS: dict[str, int] = {"十": 10, "拾": 10, "百": 100, "佰": 100, "千": 1000, "仟": 1000, "万": 10000}
 
-#: 「块/元」后接角位数字（「两块五」= 2.5 元）
-_YUAN_JIAO_PATTERN = re.compile(r"(?P<yuan>[\d零〇一幺二两俩三仨四五六七八九勾拐十百千]+)[块元](?P<jiao>[一二两三四五六七八九])?(?:毛|角)?")
+#: 「块/元」后接角、分位数字（「两块五」= 2.5 元、「一块二毛五」= 1.25 元）
+_YUAN_JIAO_PATTERN = re.compile(
+    r"(?P<yuan>[\d零〇一幺二两俩三仨四五六七八九勾拐十百千]+)[块元]"
+    r"(?:(?P<jiao>[一二两三四五六七八九])(?:[毛角](?P<fen>[一二两三四五六七八九])?分?)?)?"
+)
 
 #: 纯阿拉伯数字（含小数）
 _ARABIC_PATTERN = re.compile(r"\d+(?:\.\d+)?")
@@ -113,7 +116,10 @@ def parse_integer_text(text: str) -> int | None:
     number = 0
     last_unit = 0
     for char in text:
-        if char in CN_DIGITS:
+        if char in ("零", "〇"):
+            number = 0
+            last_unit = 0
+        elif char in CN_DIGITS:
             number = CN_DIGITS[char]
         elif char in CN_UNITS:
             unit = CN_UNITS[char]
@@ -211,9 +217,12 @@ def parse_quantity(text: str) -> NumberParse:
         if yuan is None:
             return NumberParse(None, token, False, False, (), "", 0.0)
         jiao = match.group("jiao")
+        fen = match.group("fen")
         value = Decimal(yuan)
         if jiao:
             value = value + Decimal(CN_DIGITS[jiao]) / Decimal(10)
+        if fen:
+            value = value + Decimal(CN_DIGITS[fen]) / Decimal(100)
         return NumberParse(value, token, True, False, (), f"{token} = {value}", 0.9)
 
     if _is_ambiguous_cn_run(token):

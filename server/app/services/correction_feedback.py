@@ -22,7 +22,9 @@ from typing import Any, Mapping, Sequence
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.models.catalog import Product, ProductAlias
 from app.models.dict import CorrectionEvent, PersonalDict
+from app.models.partner import Partner
 from app.models.rule import TemplateCandidate
 from app.services.audit import AuditService
 from app.services.dict_layers import DictVersionCache
@@ -47,6 +49,8 @@ class CorrectionOutcome:
     wrote_template_candidate: bool = False
     dict_version: int = 0
     detail: str = ""
+    learned_rule: dict[str, str] | None = None
+    toast_zh: str | None = None
 
     def as_dict(self) -> dict[str, Any]:
         """JSON 形态。"""
@@ -57,6 +61,8 @@ class CorrectionOutcome:
             "wrote_template_candidate": self.wrote_template_candidate,
             "dict_version": self.dict_version,
             "detail": self.detail,
+            "learned_rule": self.learned_rule,
+            "toast_zh": self.toast_zh,
         }
 
 
@@ -134,6 +140,42 @@ class CorrectionFeedbackService:
                 mapped_id=None,
             )
 
+        learned_rule: dict[str, str] | None = None
+        toast_zh: str | None = None
+        wrong_str = str(wrong_value).strip() if wrong_value not in (None, "") else ""
+        correct_str = str(correct_value).strip() if correct_value not in (None, "") else ""
+        if slot_code in {"P", "C", "S"} and wrong_str and correct_str and wrong_str != correct_str:
+            repeat_count = self._count_same_correction(
+                tenant_id=tenant_id,
+                slot_code=slot_code,
+                wrong_str=wrong_str,
+                correct_str=correct_str,
+            )
+            if repeat_count >= 2:
+                resolved_id = self._resolve_mapped_id(
+                    tenant_id=tenant_id,
+                    slot_code=slot_code,
+                    correct_value=correct_value,
+                )
+                promoted = self._upsert_personal_dict(
+                    tenant_id=tenant_id,
+                    member_id=member_id,
+                    raw_text=wrong_str,
+                    mapped_type=_mapped_type_of(slot_code),
+                    mapped_id=resolved_id,
+                )
+                if slot_code == "P" and resolved_id is not None:
+                    self._ensure_product_alias(
+                        tenant_id=tenant_id,
+                        member_id=member_id,
+                        product_id=resolved_id,
+                        alias_text=wrong_str,
+                    )
+                if promoted:
+                    wrote_dict = True
+                learned_rule = {"from": wrong_str, "to": correct_str}
+                toast_zh = f"记住了：{wrong_str} → {correct_str}"
+
         wrote_candidate = False
         if intent_id and raw_text:
             wrote_candidate = self._upsert_template_candidate(
@@ -147,6 +189,10 @@ class CorrectionFeedbackService:
 
         # 教了就必须击穿缓存：版本 +1
         version = self._versions.bump(str(tenant_id), str(member_id)) if (wrote_dict or wrote_candidate) else self._versions.get(str(tenant_id), str(member_id))
+        if learned_rule is not None:
+            from app.services.voice_runtime import invalidate_shared_prompt_cache
+
+            invalidate_shared_prompt_cache(str(tenant_id))
 
         self._audit.record(
             tenant_id=tenant_id,
@@ -160,6 +206,7 @@ class CorrectionFeedbackService:
                 "wrote_personal_dict": wrote_dict,
                 "wrote_template_candidate": wrote_candidate,
                 "dict_version": version,
+                "learned_rule": learned_rule,
                 "note": "编辑只在本地重算，未重新调用模型",
             },
         )
@@ -170,6 +217,8 @@ class CorrectionFeedbackService:
             wrote_template_candidate=wrote_candidate,
             dict_version=version,
             detail="已记录纠错；编辑为本地重算（0 次模型调用）",
+            learned_rule=learned_rule,
+            toast_zh=toast_zh,
         )
 
     def history(
@@ -183,6 +232,89 @@ class CorrectionFeedbackService:
         return list(self._session.execute(statement).scalars())
 
     # ------------------------------------------------------------------ 内部
+    def _resolve_mapped_id(
+        self, *, tenant_id: uuid.UUID, slot_code: str, correct_value: Any
+    ) -> uuid.UUID | None:
+        text = str(correct_value or "").strip()
+        if not text:
+            return None
+        if slot_code in {"P", "ALIAS"}:
+            name_only = text.split(" ")[0]
+            prod = self._session.execute(
+                select(Product)
+                .where(
+                    Product.tenant_id == tenant_id,
+                    Product.status.in_(("draft", "active")),
+                    Product.name.in_((text, name_only)),
+                )
+                .limit(1)
+            ).scalar_one_or_none()
+            return prod.product_id if prod is not None else None
+        if slot_code in {"C", "S"}:
+            partner = self._session.execute(
+                select(Partner)
+                .where(
+                    Partner.tenant_id == tenant_id,
+                    Partner.status == "active",
+                    Partner.name == text,
+                )
+                .limit(1)
+            ).scalar_one_or_none()
+            return partner.partner_id if partner is not None else None
+        return None
+
+    def _count_same_correction(
+        self, *, tenant_id: uuid.UUID, slot_code: str, wrong_str: str, correct_str: str
+    ) -> int:
+        rows = self._session.execute(
+            select(CorrectionEvent)
+            .where(
+                CorrectionEvent.tenant_id == tenant_id,
+                CorrectionEvent.slot_code == slot_code,
+            )
+            .order_by(CorrectionEvent.created_at.desc())
+            .limit(100)
+        ).scalars()
+        count = 0
+        for row in rows:
+            w = (row.wrong_value or {}).get("value")
+            c = (row.correct_value or {}).get("value")
+            if str(w or "").strip() == wrong_str and str(c or "").strip() == correct_str:
+                count += 1
+        return count
+
+    def _ensure_product_alias(
+        self,
+        *,
+        tenant_id: uuid.UUID,
+        member_id: uuid.UUID,
+        product_id: uuid.UUID,
+        alias_text: str,
+    ) -> None:
+        cleaned = (alias_text or "").strip()
+        if not cleaned or len(cleaned) > 64:
+            return
+        existing = self._session.execute(
+            select(ProductAlias)
+            .where(
+                ProductAlias.tenant_id == tenant_id,
+                ProductAlias.member_id == member_id,
+                ProductAlias.alias_text == cleaned,
+            )
+            .limit(1)
+        ).scalar_one_or_none()
+        if existing is None:
+            self._session.add(
+                ProductAlias(
+                    tenant_id=tenant_id,
+                    product_id=product_id,
+                    member_id=member_id,
+                    alias_text=cleaned,
+                    source="personal",
+                )
+            )
+            self._session.flush()
+
     def _upsert_personal_dict(
         self,
         *,

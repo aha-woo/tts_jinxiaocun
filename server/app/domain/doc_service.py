@@ -24,6 +24,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.models.doc import DocHeader, DocLine
+from app.utils.date_utils import today_in_tz
 
 __all__ = [
     "DOC_TYPE_BY_INTENT",
@@ -93,14 +94,18 @@ def doc_type_of(intent_id: str) -> str:
 
 @dataclass(frozen=True)
 class DocLineDraft:
-    """一条单据行（原话数量 + 折算数量双写）。"""
+    """一条单据行（原话数量 + 折算数量双写，价格/金额允许为空）。"""
 
     product_id: uuid.UUID
     qty: Decimal
     unit: str
     qty_base: Decimal
-    unit_price_fen: int
-    amount_fen: int
+    unit_price_fen: int | None
+    amount_fen: int | None
+    price_source: str | None = None
+    cost_snapshot_fen: int | None = None
+    cost_status: str = "final"
+    batch_id: uuid.UUID | None = None
     source_map: Mapping[str, str] = field(default_factory=dict)
 
 
@@ -114,9 +119,14 @@ class DocDraft:
     biz_date: date
     created_by: uuid.UUID
     payment_status: str = "已结"
+    partner_id: uuid.UUID | None = None
     lines: tuple[DocLineDraft, ...] = ()
     #: 反做单指向的原单
     reversal_of: uuid.UUID | None = None
+    #: 一步改单指向被更正的原单
+    corrects_doc_id: uuid.UUID | None = None
+    #: 单据来源：voice | manual | photo | count
+    source: str = "voice"
 
     @property
     def doc_type(self) -> str:
@@ -125,8 +135,8 @@ class DocDraft:
 
     @property
     def total_amount_fen(self) -> int:
-        """合计金额（分）。"""
-        return sum(int(line.amount_fen) for line in self.lines)
+        """合计金额（分；未知金额行不计入合计，不按 0 误加）。"""
+        return sum(int(line.amount_fen or 0) for line in self.lines)
 
 
 class DocService:
@@ -141,64 +151,67 @@ class DocService:
 
     # ------------------------------------------------------------------ 单号
     def next_doc_no(self, *, tenant_id: uuid.UUID, intent_id: str, biz_date: date) -> str:
-        """生成租户内唯一的单据号（``XS20251115001``）。
-
-        并发下靠 ``UNIQUE(tenant_id, doc_no)`` 最终裁决；本方法只在
-        **同一天同前缀**已有序号时顺延，绝不重用已用过的号。
-        """
+        """生成租户内唯一的单据号（``XS20251115001``）。"""
         return next_doc_no(
             self._session, tenant_id=tenant_id, intent_id=intent_id, biz_date=biz_date
         )
 
     # ------------------------------------------------------------------ 写
     def create(self, draft: DocDraft, *, doc_no: str | None = None) -> DocHeader:
-        """写入表头 + 全部行（只 flush，不 commit）。
-
-        Args:
-            draft: 单据草稿。
-            doc_no: 指定单号（反做单 / 幂等重放时用）；缺省自动生成。
-
-        Returns:
-            已 flush 的 :class:`DocHeader`。
-
-        Raises:
-            IntegrityError: 单号冲突（调用方要么重试、要么判为重复请求）。
-        """
-        resolved_no = doc_no or self.next_doc_no(
-            tenant_id=draft.tenant_id, intent_id=draft.intent_id, biz_date=draft.biz_date
-        )
-        header = DocHeader(
-            tenant_id=draft.tenant_id,
-            store_id=draft.store_id,
-            doc_no=resolved_no,
-            intent_id=draft.intent_id,
-            doc_type=draft.doc_type,
-            biz_date=draft.biz_date,
-            payment_status=draft.payment_status,
-            total_amount_fen=draft.total_amount_fen,
-            status="confirmed",
-            created_by=draft.created_by,
-            reverses_doc_id=draft.reversal_of,
-        )
-        self._session.add(header)
-        self._session.flush()
-        for line in draft.lines:
-            self._session.add(
-                DocLine(
-                    tenant_id=draft.tenant_id,
-                    store_id=draft.store_id,
-                    doc_id=header.doc_id,
-                    product_id=line.product_id,
-                    qty=line.qty,
-                    unit=line.unit,
-                    qty_base=line.qty_base,
-                    unit_price_fen=line.unit_price_fen,
-                    amount_fen=line.amount_fen,
-                    source_map=dict(line.source_map),
-                )
+        """写入表头 + 全部行（只 flush，不 commit；自动生成单号时撞号自动重试）。"""
+        max_attempts = 1 if doc_no else 5
+        last_exc: IntegrityError | None = None
+        for _ in range(max_attempts):
+            resolved_no = doc_no or self.next_doc_no(
+                tenant_id=draft.tenant_id, intent_id=draft.intent_id, biz_date=draft.biz_date
             )
-        self._session.flush()
-        return header
+            header = DocHeader(
+                tenant_id=draft.tenant_id,
+                store_id=draft.store_id,
+                doc_no=resolved_no,
+                intent_id=draft.intent_id,
+                doc_type=draft.doc_type,
+                partner_id=draft.partner_id,
+                biz_date=draft.biz_date,
+                payment_status=draft.payment_status,
+                total_amount_fen=draft.total_amount_fen,
+                status="confirmed",
+                created_by=draft.created_by,
+                reverses_doc_id=draft.reversal_of,
+                corrects_doc_id=draft.corrects_doc_id,
+                source=draft.source,
+            )
+            try:
+                with self._session.begin_nested():
+                    self._session.add(header)
+                    self._session.flush()
+                    for line in draft.lines:
+                        self._session.add(
+                            DocLine(
+                                tenant_id=draft.tenant_id,
+                                store_id=draft.store_id,
+                                doc_id=header.doc_id,
+                                product_id=line.product_id,
+                                batch_id=line.batch_id,
+                                qty=line.qty,
+                                unit=line.unit,
+                                qty_base=line.qty_base,
+                                unit_price_fen=line.unit_price_fen,
+                                amount_fen=line.amount_fen,
+                                price_source=line.price_source,
+                                cost_snapshot_fen=line.cost_snapshot_fen,
+                                cost_status=line.cost_status,
+                                source_map=dict(line.source_map),
+                            )
+                        )
+                    self._session.flush()
+                return header
+            except IntegrityError as exc:
+                last_exc = exc
+                if doc_no is not None:
+                    raise
+        assert last_exc is not None
+        raise last_exc
 
     # ------------------------------------------------------------------ 读
     def get(self, *, tenant_id: uuid.UUID, doc_id: uuid.UUID) -> DocHeader | None:
@@ -255,10 +268,11 @@ class DocService:
         store_id: uuid.UUID | None = None,
         doc_types: Sequence[str] | None = None,
     ) -> int:
-        """区间内单据金额合计（分）——报表用，**只算 confirmed**。"""
+        """区间内单据金额合计（分）——报表用，**只算未撤销的正向 confirmed 单据**。"""
         statement = select(func.coalesce(func.sum(DocHeader.total_amount_fen), 0)).where(
             DocHeader.tenant_id == tenant_id,
             DocHeader.status == "confirmed",
+            DocHeader.reverses_doc_id.is_(None),
             DocHeader.biz_date >= start,
             DocHeader.biz_date <= end,
         )
@@ -272,21 +286,26 @@ class DocService:
 def next_doc_no(
     session: Session, *, tenant_id: uuid.UUID, intent_id: str, biz_date: date
 ) -> str:
-    """生成 ``{前缀}{YYYYMMDD}{序号}`` 单号（同日同前缀顺延）。
-
-    序号取「同前缀同日已有单数 + 1」，冲突由调用方重试——
-    这里**不缓存**、不预分配，避免重启后号段错乱。
-    """
+    """生成 ``{前缀}{YYYYMMDD}{序号}`` 单号（基于 MAX 序号顺延，并发由外层 CAS 重试兜底）。"""
     doc_type = doc_type_of(intent_id)
     prefix = INTENT_PREFIX.get(doc_type, "DJ")
     day = biz_date.strftime("%Y%m%d")
-    like = f"{prefix}{day}%"
-    statement = select(func.count()).select_from(DocHeader).where(
-        DocHeader.tenant_id == tenant_id, DocHeader.doc_no.like(like)
-    )
-    used = int(session.execute(statement).scalar_one() or 0)
-    for offset in range(used + 1, used + 200):
-        candidate = f"{prefix}{day}{offset:03d}"
+    base_prefix = f"{prefix}{day}"
+    like = f"{base_prefix}%"
+    max_no = session.execute(
+        select(func.max(DocHeader.doc_no)).where(
+            DocHeader.tenant_id == tenant_id,
+            DocHeader.doc_no.like(like),
+            DocHeader.reverses_doc_id.is_(None),
+        )
+    ).scalar_one_or_none()
+    start_seq = 1
+    if max_no and str(max_no).startswith(base_prefix):
+        tail = str(max_no)[len(base_prefix) :].split("-", 1)[0]
+        if tail.isdigit():
+            start_seq = int(tail) + 1
+    for offset in range(start_seq, start_seq + 200):
+        candidate = f"{base_prefix}{offset:03d}"
         exists = session.execute(
             select(DocHeader.doc_id)
             .where(DocHeader.tenant_id == tenant_id, DocHeader.doc_no == candidate)
@@ -310,5 +329,5 @@ def plain_text_of(intent_id: str, *, registry: Any = None) -> str:
 
 
 def today_of(now: datetime | None = None) -> date:
-    """业务日（UTC 日期；门店时区在 T05 端侧换算）。"""
-    return (now or datetime.utcnow()).date()
+    """业务日（中国时区 ``Asia/Shanghai``，跨零点不串日）。"""
+    return date.fromisoformat(today_in_tz("Asia/Shanghai", now))

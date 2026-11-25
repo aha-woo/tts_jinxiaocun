@@ -1,0 +1,33 @@
+<!-- 欠款（原型 vDebt）：两个分页 + 合计 + 每人一行 -->
+<view class="page">
+  <view class="page__gap">
+    <view class="seg">
+      <view class="seg__item {{tab === 'in' ? 'seg__item--on' : ''}}" data-tab="in" bindtap="onTab">别人欠我</view>
+      <view class="seg__item {{tab === 'out' ? 'seg__item--on' : ''}}" data-tab="out" bindtap="onTab">我欠别人</view>
+    </view>
+
+    <view class="card dsum">
+      <view>
+        <text class="dsum__k">{{tab === 'in' ? '一共有人欠你' : '你一共欠别人'}}</text>
+        <text class="dsum__v serif-num">¥{{sumText}}</text>
+      </view>
+      <text class="dsum__n">{{shown.length}} 个人</text>
+    </view>
+
+    <view wx:if="{{errorText}}" class="bar" style="background:var(--dgrb);border-color:#e0b9b0;color:var(--dgr)">
+      <text>{{errorText}}</text>
+    </view>
+
+    <view class="card">
+      <view wx:if="{{loading}}" class="empty">读取中…</view>
+      <view wx:elif="{{shown.length === 0}}" class="empty">都清干净了</view>
+      <view wx:for="{{shown}}" wx:key="id" class="al" data-id="{{item.id}}" bindtap="onOpen">
+        <view class="al__l">
+          <text class="al__name">{{item.name}}</text>
+          <text class="al__sub">最后往来 {{item.last || '—'}}</text>
+        </view>
+        <text class="al__amt serif-num">{{item.amountText}}</text>
+      </view>
+    </view>
+  </view>
+</view>

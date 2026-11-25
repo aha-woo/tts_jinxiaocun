@@ -190,10 +190,20 @@ def test_dev_channel_owns_the_local_base_url() -> None:
 # ---------------------------------------------------------------------------
 # 二、页面 / 组件齐活（4.1 / 4.2）
 # ---------------------------------------------------------------------------
-def test_app_json_declares_seven_pages() -> None:
-    """``app.json`` 声明 7 个页面（录入 / 卡片 / 手动 / 待确认 / 查询 / 套餐 / 管理）。"""
+def test_app_json_declares_required_pages() -> None:
+    """``app.json`` 至少声明四 Tab 与核心流程页，且首页必须是启动页。"""
     ids = page_ids()
-    assert len(ids) == 7, f"期望 7 个页面，实际 {len(ids)}：{ids}"
+    required = {
+        "pages/index/index",
+        "pages/goods/index",
+        "pages/debts/index",
+        "pages/mine/index",
+        "pages/card/index",
+        "pages/pending/index",
+        "pages/count/index",
+        "pages/correct/index",
+    }
+    assert required <= set(ids), f"缺少页面：{sorted(required - set(ids))}"
     assert ids[0] == "pages/index/index", "首页必须是第一个（小程序启动页）"
 
 

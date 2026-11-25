@@ -1,0 +1,45 @@
+/* 商品档案要补 */
+.hint {
+  display: block;
+  font-size: 24rpx;
+  color: var(--mu);
+  line-height: 1.6;
+  padding: 0 8rpx;
+}
+
+.pg {
+  display: flex;
+  align-items: center;
+  gap: 16rpx;
+  padding: 24rpx;
+  border-top: 2rpx solid var(--ln);
+}
+
+.pg:first-child {
+  border-top: 0;
+}
+
+.pg__l {
+  flex: 1;
+  min-width: 0;
+}
+
+.pg__t {
+  display: block;
+  font-weight: 700;
+  font-size: 30rpx;
+}
+
+.pg__s {
+  display: block;
+  font-size: 22rpx;
+  color: var(--mu);
+  margin-top: 4rpx;
+}
+
+.pg__go {
+  flex-shrink: 0;
+  font-size: 24rpx;
+  font-weight: 700;
+  color: var(--act);
+}

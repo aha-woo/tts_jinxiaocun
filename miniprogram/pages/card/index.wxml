@@ -1,134 +1,175 @@
 <!--
-  确认卡片（面向商户，不是调试面板）
-
-  设计原则
-  --------
-  - 首屏四样：方向 / 金额 / 影响 / 主按钮（`data-role` 是机器可读锚点）。
-  - **内部字段不上屏**：槽位代号（P/Q/U/UP/TA/S/D/PS/W）、风险等级 R1、确认方式 C1、
-    「来源」角标、数据版本，全部收进底部「解析明细（开发用）」，默认折叠。
-  - 只写人话：已结→已付清、未结→还欠着；商品未建档时明确提示「先建商品」。
-  - 7 个 `data-block` 一个不少（服务端契约与测试都依赖它），但视觉上只保留用户需要的。
+  确认卡（原型 oCard 的纸感版本）
+  - 保留 7 个 data-block 锚点：actions / original / intent / impact / risk / slots / calc
+  - 去掉倒计时与二次语音确认（v2 口径：卡一直留着，钱的事用手点）
 -->
-<view data-ui="v1" class="page {{wide ? 'page--wide' : ''}}">
-  <!-- ⑦ 操作区（吸顶）：第一行方向+金额+倒计时，第二行整宽主按钮（拇指好按） -->
-  <view class="actionbar" wx:if="{{card}}" data-block="actions">
-    <view class="actionbar__row">
-      <view class="actionbar__dir actionbar__dir--{{card.intent.domain}}" data-role="direction">
-        <text>{{directionText}}</text>
+<view data-ui="v2" class="page">
+  <view class="page__gap">
+    <!-- ⑦ 操作区 -->
+    <view class="card act" wx:if="{{card}}" data-block="actions">
+      <view class="act__top">
+        <view style="display:flex;align-items:center;gap:12rpx">
+          <text class="tg tg--owe" data-role="direction">{{directionText}}</text>
+          <text wx:if="{{noviceText}}" class="tg tg--in">{{noviceText}}</text>
+        </view>
+        <text class="act__amt serif-num" data-role="amount">{{totalAmountText}}</text>
       </view>
-      <view class="actionbar__main">
-        <view class="actionbar__amount" data-role="amount">{{totalAmountText}}</view>
-        <view class="actionbar__timer {{expired ? 'actionbar__timer--expired' : ''}}">
-          {{expired ? '已超时' : '还剩 ' + countdown + ' 秒'}}
+      <button class="cta" bindtap="onConfirm" loading="{{loading}}" disabled="{{hasMustGap}}">{{card.actions.primary_label}}</button>
+      <text wx:if="{{hasMustGap}}" class="hint" style="text-align:center">红色的项填上才能确认</text>
+    </view>
+
+    <!-- 澄清 -->
+    <view class="card pad" wx:if="{{clarify}}">
+      <text class="c-title">要确认一下</text>
+      <view class="said">{{clarify.question}}</view>
+      <view class="opts">
+        <view
+          wx:for="{{clarify.options}}"
+          wx:key="*this"
+          class="opt"
+          data-value="{{item}}"
+          bindtap="onClarify"
+        >{{item}}</view>
+      </view>
+    </view>
+
+    <!-- ① 原文 -->
+    <view class="card pad" wx:if="{{card}}" data-block="original">
+      <text class="c-title">你说的</text>
+      <view class="said">“{{card.original.asr_text}}”</view>
+      <text class="hint" wx:if="{{card.original.low_confidence_highlight}}">这句听得不太准，请重点核对下面的数字</text>
+    </view>
+
+    <!-- ② 意图 + 明细 -->
+    <view class="card pad" wx:if="{{card}}" data-block="intent">
+      <view class="c-head">
+        <text class="c-title">{{cardTitle}}</text>
+        <view style="display:flex;gap:18rpx;align-items:center">
+          <text
+            class="link"
+            data-code="Q"
+            bindtouchstart="onFieldVoiceStart"
+            bindtouchend="onFieldVoiceEnd"
+          >{{voiceListening && voiceFieldSlot === 'Q' ? '松手完成' : '按住重说数量'}}</text>
+          <text class="link" bindtap="onLineTap">改 ›</text>
+        </view>
+      </view>
+      <view class="rows">
+        <view class="r" wx:for="{{card.calc.lines}}" wx:key="product_label" bindtap="onLineTap">
+          <text class="r__k">{{item.product_label}}</text>
+          <text class="r__v">{{item.quantity}}{{item.unit}} · {{item.amount_display}} <text class="r__edit">改</text></text>
+        </view>
+      </view>
+      <view class="total">
+        <text>合计</text>
+        <text class="total__n serif-num">{{totalAmountText}}</text>
+      </view>
+    </view>
+
+    <!-- ③ 基本信息 -->
+    <view class="card pad" wx:if="{{card && infoFields.length > 0}}">
+      <text class="c-title">这笔的基本信息</text>
+      <view class="rows">
+        <view
+          class="r"
+          wx:for="{{infoFields}}"
+          wx:key="code"
+          data-code="{{item.code}}"
+          data-label="{{item.label}}"
+          data-value="{{item.value}}"
+          bindtap="onInfoTap"
+        >
+          <text class="r__k">{{item.label}}</text>
+          <text class="r__v">{{item.value}} <text class="r__edit">改</text></text>
         </view>
       </view>
     </view>
-    <button class="btn btn--primary btn--block" bindtap="onConfirm" loading="{{loading}}">
-      {{card.actions.primary_label}}
-    </button>
-  </view>
 
-  <!-- 澄清（方向/槽位没判清时先问，不猜） -->
-  <view class="card" wx:if="{{clarify}}">
-    <view class="card__title">要确认一下</view>
-    <view class="quote">{{clarify.question}}</view>
-    <view class="clarify__options">
+    <!-- 空格：红=必须现在填，黄=可以后补 -->
+    <view class="card pad" wx:if="{{gaps.length > 0}}">
+      <text class="c-title">还差这几项</text>
       <view
-        wx:for="{{clarify.options}}"
-        wx:key="*this"
-        class="clarify__option"
-        data-value="{{item}}"
-        bindtap="onClarify"
-      >{{item}}</view>
+        wx:for="{{gaps}}"
+        wx:key="code"
+        class="gap {{item.must ? 'gap--must' : 'gap--later'}}"
+        data-code="{{item.code}}"
+        bindtap="onGapTap"
+      >
+        <view class="gap__l">
+          <text class="gap__k">{{item.label}}</text>
+          <text class="gap__v">{{item.current || '没填'}} {{item.unit}}</text>
+        </view>
+        <text class="gap__go">补 ›</text>
+      </view>
+      <text class="hint">红的是现在就得填；黄的可以先记上，利润先不算它。</text>
     </view>
-  </view>
 
-  <!-- ① 原文 -->
-  <view class="card" wx:if="{{card}}" data-block="original">
-    <view class="card__title">你刚说的</view>
-    <view class="quote">{{card.original.asr_text}}</view>
-    <view class="hint" wx:if="{{card.original.low_confidence_highlight}}">
-      这句听得不太准，请重点核对下面的数字
-    </view>
-  </view>
-
-  <!-- ② 意图 + ④ 计算：人话标题 + 明细 + 合计 -->
-  <view class="card" wx:if="{{card}}" data-block="intent">
-    <view class="card__title">{{cardTitle}}</view>
-    <view class="lines">
-      <view class="line" wx:for="{{card.calc.lines}}" wx:key="product_label">
-        <text class="line__name">{{item.product_label}}</text>
-        <text class="line__qty">{{item.quantity}}{{item.unit}}</text>
-        <text class="line__amount">{{item.amount_display}}</text>
+    <!-- 近似商品防重提示 -->
+    <view class="card pad" wx:if="{{card && hasPendingProduct && similarProducts.length > 0 && !similarDismissed}}" style="border:2rpx solid var(--wnl);background:var(--wnb)">
+      <text class="c-title">店里有「{{similarProducts[0].name}}」，是它吗？</text>
+      <text class="hint" style="margin-top:0">免得同一样货建出两个档案</text>
+      <view class="opts">
+        <view class="opt" data-name="{{similarProducts[0].name}}" bindtap="onAcceptSimilar">就是它</view>
+        <view class="opt" bindtap="onDismissSimilar">是新货</view>
       </view>
     </view>
-    <view class="total">
-      <text>合计</text>
-      <text class="total__num">{{totalAmountText}}</text>
+
+    <!-- 商品未建档：进货自动建档；卖货没有库存，不能卖 -->
+    <view class="bar" wx:if="{{card && hasPendingProduct}}" style="background:{{directionText === '卖货' ? 'var(--dgrb)' : 'var(--wnb)'}};border-color:{{directionText === '卖货' ? '#e0b9b0' : 'var(--wnl)'}};color:{{directionText === '卖货' ? 'var(--dgr)' : 'var(--wn)'}}">
+      <text>{{directionText === '卖货' ? '档案里没有这件货，库存也没有，卖不了；要卖请先记一笔进货。' : '这件货还没有档案，确认后会自动建档；缺的进价会进「要补」。'}}</text>
     </view>
-  </view>
 
-  <!-- ③ 基本信息（只展示用户关心的四项，空值自动隐藏） -->
-  <view class="card" wx:if="{{card && infoFields.length > 0}}">
-    <view class="card__title">这笔的基本信息</view>
-    <view class="kv" wx:for="{{infoFields}}" wx:key="label">
-      <text>{{item.label}}</text>
-      <text>{{item.value}}</text>
+    <!-- ⑤ 影响预览 -->
+    <impact-preview
+      wx:if="{{card}}"
+      data-block="impact"
+      rows="{{card.impact}}"
+      previewVersion="{{card.meta.preview_version}}"
+      note=""
+    />
+
+    <!-- ⑥ 风险 -->
+    <view class="bar" wx:if="{{card && card.risk.level !== 'ok'}}" data-block="risk">
+      <text>要注意：{{card.risk.reason_zh}}{{card.risk.conflicts.length ? '（' + card.risk.conflicts[0] + '）' : ''}}</text>
     </view>
-  </view>
 
-  <!-- 商品未建档：明确告诉用户下一步怎么做，而不是让他点确认然后失败 -->
-  <view class="card card--warn" wx:if="{{card && hasPendingProduct}}">
-    <view class="card__title">这个商品还没有档案</view>
-    <view class="hint">先去首页说一句「新建商品 可乐」，建好之后再回来记这笔；现在点确认会失败。</view>
-  </view>
-
-  <!-- ⑤ 影响预览（组件内已改成「记上之后会变成」的人话） -->
-  <impact-preview
-    wx:if="{{card}}"
-    data-block="impact"
-    rows="{{card.impact}}"
-    previewVersion="{{card.meta.preview_version}}"
-    note=""
-  />
-
-  <!-- ⑥ 风险 -->
-  <view class="card card--warn" wx:if="{{card && card.risk.level !== 'ok'}}" data-block="risk">
-    <view class="card__title">要注意</view>
-    <view class="hint">{{card.risk.reason_zh}}</view>
-    <view class="hint" wx:for="{{card.risk.conflicts}}" wx:key="*this">· {{item}}</view>
-  </view>
-
-  <!-- C2 二次语音 + 按钮兜底 -->
-  <view class="card" wx:if="{{needSecondVoice}}">
-    <view class="card__title">这笔要再确认一次</view>
-    <view class="hint">点下面说一句「确认」，或者直接按上方主按钮（会记为按钮兜底）</view>
-    <button class="btn btn--ghost" bindtap="onSecondVoice">我说了「确认」</button>
-  </view>
-
-  <!-- 解析明细：开发排查用，默认折叠；7 区块里的 slots/calc 落在这里 -->
-  <view class="card" wx:if="{{card}}">
-    <view class="card__head" bindtap="onToggleDevDetail">
-      <text class="card__title">解析明细（开发用）</text>
-      <text class="link">{{devDetail ? '收起' : '展开'}}</text>
-    </view>
-    <block wx:if="{{devDetail}}">
-      <slot-table rows="{{card.slots}}" data-block="slots" />
-      <view class="trace" wx:for="{{card.calc.calc_traces}}" wx:key="*this">= {{item}}</view>
-      <view class="hint">
-        风险 {{card.intent.risk_level}} · 确认方式 {{card.intent.confirm_policy}} ·
-        数据版本 v{{card.meta.preview_version}}
+    <!-- 解析明细（开发用） -->
+    <view class="card pad" wx:if="{{card}}">
+      <view class="c-head" bindtap="onToggleDevDetail">
+        <text class="c-title">解析明细（开发用）</text>
+        <text class="link">{{devDetail ? '收起' : '展开'}}</text>
       </view>
-    </block>
-    <view class="hidden" data-block="calc"></view>
+      <block wx:if="{{devDetail}}">
+        <slot-table rows="{{card.slots}}" data-block="slots" />
+        <view class="trace" wx:for="{{card.calc.calc_traces}}" wx:key="*this">= {{item}}</view>
+        <text class="hint">风险 {{card.intent.risk_level}} · 确认方式 {{card.intent.confirm_policy}} · 数据版本 v{{card.meta.preview_version}}</text>
+      </block>
+      <view class="hidden" data-block="calc"></view>
+    </view>
+
+    <view wx:if="{{errorText}}" class="bar" style="background:var(--dgrb);border-color:#e0b9b0;color:var(--dgr)">
+      <text>{{errorText}}</text>
+    </view>
+
+    <!-- 底部次操作 -->
+    <view class="subs" wx:if="{{card}}">
+      <button class="sub" bindtap="onCancel">先不记</button>
+      <button class="sub sub--main" bindtap="onConfirm" loading="{{loading}}" disabled="{{hasMustGap}}">{{card.actions.primary_label}}</button>
+    </view>
   </view>
 
-  <view class="error" wx:if="{{errorText}}">{{errorText}}</view>
-
-  <view class="footer" wx:if="{{card}}">
-    <button class="btn btn--secondary" bindtap="onCancel">先不记</button>
-    <button class="btn btn--primary" bindtap="onConfirm" loading="{{loading}}">
-      {{card.actions.primary_label}}
-    </button>
+  <!-- 补数字键盘 -->
+  <view class="kpsheet" wx:if="{{editingGap}}">
+    <view class="kpsheet__in">
+      <text class="kpsheet__h">补 {{editingGap.label}}</text>
+      <text class="kpsheet__v">{{gapKeypad || '0'}}<text class="kpsheet__u">{{editingGap.unit}}</text></text>
+      <view class="kp">
+        <view wx:for="{{['1','2','3','4','5','6','7','8','9','.','0','del']}}" wx:key="*this" class="kp__k" data-key="{{item}}" bindtap="onGapKey">{{item === 'del' ? '删' : item}}</view>
+      </view>
+      <view class="kp__acts">
+        <button class="kp__c" bindtap="onGapClose">取消</button>
+        <button class="kp__ok" bindtap="onGapKeyOk">补上</button>
+      </view>
+    </view>
   </view>
 </view>

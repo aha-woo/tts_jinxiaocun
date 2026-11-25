@@ -1,95 +1,147 @@
-<!--
-  首页 · 手机端主录入（电脑版微信大屏自动变双栏）
-  - 大按钮：拇指热区 ≥88×88px，按住说 / 点一下说
-  - 状态条：降级态 L0~L4 在 UI 上真的可以看出差别
-  - 只有单商户：没有门店切换、没有组织概念
--->
-<view data-ui="v1" class="page {{wide ? 'page--wide' : ''}}">
-  <!-- 降级态状态条 -->
-  <view class="banner banner--{{degrade.tone}}">
-    <view class="banner__title">
-      <text>{{degrade.title}}</text>
-      <text class="banner__level">{{degrade.level}}</text>
-      <text class="banner__flag" wx:if="{{degrade.thrifty}}">省额度</text>
+<!-- 今天（首页）：三数 + 新手提醒 + 今日流水 + 圈形说话键 -->
+<view class="page {{fontSize === 'big' ? 'page--big' : ''}}">
+  <view class="page__gap">
+    <!-- 问候 -->
+    <view class="hello">
+      <view>
+        <view class="hello__t">{{greeting}}</view>
+        <text class="hello__sub">{{dateLabel}}</text>
+      </view>
+      <view class="pbadge" bindtap="onGoPending">
+        <text>待处理</text>
+        <text class="pbadge__n">{{pendingCount}}</text>
+      </view>
     </view>
-    <view class="banner__hint">{{degrade.hint}}</view>
+
+    <!-- 快捷记账：拍整张进货单 / 手动点选 -->
+    <view class="quick-strip">
+      <view class="quick-chip" bindtap="onGoDeliveryNote">
+        <text>📷 拍进货单</text>
+        <text class="quick-chip__sub">整单自动建档</text>
+      </view>
+      <view class="quick-chip" bindtap="onGoManual">
+        <text>⌨️ 手动点选</text>
+        <text class="quick-chip__sub">不方便说话时用</text>
+      </view>
+    </view>
+
+    <!-- 新手期前 20 笔进度 -->
+    <view wx:if="{{novice && novice.in_novice}}" class="bar" style="background:var(--sf);border-color:var(--ln)">
+      <text>新手期 {{novice.count}}/{{novice.target}} · 每笔先给你看卡片，顺便记住你的说话习惯</text>
+    </view>
+
+    <!-- 周期切换 -->
+    <view class="seg">
+      <view
+        wx:for="{{periods}}"
+        wx:key="key"
+        class="seg__item {{period === item.key ? 'seg__item--on' : ''}}"
+        data-key="{{item.key}}"
+        bindtap="onPeriod"
+      >{{item.label}}</view>
+    </view>
+
+    <!-- 三个数 -->
+    <view class="card stats">
+      <view class="stats__i">
+        <text class="stats__k">卖了</text>
+        <text class="stats__v">¥{{stats.sell}}</text>
+      </view>
+      <view class="stats__i">
+        <text class="stats__k">进货</text>
+        <text class="stats__v">¥{{stats.buy}}</text>
+      </view>
+      <view class="stats__i">
+        <text class="stats__k">赊出去</text>
+        <text class="stats__v stats__v--owe">¥{{stats.owe}}</text>
+      </view>
+    </view>
+
+    <!-- 降级提醒（只在非 L0 出现） -->
+    <view wx:if="{{degrade.level !== 'L0'}}" class="bar" bindtap="onOpenSelfCheck">
+      <text>{{degrade.title}} · {{degrade.hint}}</text>
+      <text class="bar__more">看详情</text>
+    </view>
+
+    <!-- 待补提醒：越早补，毛利越准 -->
+    <view wx:if="{{fillCount > 0}}" class="bar" bindtap="onGoPending">
+      <text>有 {{fillCount}} 笔缺价格，越早补，毛利越准</text>
+      <text class="bar__more">去补</text>
+    </view>
+
+    <!-- 待处理提醒 -->
+    <view wx:if="{{pendingCount > 0}}" class="bar" bindtap="onGoPending">
+      <text>还有 {{pendingCount}} 笔没处理，确认或补上再算今天的账</text>
+      <text class="bar__more">去处理</text>
+    </view>
+
+    <!-- 今日流水 -->
+    <view class="card flow">
+      <view class="flow__h">
+        <text>{{periodLabel}}流水 · {{flow.length}} 笔</text>
+        <text>点一笔可以改</text>
+      </view>
+
+      <view wx:if="{{flow.length === 0}}" class="empty">还没有记录。点下面的圆钮说一句。</view>
+
+      <view
+        wx:for="{{flow}}"
+        wx:key="id"
+        class="fi {{item.reversed ? 'fi--rev' : ''}}"
+        data-id="{{item.id}}"
+        bindtap="onOpenFlow"
+      >
+        <text class="fi__tm">{{item.time}}</text>
+        <view class="fi__md">
+          <view>
+            <text class="tg {{item.tagClass}}">{{item.tag}}</text>
+            <text class="{{item.reversed ? 'fi__strike' : ''}}" style="font-weight:500">{{item.title}}</text>
+          </view>
+          <text class="fi__md small" wx:if="{{item.meta}}">{{item.meta}}</text>
+        </view>
+        <view class="fi__rt">
+          <text class="{{item.reversed ? 'fi__strike' : ''}}" wx:if="{{item.amount}}">¥{{item.amount}}</text>
+        </view>
+      </view>
+    </view>
+
+    <!-- 自检（收起态，长按标题展开） -->
+    <view class="card" style="padding:22rpx 24rpx" bindlongpress="onToggleSelfCheck">
+      <view style="display:flex;justify-content:space-between">
+        <text style="font-size:24rpx;color:var(--mu)">系统自检 · {{statusText}}</text>
+        <text style="font-size:24rpx;color:var(--mu)">{{selfCheckOpen ? '收起' : '长按展开'}}</text>
+      </view>
+      <view wx:if="{{selfCheckOpen}}" style="margin-top:14rpx;font-size:24rpx;color:var(--mu);line-height:1.8">
+        <view>后端：{{statusText}} {{backendVersion}}</view>
+        <view>契约：{{contractText}}</view>
+        <view>登录：{{loginOk ? '已登录' : '未登录'}}</view>
+        <view>语音：{{speechReady ? '同声传译已就绪' : '未启用（走键盘）'}}</view>
+        <view wx:if="{{speechReason}}">原因：{{speechReason}}</view>
+      </view>
+    </view>
+
+    <view wx:if="{{errorText}}" class="bar" style="background:var(--dgrb);border-color:#e0b9b0;color:var(--dgr)">
+      <text>{{errorText}}</text>
+    </view>
   </view>
 
-  <view class="main">
-    <view class="panel">
-      <!-- 键盘兜底入口：全程可脱离语音记账 -->
-      <view class="shortcuts">
-        <view class="shortcut" bindtap="onGoManual">
-          <text class="shortcut__title">手动记账</text>
-          <text class="shortcut__desc">不用说话，点着记</text>
-        </view>
-        <view class="shortcut" bindtap="onGoPending">
-          <text class="shortcut__title">待确认</text>
-          <text class="shortcut__desc">超时没确认的单子</text>
-        </view>
-      </view>
-      <view class="shortcuts">
-        <view class="shortcut" bindtap="onGoQuery">
-          <text class="shortcut__title">查一查</text>
-          <text class="shortcut__desc">库存 / 欠款 / 流水</text>
-        </view>
-        <view class="shortcut" bindtap="onGoPay">
-          <text class="shortcut__title">套餐</text>
-          <text class="shortcut__desc">买次数 / 续期</text>
-        </view>
-      </view>
-      <view class="shortcut shortcut--wide" bindtap="onGoAdmin">
-        <text class="shortcut__title">管理台</text>
-        <text class="shortcut__desc">电脑版微信里是双栏大屏；手机上也能进</text>
-      </view>
-    </view>
-
-    <!-- 右栏（宽屏） / 下方（窄屏）：最近记录 + 自检 -->
-    <view class="side">
-      <view class="panel">
-        <view class="panel__title">最近</view>
-        <view class="recent__empty" wx:if="{{recent.length === 0}}">还没有记录</view>
-        <view wx:for="{{recent}}" wx:key="id" class="recent__item">
-          <text class="recent__text">{{item.text}}</text>
-          <text class="recent__meta">{{item.intent}} · {{item.at}}</text>
-        </view>
-      </view>
-
-      <view class="panel">
-        <view class="panel__head" bindtap="onToggleSelfCheck">
-          <text class="panel__title">系统自检</text>
-          <text class="panel__more">{{selfCheckOpen ? '收起' : '展开'}}</text>
-        </view>
-        <view class="selfcheck" wx:if="{{selfCheckOpen}}">
-          <view class="kv"><text>后端</text><text>{{statusText}}</text></view>
-          <view class="kv"><text>版本</text><text>{{backendVersion}}</text></view>
-          <view class="kv"><text>契约</text><text>{{contractText}}</text></view>
-          <view class="kv"><text>登录态</text><text>{{loginOk ? '已登录' : '未登录（dev 联调可忽略）'}}</text></view>
-          <view class="kv"><text>语音识别</text><text>{{speechReady ? '同声传译插件已就绪' : '未启用（走键盘）'}}</text></view>
-          <view class="kv" wx:if="{{speechReason}}"><text>不可用原因</text><text>{{speechReason}}</text></view>
-        </view>
-      </view>
-    </view>
+  <!-- 直记 5 秒撤回提示条 -->
+  <view class="undo-toast" wx:if="{{undoBanner}}">
+    <text class="undo-toast__txt">已记：{{undoBanner.summary}}</text>
+    <text class="undo-toast__btn" bindtap="onUndoAutoPosted">撤</text>
   </view>
 
-  <!--
-    语音大按钮：**固定在屏幕下半部**（拇指可达区），不再跟着内容流在顶部。
-    设计依据：PRD 3.2「大按钮落在单手拇指可达区域」。手机上固定底部；
-    电脑版微信大屏（resizable / .page--wide）恢复成常规布局，不做 fixed。
-  -->
-  <view class="voice-dock">
-    <big-button
-      recording="{{recording}}"
-      durationMs="{{durationMs}}"
-      bars="{{bars}}"
-      softLimit="{{softLimit}}"
-      disabled="{{!degrade.canVoice}}"
-      mode="{{mode}}"
-      bind:start="onStart"
-      bind:stop="onStop"
-      bind:modechange="onModeChange"
-    />
-    <view class="talking" wx:if="{{talkingText}}">{{talkingText}}</view>
-    <view class="error" wx:if="{{errorText}}">{{errorText}}</view>
+  <!-- 说话面板（避让底部 Tab 与说话按钮，避免被遮挡） -->
+  <view class="vsheet-mask" wx:if="{{recording || thinking}}">
+    <view class="vsheet">
+      <view class="vsheet__in">
+        <text class="vsheet__h">{{recording ? '在听…' : '在理解…'}}</text>
+        <text class="vsheet__t">{{talkingText || (recording ? '说完停一下，或者点下面「说完了」' : '正在把这句话变成一笔账')}}</text>
+        <view class="vsheet__btns">
+          <button wx:if="{{recording}}" class="vsheet__stop" bindtap="onStop">说完了</button>
+          <button wx:else class="vsheet__stop vsheet__stop--cancel" bindtap="onCancelThinking">取消</button>
+        </view>
+      </view>
+    </view>
   </view>
 </view>

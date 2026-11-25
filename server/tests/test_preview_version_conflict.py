@@ -132,8 +132,15 @@ def test_inventory_cas_is_a_real_conditional_update(seed) -> None:
 
 
 def test_negative_stock_is_blocked_instead_of_silently_clamped(seed) -> None:
-    """落账后为负 → 明确拒绝（不是「算出来是负数就当 0」）。"""
+    """开启「禁止负库存」时，落账后为负 → 明确拒绝（不是「算出来是负数就当 0」）。"""
+    from app.models.tenant import Tenant
+
     database = seed.database
+    with database.session(bypass_scope=True) as session:
+        tenant = session.get(Tenant, seed.tenant_id)
+        assert tenant is not None
+        tenant.allow_negative = False
+
     with database.session(context=seed.context) as session:
         _, creation = create_card_for(
             seed,

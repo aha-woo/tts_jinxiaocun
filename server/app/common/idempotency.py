@@ -155,7 +155,13 @@ class RedisIdempotencyStore:
         # 延迟导入：未安装 redis 包时也能用内存降级
         from redis import asyncio as redis_asyncio  # noqa: PLC0415
 
-        self._client = redis_asyncio.from_url(url, encoding="utf-8", decode_responses=True)
+        self._client = redis_asyncio.from_url(
+            url,
+            encoding="utf-8",
+            decode_responses=True,
+            socket_timeout=2.0,
+            socket_connect_timeout=2.0,
+        )
         self._ttl = ttl_seconds
         self._prefix = prefix
 
@@ -297,9 +303,13 @@ def build_store(settings: Settings) -> HybridStore:
 
 
 def _cacheable(status_code: int, headers: Mapping[str, str]) -> bool:
-    """只缓存成功/业务失败的 JSON 响应；5xx 与二进制不缓存。"""
+    """只缓存成功或确定性校验失败的 JSON；不缓存 5xx、401/403/409/429 等瞬态或冲突响应。"""
     content_type = headers.get("content-type", "")
-    return "application/json" in content_type.lower() and status_code < 500
+    return (
+        "application/json" in content_type.lower()
+        and status_code < 500
+        and status_code not in {401, 403, 409, 429}
+    )
 
 
 class IdempotencyMiddleware:
@@ -347,7 +357,9 @@ class IdempotencyMiddleware:
             await self.app(scope, receive, send)
             return
 
-        key = f"{_tenant_namespace(scope, self._settings)}:{raw_key.strip()}"
+        method = str(scope.get("method") or "")
+        path = str(scope.get("path") or "")
+        key = f"{_tenant_namespace(scope, self._settings)}:{method}:{path}:{raw_key.strip()}"
 
         state = await self._store.begin(key)
         if state == STATE_IN_PROGRESS:

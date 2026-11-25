@@ -121,19 +121,19 @@ def policy_names(sql: str) -> set[str]:
 
 
 def test_all_34_tables_are_created(pg_sql: str) -> None:
-    """34 张表（架构 §4.3.2 全量）+ alembic_version。"""
+    """全量业务表 + alembic_version。"""
     created = set(re.findall(r"^CREATE TABLE (\w+)", pg_sql, re.M))
     expected = set(all_table_names())
     assert expected == set(all_table_names())  # 防手滑
-    assert len(expected) == EXPECTED_TABLES == 34
+    assert len(expected) == EXPECTED_TABLES == 42
     assert expected <= created, f"缺失建表语句: {sorted(expected - created)}"
     assert created - expected == {"alembic_version"}
 
 
 def test_tenant_table_count_matches_expectation() -> None:
-    """32 张表启用 RLS = 31 张业务表 + 根表 tenant（根表也强制隔离，不搞特权）。"""
+    """租户表启用 RLS = 业务表 + 根表 tenant（根表也强制隔离，不搞特权）。"""
     names = tenant_table_names()
-    assert len(names) == 32
+    assert len(names) == 40
     assert "tenant" in names
     assert PLATFORM_TABLES.isdisjoint(names)
     assert len(Base.metadata.tables) - len(names) == 2  # goods_item / clarifier_templates
@@ -188,17 +188,17 @@ def test_rls_triplet_counts(pg_sql: str) -> None:
     并额外要求修复迁移的 34 条 ``DROP POLICY IF EXISTS`` 确实存在 —— 否则存量库
     升级后仍是会 500 的旧表达式。
     """
-    assert len(re.findall(r"ENABLE ROW LEVEL SECURITY;", pg_sql)) == 32
-    assert len(re.findall(r"FORCE ROW LEVEL SECURITY;", pg_sql)) == 32
+    assert len(re.findall(r"ENABLE ROW LEVEL SECURITY;", pg_sql)) == 40
+    assert len(re.findall(r"FORCE ROW LEVEL SECURITY;", pg_sql)) == 40
 
     names = policy_names(pg_sql)
     assert len(names) == EXPECTED_RLS_POLICIES, (
         f"最终策略 {len(names)} 条 ≠ EXPECTED_RLS_POLICIES={EXPECTED_RLS_POLICIES}"
         "（加策略时必须同步改 config.py 的那一个常量，别只改迁移）"
     )
-    assert len(names) == 34, "32 条租户隔离 + member_login_lookup + xpay_deliver_lookup"
-    assert pg_sql.count("DROP POLICY IF EXISTS") == 34, (
-        "0003 修复迁移必须重建全部 34 条策略（32 隔离 + 2 引导），否则存量库修不干净"
+    assert len(names) == 42, "40 张租户隔离 + member_login_lookup + xpay_deliver_lookup"
+    assert pg_sql.count("DROP POLICY IF EXISTS") == 42, (
+        "0003 修复迁移必须重建全部租户与引导策略，否则存量库修不干净"
     )
 
 
@@ -257,8 +257,8 @@ def test_empty_string_guc_is_treated_as_no_tenant(pg_sql: str) -> None:
     0003 迁移把三处表达式统一改成 ``NULLIF(..., '')``，这里逐条锁住，
     防止有人"简化"回旧写法（SQLite 上永远发现不了，只有真 PG 会红）。
     """
-    assert pg_sql.count("NULLIF(current_setting('app.tenant_id', true), '')::uuid") >= 32, (
-        "租户隔离策略必须把空串 GUC 当 NULL（32 张表各一条）"
+    assert pg_sql.count("NULLIF(current_setting('app.tenant_id', true), '')::uuid") >= 40, (
+        "租户隔离策略必须把空串 GUC 当 NULL"
     )
 
     for policy_name in ("member_login_lookup", "xpay_deliver_lookup"):
@@ -381,6 +381,10 @@ def test_migration_files_exist_in_expected_location() -> None:
         "0001_initial.py",
         "0002_seed.py",
         "0003_fix_rls_empty_guc.py",
+        "0004_inventory_movement.py",
+        "0005_batches.py",
+        "0006_counts.py",
+        "0007_m0_ledger_redesign.py",
     ], "新增迁移必须在这里登记（否则「迁移链是否完整」没有断言）"
 
 

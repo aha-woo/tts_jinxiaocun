@@ -14,12 +14,14 @@
 
 from __future__ import annotations
 
+import hashlib
 from dataclasses import dataclass, field
-from typing import Any, Mapping
+from typing import Any, Mapping, Sequence
 
 from app.domain.intent_registry import IntentRegistry, default_registry
 from app.voice.confidence import BAND_MID, band_of, should_card
-from app.voice.llm_provider import CountingLlmProvider, LlmProviderError, LlmTimeoutError
+from app.voice.conflict_detector import ConflictContext, blocking_conflicts, detect as detect_conflicts
+from app.voice.llm_provider import CountingLlmProvider, LlmProvider, LlmProviderError, LlmTimeoutError
 from app.voice.output_schema import (
     ParseResult,
     SchemaValidationError,
@@ -28,14 +30,14 @@ from app.voice.output_schema import (
 from app.voice.prompt_builder import (
     PromptContext,
     build_static_prefix,
-    build_user_block,
     static_prefix_cache_key,
 )
-from app.voice.prompt_cache import PromptCache, result_key
+from app.voice.prompt_cache import PromptCache, normalize_for_cache, result_key
 
 __all__ = [
     "LlmFallback",
     "LlmOutcome",
+    "verify_grounding",
 ]
 
 #: 修正重试时回灌给模型的提示前缀（把校验问题变成可执行的修改指令）
@@ -60,11 +62,98 @@ class LlmOutcome:
     cache_hit: bool = False
     issues: tuple[str, ...] = ()
     trace: tuple[str, ...] = field(default_factory=tuple)
+    usage: dict[str, int] = field(default_factory=dict)
+    grounding_warnings: tuple[str, ...] = ()
 
     @property
     def intent_id(self) -> str | None:
         """解析出的意图。"""
         return self.result.intent if self.result is not None else None
+
+
+def verify_grounding(
+    result: ParseResult,
+    user_text: str,
+    *,
+    products: Sequence[Any] = (),
+    personal_aliases: Mapping[str, str] = (),
+    store_names: Sequence[str] = (),
+) -> tuple[ParseResult, tuple[str, ...]]:
+    """防幻觉回溯校验：检查模型提取的实体是否在原话/词表中存在，并过一遍 12 类冲突检测。"""
+    norm_utterance = normalize_for_cache(user_text)
+    known_names: set[str] = set()
+    for entry in products:
+        name = str(getattr(entry, "name", "") or "").strip()
+        if name:
+            known_names.add(normalize_for_cache(name))
+        display = str(getattr(entry, "display_name", lambda: "")() or "").strip()
+        if display:
+            known_names.add(normalize_for_cache(display))
+        for alias in getattr(entry, "aliases", ()) or ():
+            if alias:
+                known_names.add(normalize_for_cache(str(alias)))
+    for k, v in (personal_aliases or {}).items():
+        if k:
+            known_names.add(normalize_for_cache(str(k)))
+        if v:
+            known_names.add(normalize_for_cache(str(v)))
+
+    slots = dict(result.slots)
+    source = dict(result.source)
+    warnings: list[str] = []
+
+    for code in ("P", "C", "S"):
+        raw_val = slots.get(code)
+        if not isinstance(raw_val, str) or not raw_val.strip():
+            continue
+        norm_val = normalize_for_cache(raw_val)
+        if not norm_val:
+            continue
+        if code == "P" and norm_val in known_names:
+            continue
+        if norm_val in norm_utterance:
+            continue
+        # 至少要有一定字符重合，否则视为模型凭空捏造
+        overlap = sum(1 for ch in set(norm_val) if ch in norm_utterance)
+        if overlap == 0:
+            source[code] = "pending"
+            slots[code] = None
+            warnings.append(f"槽位 {code}={raw_val!r} 未在原话中出现，已标待确认")
+
+    # 同样过一遍核心语义冲突检测（避免 LLM 绕过「还剩 vs 再入」/「退 vs 卖」/ 负数量 / 金额矛盾）
+    conflicts = detect_conflicts(
+        ConflictContext(
+            text=user_text,
+            intent_id=result.intent,
+            slots=slots,
+            source=source,
+            store_names=tuple(store_names),
+        )
+    )
+    blocking = blocking_conflicts(conflicts)
+    clarify_dict = result.clarify.model_dump() if result.clarify is not None else None
+    route = result.route
+    if blocking:
+        top = blocking[0]
+        warnings.append(f"{top.code}: {top.message}")
+        route = "clarify"
+        if clarify_dict is None:
+            opts = list(top.options[:3]) if len(top.options) >= 2 else ["确认修改", "重新说一遍"]
+            clarify_dict = {
+                "slot": top.clarify_slot or "Q",
+                "question": top.message,
+                "options": opts,
+            }
+
+    if not warnings:
+        return result, ()
+
+    payload = result.model_dump()
+    payload["slots"] = slots
+    payload["source"] = source
+    payload["route"] = route
+    payload["clarify"] = clarify_dict
+    return validate_parse_result(payload), tuple(warnings)
 
 
 class LlmFallback:
@@ -106,11 +195,18 @@ class LlmFallback:
         Returns:
             :class:`LlmOutcome`；``ok=False`` 时调用方按 ``error_code`` 降级。
         """
+        context_hash = hashlib.sha256(
+            "|".join(ctx.recent_contexts).encode("utf-8")
+        ).hexdigest()[:12] if ctx.recent_contexts else ""
         key = result_key(
             tenant_id=ctx.tenant_id,
             contract_version=f"{ctx.contract_version}:{self._registry.version}",
             domain=ctx.domain_hint,
             text=ctx.user_text,
+            today_iso=ctx.today_iso,
+            member_id=ctx.member_id,
+            dict_version=ctx.dict_version,
+            context_hash=context_hash,
         )
         if self._cache is not None:
             cached = self._cache.get(key)
@@ -129,13 +225,16 @@ class LlmFallback:
                         trace=("命中结果缓存，本次未调用模型",),
                     )
 
-        static_prefix = prefix or build_static_prefix(ctx, registry=self._registry)
+        static_prefix = prefix or self._static_prefix(ctx)
         prompt = static_prefix + "\n\n[用户原话]\n" + ctx.user_text.strip()
         trace: list[str] = []
 
         schema = _output_schema()
         issues: tuple[str, ...] = ()
         attempts = 0
+        tokens_in_before = getattr(self._provider, "tokens_in", 0)
+        tokens_out_before = getattr(self._provider, "tokens_out", 0)
+
         for attempt in range(self._max_retries + 1):
             attempts = attempt + 1
             attempt_prompt = prompt
@@ -143,7 +242,10 @@ class LlmFallback:
                 attempt_prompt = _RETRY_TEMPLATE.format(issues="\n".join(f"- {item}" for item in issues)) + prompt
                 trace.append(f"第 {attempts} 次尝试：回灌 {len(issues)} 条校验问题")
             try:
-                raw = self._provider.parse(attempt_prompt, schema)
+                if attempt > 0 and hasattr(self._provider, "parse_strong"):
+                    raw = self._provider.parse_strong(attempt_prompt, schema)  # type: ignore[attr-defined]
+                else:
+                    raw = self._provider.parse(attempt_prompt, schema)
             except LlmTimeoutError:
                 return LlmOutcome(
                     ok=False,
@@ -153,6 +255,7 @@ class LlmFallback:
                     degraded=True,
                     issues=issues,
                     trace=tuple(trace + ["模型超时，降级处理（不扣次）"]),
+                    usage=self._usage_delta(tokens_in_before, tokens_out_before),
                 )
             except LlmProviderError as exc:
                 return LlmOutcome(
@@ -163,6 +266,7 @@ class LlmFallback:
                     degraded=True,
                     issues=issues,
                     trace=tuple(trace + [f"模型调用失败：{exc}（不扣次）"]),
+                    usage=self._usage_delta(tokens_in_before, tokens_out_before),
                 )
 
             try:
@@ -181,19 +285,31 @@ class LlmFallback:
                     error_code=SchemaValidationError.error_code,
                     issues=issues,
                     trace=tuple(trace + ["修正重试已用尽，判定为非法输出（不扣次）"]),
+                    usage=self._usage_delta(tokens_in_before, tokens_out_before),
                 )
 
             final = self._finalize(model, ctx)
-            if self._cache is not None:
-                self._cache.set(key, final.model_dump())
+            grounded, grounding_warnings = verify_grounding(
+                final,
+                ctx.user_text,
+                products=ctx.products,
+                personal_aliases=ctx.personal_aliases,
+                store_names=ctx.store_names,
+            )
+            if grounding_warnings:
+                trace.extend(grounding_warnings)
+            if self._cache is not None and not grounding_warnings:
+                self._cache.set(key, grounded.model_dump())
             trace.append("LLM 输出通过 Schema + 语义校验")
             return LlmOutcome(
                 ok=True,
                 reason="llm_parsed",
-                result=final,
+                result=grounded,
                 attempts=attempts,
                 issues=issues,
                 trace=tuple(trace),
+                usage=self._usage_delta(tokens_in_before, tokens_out_before),
+                grounding_warnings=grounding_warnings,
             )
 
         # 理论不可达（循环内已 return）；保底返回失败而不是静默成功
@@ -204,6 +320,19 @@ class LlmFallback:
             error_code="E_LLM_SCHEMA_INVALID",
             degraded=True,
         )
+
+    def _usage_delta(self, before_in: int, before_out: int) -> dict[str, int]:
+        """提取本次调用产生的真实/估算 token 增量，供 ``CostMonitor.record_pipeline`` 统计。"""
+        if isinstance(self._provider, CountingLlmProvider):
+            return {
+                "tokens_in": max(0, int(self._provider.tokens_in) - int(before_in)),
+                "tokens_out": max(0, int(self._provider.tokens_out) - int(before_out)),
+            }
+        raw_usage = getattr(self._provider, "last_usage", None) or {}
+        return {
+            "tokens_in": int(raw_usage.get("tokens_in", 0) or 0),
+            "tokens_out": int(raw_usage.get("tokens_out", 0) or 0),
+        }
 
     # ------------------------------------------------------------------ 内部
     def _static_prefix(self, ctx: PromptContext) -> str:

@@ -71,11 +71,19 @@ def _old_expression(table_name: str) -> str:
 
 
 def upgrade() -> None:
-    """重建 34 条策略：空串 GUC 视为 NULL（PG only；SQLite 跳过且不假装）。"""
+    """重建策略：空串 GUC 视为 NULL（PG only；SQLite 跳过且不假装）。"""
     if op.get_context().dialect.name != rls.PG_DIALECT:
         return
 
-    for table_name in tenant_tables():
+    from alembic import context as alembic_context
+    import sqlalchemy as sa
+
+    targets = tenant_tables()
+    if not alembic_context.is_offline_mode():
+        existing = set(sa.inspect(op.get_bind()).get_table_names())
+        targets = [t for t in targets if t in existing]
+
+    for table_name in targets:
         op.execute(f"DROP POLICY IF EXISTS {rls.tenant_policy_name(table_name)} ON {table_name}")
         op.execute(
             rls.isolation_policy_sql(

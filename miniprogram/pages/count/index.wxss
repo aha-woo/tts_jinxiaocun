@@ -1,0 +1,158 @@
+/* 盘点（接后端） */
+.cstat {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 26rpx;
+}
+
+.cstat__b {
+  font-family: 'Songti SC', 'Noto Serif SC', serif;
+  font-size: 36rpx;
+  font-weight: 700;
+}
+
+.cstat__mu {
+  color: var(--mu);
+  font-size: 24rpx;
+}
+
+.ci {
+  display: flex;
+  align-items: center;
+  gap: 16rpx;
+  padding: 24rpx;
+  border-top: 2rpx solid var(--ln);
+}
+
+.ci:first-child {
+  border-top: 0;
+}
+
+.ci--done {
+  background: var(--acs);
+}
+
+.ci__md {
+  flex: 1;
+  min-width: 0;
+}
+
+.ci__n {
+  display: block;
+  font-weight: 700;
+  font-size: 30rpx;
+}
+
+.ci__s {
+  display: block;
+  font-size: 22rpx;
+  color: var(--mu);
+  margin-top: 4rpx;
+}
+
+.ci__rt {
+  text-align: right;
+  min-width: 120rpx;
+}
+
+.ci__q {
+  display: block;
+  font-family: 'Songti SC', 'Noto Serif SC', serif;
+  font-size: 30rpx;
+  font-weight: 700;
+}
+
+.ci__d {
+  display: block;
+  font-size: 22rpx;
+  color: var(--act);
+  margin-top: 2rpx;
+}
+
+/* 键盘 */
+.kpsheet {
+  position: fixed;
+  inset: 0;
+  background: rgba(31, 27, 22, 0.45);
+  display: flex;
+  align-items: flex-end;
+  z-index: 70;
+}
+
+.kpsheet__in {
+  width: 100%;
+  background: var(--sf);
+  border-radius: 36rpx 36rpx 0 0;
+  padding: 32rpx 32rpx calc(32rpx + env(safe-area-inset-bottom));
+}
+
+.kpsheet__h {
+  display: block;
+  font-family: 'Songti SC', 'Noto Serif SC', serif;
+  font-size: 30rpx;
+  font-weight: 700;
+  text-align: center;
+  color: var(--mu);
+}
+
+.kpsheet__v {
+  display: block;
+  text-align: center;
+  font-family: 'Songti SC', 'Noto Serif SC', serif;
+  font-size: 72rpx;
+  font-weight: 700;
+  padding: 8rpx 0 20rpx;
+  border-bottom: 2rpx solid var(--ink);
+}
+
+.kp {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 12rpx;
+  margin-top: 20rpx;
+}
+
+.kp__k {
+  height: 100rpx;
+  border-radius: 18rpx;
+  background: var(--bg);
+  font-family: 'Songti SC', 'Noto Serif SC', serif;
+  font-size: 38rpx;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.kp__k:active {
+  background: var(--acs);
+}
+
+.kp__acts {
+  display: flex;
+  gap: 16rpx;
+  margin-top: 16rpx;
+}
+
+.kp__c,
+.kp__ok {
+  flex: 1;
+  height: 96rpx;
+  border-radius: 20rpx;
+  font-size: 30rpx;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.kp__c {
+  border: 2rpx solid var(--ln);
+  background: var(--sf);
+}
+
+.kp__ok {
+  background: var(--ac);
+  color: #fff;
+  font-weight: 700;
+}

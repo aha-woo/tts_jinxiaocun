@@ -1,0 +1,23 @@
+<!-- 商品档案要补：缺进价的商品清单 -->
+<view class="page">
+  <view class="page__gap">
+    <text class="hint">这些货还没有进价，毛利不算它们。补上之后，毛利和报表才准。</text>
+
+    <view wx:if="{{loading}}" class="empty">读取中…</view>
+    <view wx:elif="{{items.length === 0}}" class="empty">没有缺进价的货</view>
+
+    <view wx:else class="card">
+      <view wx:for="{{items}}" wx:key="product_id" class="pg">
+        <view class="pg__l">
+          <text class="pg__t">{{item.name}}</text>
+          <text class="pg__s">{{item.spec || ''}} {{item.base_unit}} · 进价未填</text>
+        </view>
+        <text class="pg__go" data-id="{{item.product_id}}" data-name="{{item.name}}" bindtap="onFill">补进价 ›</text>
+      </view>
+    </view>
+
+    <view wx:if="{{errorText}}" class="bar" style="background:var(--dgrb);border-color:#e0b9b0;color:var(--dgr)">
+      <text>{{errorText}}</text>
+    </view>
+  </view>
+</view>

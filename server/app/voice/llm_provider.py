@@ -22,11 +22,13 @@ token 由 provider 自报（``usage``）；无 ``usage`` 时按 ``len(text)/4`` 
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import dataclass
 from typing import Any, Mapping, Protocol, runtime_checkable
 
 __all__ = [
     "CountingLlmProvider",
+    "FailoverLlmProvider",
     "FakeLlmProvider",
     "LlmCallStats",
     "LlmProvider",
@@ -158,6 +160,24 @@ class CountingLlmProvider:
         )
         return result
 
+    def parse_strong(self, prompt: str, schema: Mapping[str, Any]) -> dict[str, Any]:
+        """升级强模型调用，同样纳入计数与 token 统计。"""
+        inner_fn = getattr(self._inner, "parse_strong", self._inner.parse)
+        try:
+            result = inner_fn(prompt, schema)
+        except LlmTimeoutError:
+            self.stats.record_failure(timeout=True)
+            raise
+        except LlmProviderError:
+            self.stats.record_failure()
+            raise
+        usage = getattr(self._inner, "last_usage", None) or {}
+        self.stats.record(
+            tokens_in=int(usage.get("tokens_in", estimate_tokens(prompt))),
+            tokens_out=int(usage.get("tokens_out", estimate_tokens(json.dumps(result, ensure_ascii=False)))),
+        )
+        return result
+
     def reset(self) -> None:
         """清零统计（长生命周期进程里按租户/按轮次统计用）。"""
         self.stats = LlmCallStats()
@@ -239,7 +259,7 @@ class FakeLlmProvider:
 
 
 class RealLlmProvider:
-    """真实 LLM（httpx）：**构造期即校验凭证**，缺一个就炸，绝不静默降级。"""
+    """真实 LLM（httpx 连接池复用）：**构造期即校验凭证**，缺一个就炸，绝不静默降级。"""
 
     provider_name = "real"
 
@@ -249,8 +269,10 @@ class RealLlmProvider:
         api_key: str,
         base_url: str,
         model: str,
+        vendor: str = "openai_compat",
         timeout_seconds: float = 6.0,
         max_tokens: int = 1024,
+        client: Any = None,
     ) -> None:
         """
         Raises:
@@ -274,34 +296,62 @@ class RealLlmProvider:
         self._api_key = api_key
         self._base_url = base_url.rstrip("/")
         self._model = model
+        self._vendor = (vendor or "openai_compat").strip().lower()
         self._timeout_seconds = timeout_seconds
         self._max_tokens = max_tokens
+        self._client = client
         self.last_usage: dict[str, int] = {}
+
+    def _get_client(self) -> Any:
+        """懒加载并复用 ``httpx.Client`` 连接池（避免每次 TLS 握手）。"""
+        if self._client is None:
+            import httpx
+
+            self._client = httpx.Client(
+                timeout=self._timeout_seconds,
+                limits=httpx.Limits(max_connections=20, max_keepalive_connections=10),
+            )
+        return self._client
+
+    def close(self) -> None:
+        """关闭连接池。"""
+        if self._client is not None:
+            close_fn = getattr(self._client, "close", None)
+            if callable(close_fn):
+                close_fn()
+            self._client = None
 
     def parse(self, prompt: str, schema: Mapping[str, Any]) -> dict[str, Any]:
         """调用 chat/completions 并解析 JSON（超时映射 ``E_LLM_TIMEOUT``）。"""
         import httpx  # 局部导入：本地/测试不需要 httpx 也能 import 本模块
 
-        payload = {
+        payload: dict[str, Any] = {
             "model": self._model,
-            "messages": [
-                {
-                    "role": "system",
-                    "content": "只输出符合给定 JSON Schema 的 JSON，不要解释，不要 Markdown。",
-                },
-                {"role": "user", "content": prompt},
-            ],
-            "response_format": {"type": "json_object", "schema": dict(schema)},
+            "messages": _build_messages(prompt, schema),
+            "response_format": {"type": "json_object"},
             "max_tokens": self._max_tokens,
             "temperature": 0,
         }
+        if self._vendor == "bailian":
+            payload["enable_thinking"] = False
         try:
-            response = httpx.post(
-                f"{self._base_url}/chat/completions",
-                headers={"Authorization": f"Bearer {self._api_key}"},
-                json=payload,
-                timeout=self._timeout_seconds,
-            )
+            url = f"{self._base_url}/chat/completions"
+            headers = {"Authorization": f"Bearer {self._api_key}"}
+            if self._client is None and getattr(httpx.post, "__module__", "") != "httpx._api":
+                response = httpx.post(
+                    url,
+                    headers=headers,
+                    json=payload,
+                    timeout=self._timeout_seconds,
+                )
+            else:
+                client = self._get_client()
+                response = client.post(
+                    url,
+                    headers=headers,
+                    json=payload,
+                    timeout=self._timeout_seconds,
+                )
         except httpx.TimeoutException as exc:
             raise LlmTimeoutError(f"LLM 超时（>{self._timeout_seconds}s）") from exc
         except httpx.HTTPError as exc:  # pragma: no cover - 网络异常分支
@@ -320,11 +370,88 @@ class RealLlmProvider:
             "tokens_in": int(usage.get("prompt_tokens", estimate_tokens(prompt))),
             "tokens_out": int(usage.get("completion_tokens", 0)),
         }
-        content = _extract_content(body)
+        content = _strip_model_wrappers(_extract_content(body))
         try:
             return json.loads(content)
         except json.JSONDecodeError as exc:
             raise LlmProviderError(f"LLM 输出不是合法 JSON: {content[:200]}") from exc
+
+
+class FailoverLlmProvider:
+    """主备国产开源模型自动故障转移 + 强模型升级包装器。"""
+
+    provider_name = "failover"
+
+    def __init__(
+        self,
+        primary: LlmProvider,
+        *,
+        backup: LlmProvider | None = None,
+        strong: LlmProvider | None = None,
+    ) -> None:
+        self._primary = primary
+        self._backup = backup
+        self._strong = strong
+        self.last_usage: dict[str, int] = {}
+        self.last_provider_role: str = "primary"
+
+    def parse(self, prompt: str, schema: Mapping[str, Any]) -> dict[str, Any]:
+        """优先主模型；超时或报错时若有备用模型则透明切换一次。"""
+        try:
+            result = self._primary.parse(prompt, schema)
+            self.last_usage = dict(getattr(self._primary, "last_usage", {}) or {})
+            self.last_provider_role = "primary"
+            return result
+        except LlmProviderError:
+            if self._backup is None:
+                raise
+            result = self._backup.parse(prompt, schema)
+            self.last_usage = dict(getattr(self._backup, "last_usage", {}) or {})
+            self.last_provider_role = "backup"
+            return result
+
+    def parse_strong(self, prompt: str, schema: Mapping[str, Any]) -> dict[str, Any]:
+        """少量疑难样本升级强模型（无强模型时回落备模型/主模型）。"""
+        target = self._strong or self._backup or self._primary
+        role = "strong" if self._strong is not None else ("backup" if self._backup is not None else "primary")
+        try:
+            result = target.parse(prompt, schema)
+            self.last_usage = dict(getattr(target, "last_usage", {}) or {})
+            self.last_provider_role = role
+            return result
+        except LlmProviderError:
+            if target is not self._primary:
+                result = self._primary.parse(prompt, schema)
+                self.last_usage = dict(getattr(self._primary, "last_usage", {}) or {})
+                self.last_provider_role = "primary"
+                return result
+            raise
+
+
+_THINK_TAG_RE = re.compile(r"<think>[\s\S]*?</think>", re.IGNORECASE)
+_CODE_FENCE_RE = re.compile(r"^```(?:json)?\s*([\s\S]*?)\s*```$", re.IGNORECASE)
+
+
+def _strip_model_wrappers(content: str) -> str:
+    """剥离 DeepSeek/Qwen3 思考标签与 Markdown JSON 代码围栏。"""
+    cleaned = _THINK_TAG_RE.sub("", content).strip()
+    fenced = _CODE_FENCE_RE.match(cleaned)
+    if fenced is not None:
+        cleaned = fenced.group(1).strip()
+    return cleaned
+
+
+def _build_messages(prompt: str, schema: Mapping[str, Any]) -> list[dict[str, str]]:
+    """拆分 system 固定指令与 user 输入，适配国产模型前缀缓存。"""
+    schema_hint = json.dumps(dict(schema), ensure_ascii=False, separators=(",", ":"))
+    system_prompt = (
+        "只输出合法 JSON 对象，不要输出解释或 Markdown。"
+        f"严格遵循字段结构：{schema_hint}"
+    )
+    return [
+        {"role": "system", "content": system_prompt},
+        {"role": "user", "content": prompt},
+    ]
 
 
 def _extract_content(body: Mapping[str, Any]) -> str:
@@ -376,13 +503,42 @@ def build_llm_provider(
                 is_production=False,
             )
     elif kind == "real":
-        provider = RealLlmProvider(
+        primary = RealLlmProvider(
             api_key=getattr(settings, "llm_api_key", ""),
             base_url=getattr(settings, "llm_base_url", ""),
             model=getattr(settings, "llm_model", ""),
+            vendor=getattr(settings, "llm_vendor", "openai_compat"),
             timeout_seconds=float(getattr(settings, "llm_timeout_seconds", 6.0)),
             max_tokens=int(getattr(settings, "llm_max_tokens", 1024)),
         )
+        backup: LlmProvider | None = None
+        backup_key = (getattr(settings, "llm_backup_api_key", "") or "").strip()
+        backup_url = (getattr(settings, "llm_backup_base_url", "") or "").strip()
+        backup_model = (getattr(settings, "llm_backup_model", "") or "").strip()
+        if backup_key and backup_url and backup_model:
+            backup = RealLlmProvider(
+                api_key=backup_key,
+                base_url=backup_url,
+                model=backup_model,
+                vendor=getattr(settings, "llm_vendor", "openai_compat"),
+                timeout_seconds=float(getattr(settings, "llm_timeout_seconds", 6.0)),
+                max_tokens=int(getattr(settings, "llm_max_tokens", 1024)),
+            )
+        strong: LlmProvider | None = None
+        strong_model = (getattr(settings, "llm_strong_model", "") or "").strip()
+        if strong_model:
+            strong = RealLlmProvider(
+                api_key=getattr(settings, "llm_api_key", ""),
+                base_url=getattr(settings, "llm_base_url", ""),
+                model=strong_model,
+                vendor=getattr(settings, "llm_vendor", "openai_compat"),
+                timeout_seconds=float(getattr(settings, "llm_timeout_seconds", 6.0)),
+                max_tokens=int(getattr(settings, "llm_max_tokens", 1024)),
+            )
+        if backup is not None or strong is not None:
+            provider = FailoverLlmProvider(primary, backup=backup, strong=strong)
+        else:
+            provider = primary
     else:
         raise ValueError(f"未知 LLM_PROVIDER={kind!r}（只支持 fake / real）")
     return CountingLlmProvider(provider) if wrap_counter else provider

@@ -33,7 +33,10 @@ import sys
 from typing import Any
 
 #: 期望的业务表数（与 config.EXPECTED_TABLES 同口径；这里不 import app 以免依赖顺序）
-EXPECTED_TABLES = 34
+EXPECTED_TABLES = 42
+EXPECTED_RLS_TABLES = 40
+EXPECTED_RLS_POLICIES = 42
+EXPECTED_HEAD_REVISION = "0007_m0_ledger_redesign"
 
 
 def _mask(url: str) -> str:
@@ -126,17 +129,17 @@ def main() -> int:
         print("\n--- 迁移与 RLS ---")
         print(f"alembic_version: {revision}")
         print(f"业务表         : {tables}（期望 {EXPECTED_TABLES}）")
-        print(f"RLS 已启用     : {rls_enabled}（期望 32）")
-        print(f"RLS 已 FORCE   : {rls_forced}（期望 32；缺 FORCE 时表 owner 会绕过）")
-        print(f"策略总数       : {policies}（期望 34 = 32 隔离 + 2 引导）")
+        print(f"RLS 已启用     : {rls_enabled}（期望 {EXPECTED_RLS_TABLES}）")
+        print(f"RLS 已 FORCE   : {rls_forced}（期望 {EXPECTED_RLS_TABLES}；缺 FORCE 时表 owner 会绕过）")
+        print(f"策略总数       : {policies}（期望 {EXPECTED_RLS_POLICIES} = {EXPECTED_RLS_TABLES} 隔离 + 2 引导）")
 
-        checks.append(("迁移已跑到 head", revision == "0003_fix_rls_empty_guc", f"revision={revision}"))
+        checks.append(("迁移已跑到 head", revision == EXPECTED_HEAD_REVISION, f"revision={revision}"))
         checks.append(
             ("业务表齐全", int(tables or 0) == EXPECTED_TABLES, f"tables={tables}")
         )
-        checks.append(("RLS 已启用", int(rls_enabled or 0) == 32, f"enabled={rls_enabled}"))
-        checks.append(("RLS 已 FORCE", int(rls_forced or 0) == 32, f"forced={rls_forced}"))
-        checks.append(("策略数 34", int(policies or 0) == 34, f"policies={policies}"))
+        checks.append(("RLS 已启用", int(rls_enabled or 0) == EXPECTED_RLS_TABLES, f"enabled={rls_enabled}"))
+        checks.append(("RLS 已 FORCE", int(rls_forced or 0) == EXPECTED_RLS_TABLES, f"forced={rls_forced}"))
+        checks.append((f"策略数 {EXPECTED_RLS_POLICIES}", int(policies or 0) == EXPECTED_RLS_POLICIES, f"policies={policies}"))
         checks.append(
             (
                 "应用账号非超级用户（否则 RLS 白装）",

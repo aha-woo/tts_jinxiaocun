@@ -36,7 +36,7 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import select
 
-from app.api.v1._shared import ids_of, require_roles, WRITE_ROLES
+from app.api.v1._shared import BOSS_ONLY, assert_writable, ids_of, require_roles, WRITE_ROLES
 from app.common.envelope import failure, ok
 from app.common.errors import FALLBACK_ERROR_CODE, AppError
 from app.config import Settings
@@ -77,13 +77,11 @@ class OrderRequest(BaseModel):
 
 
 class QueryOrderRequest(BaseModel):
-    """查单入参。"""
+    """查单入参（不得接受客户端传入 ``paid`` 状态）。"""
 
     model_config = ConfigDict(extra="forbid")
 
     out_trade_no: str = Field(min_length=1, max_length=64)
-    #: 平台侧查单结论（真实实现由服务端调 query_order 接口获取，需核实）
-    paid: bool | None = Field(default=None)
 
 
 @router.get("/goods", summary="道具列表（价格来自 goods.json）")
@@ -135,10 +133,12 @@ def create_order(
     idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
 ) -> JSONResponse:
     """生成订单 + ``wx.requestVirtualPayment`` 参数；**前端 success 不发货**。"""
-    require_roles(context, WRITE_ROLES)
+    require_roles(context, BOSS_ONLY)
     ids = ids_of(context)
+    assert_writable(session, ids.tenant_id)
     service = VirtualPaymentService(
         session,
+        settings=settings,
         env=int(settings.virtual_pay_env),
     )
     order = service.create_order(
@@ -370,11 +370,12 @@ def query_order(
     settings: SettingsDep,
 ) -> JSONResponse:
     """推送丢失时补发货；重复调用也只发一次（``deliver_event`` 幂等）。"""
+    require_roles(context, BOSS_ONLY)
     ids = ids_of(context)
-    service = VirtualPaymentService(session, env=int(settings.virtual_pay_env))
+    service = VirtualPaymentService(session, settings=settings, env=int(settings.virtual_pay_env))
     result = service.query_order(
         out_trade_no=payload.out_trade_no,
-        paid=payload.paid,
+        paid=None,
         tenant_id=str(ids.tenant_id),
     )
     return JSONResponse(

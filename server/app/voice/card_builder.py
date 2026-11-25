@@ -28,6 +28,7 @@ from app.config import ContractBundle, get_contracts
 from app.domain.intent_registry import IntentRegistry, IntentSpec, default_registry
 from app.utils.money import format_fen
 from app.voice.conflict_detector import Conflict
+from app.voice.gaps import gaps_for
 from app.voice.impact_preview import PreviewBundle, PreviewItem
 from app.voice.output_schema import ParseResult
 from app.voice.source_tags import PENDING_PLACEHOLDER, display_value, tag_for, validate_sources
@@ -166,10 +167,12 @@ class CardLineView:
     pending: bool = False
     source_map: Mapping[str, str] = field(default_factory=dict)
     calc_trace: str | None = None
+    product_id: str | None = None
+    similar_products: tuple[Mapping[str, str], ...] = ()
 
     def as_dict(self) -> dict[str, Any]:
         """JSON 形态。"""
-        return {
+        data: dict[str, Any] = {
             "product_label": self.product_label,
             "quantity": self.quantity,
             "unit": self.unit,
@@ -181,6 +184,11 @@ class CardLineView:
             "source_map": dict(self.source_map),
             "calc_trace": self.calc_trace,
         }
+        if self.product_id:
+            data["product_id"] = self.product_id
+        if self.similar_products:
+            data["similar_products"] = [dict(item) for item in self.similar_products]
+        return data
 
 
 @dataclass(frozen=True)
@@ -263,8 +271,13 @@ class ConfirmCardView:
         }
 
     def to_payload(self) -> dict[str, Any]:
-        """API 响应体：7 区块 + 落账元信息。"""
+        """API 响应体：7 区块 + 落账元信息 + 待补缺口。"""
         payload = self.blocks()
+        payload["gaps"] = gaps_for(
+            self.intent_id,
+            {slot.code: slot.display for slot in self.slots},
+            {slot.code: slot.source for slot in self.slots},
+        )
         payload["meta"] = {
             "card_id": self.card_id,
             "session_id": self.session_id,
@@ -472,6 +485,8 @@ class ConfirmCardBuilder:
                     pending=pending,
                     source_map=dict(line.get("source_map") or {}),
                     calc_trace=line.get("calc_trace"),
+                    product_id=str(line["product_id"]) if line.get("product_id") else None,
+                    similar_products=tuple(dict(item) for item in (line.get("similar_products") or ())),
                 )
             )
         if views:

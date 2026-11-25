@@ -28,6 +28,32 @@ __all__ = [
     "RatioKey",
 ]
 
+#: 唯一合法来源 + 度量衡通用常数表（严禁把箱/件/瓶等包装换算写进这里）
+STANDARD_WEIGHT_RATIOS: Mapping[tuple[str, str], Decimal] = {
+    ("公斤", "斤"): Decimal("2"),
+    ("斤", "公斤"): Decimal("0.5"),
+    ("千克", "斤"): Decimal("2"),
+    ("斤", "千克"): Decimal("0.5"),
+    ("公斤", "千克"): Decimal("1"),
+    ("千克", "公斤"): Decimal("1"),
+    ("公斤", "克"): Decimal("1000"),
+    ("克", "公斤"): Decimal("0.001"),
+    ("千克", "克"): Decimal("1000"),
+    ("克", "千克"): Decimal("0.001"),
+    ("斤", "克"): Decimal("500"),
+    ("克", "斤"): Decimal("0.002"),
+    ("斤", "两"): Decimal("10"),
+    ("两", "斤"): Decimal("0.1"),
+    ("两", "克"): Decimal("50"),
+    ("克", "两"): Decimal("0.02"),
+}
+
+
+def standard_weight_ratio(from_unit: str, to_unit: str) -> Decimal | None:
+    """标准度量衡自动换算（公斤/千克/斤/两/克）；包装单位返回 ``None`` 强制待教学。"""
+    return STANDARD_WEIGHT_RATIOS.get(((from_unit or "").strip(), (to_unit or "").strip()))
+
+
 #: (product_id, from_unit, to_unit)
 RatioKey = tuple[str, str, str]
 
@@ -123,6 +149,11 @@ def convert_with_ratios(
 
     ratio = provider.ratio(product_id, from_unit, to_unit)
     if ratio is None or ratio <= 0:
+        std_ratio = standard_weight_ratio(from_unit, to_unit)
+        if std_ratio is not None:
+            qty_base = (qty * std_ratio).quantize(Decimal("0.0001"))
+            trace = f"{_fmt_ratio(qty)} {from_unit} × {_fmt_ratio(std_ratio)} = {_fmt_ratio(qty_base)} {to_unit}（标准换算）"
+            return UnitOutcome(True, from_unit, to_unit, float(std_ratio), qty_base, False, "standard_weight", trace)
         # 关键：不给「常见值」兜底，宁可教学
         return UnitOutcome(
             False,

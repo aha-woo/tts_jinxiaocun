@@ -22,7 +22,7 @@ G6     ``output_schema``                 统一 ``ParseResult``（卡片/只读/
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Sequence
+from typing import Any, Mapping, Sequence
 
 from app.domain.intent_registry import IntentRegistry, default_registry
 from app.voice.asr_calibration import calibrate_text
@@ -168,6 +168,9 @@ class VoicePipeline:
         last_date_iso: str | None = None,
         recent_contexts: Sequence[Any] = (),
         tenant_id: str = "-",
+        member_id: str = "",
+        dict_version: int = 0,
+        personal_fixes: Mapping[str, str] | None = None,
         skip_gate: bool = False,
     ) -> PipelineResult:
         """跑完整文本链路（G0 → G6）。
@@ -218,8 +221,8 @@ class VoicePipeline:
                     trace=tuple(trace),
                 )
 
-        # ---- ASR 后处理：同音纠正 ----
-        calibration = calibrate_text(text)
+        # ---- ASR 后处理：同音纠正 + 个人词表替换 ----
+        calibration = calibrate_text(text, personal_fixes=personal_fixes)
         normalized = calibration.text
         correction_count = len(calibration.corrections)
         adjusted_confidence = _adjust(asr_confidence, correction_count)
@@ -327,6 +330,8 @@ class VoicePipeline:
             today_iso=today_iso,
             store_name=self._store_name,
             tenant_id=tenant_id,
+            member_id=member_id,
+            dict_version=dict_version,
             contract_version=self._contract_version,
             domain_hint=template.domain_hint,
             products=_products_of(resolver),

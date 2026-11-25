@@ -1,25 +1,88 @@
-<!-- 待确认：30 秒没确认的单子都在这里，不落账、不重复扣次 -->
+<!-- 待处理（原型 vPending）：没确认 / 要补；要补直接在行上补这一项 -->
 <view class="page">
-  <view class="tip">这些单子还没记账。打开后仍是同一张卡，不会重复扣次数。</view>
-
-  <view class="empty" wx:if="{{!loading && items.length === 0}}">没有待确认的单子</view>
-  <view class="loading" wx:if="{{loading}}">加载中…</view>
-
-  <view wx:for="{{items}}" wx:key="cardId" class="item">
-    <view class="item__main">
-      <text class="item__title">{{item.title}}</text>
-      <text class="item__amount">{{item.amountText}}</text>
+  <view class="page__gap">
+    <view class="seg">
+      <view class="seg__item {{tab === 'unconf' ? 'seg__item--on' : ''}}" data-tab="unconf" bindtap="onTab">
+        没确认 {{unconfCount}}
+      </view>
+      <view class="seg__item {{tab === 'fill' ? 'seg__item--on' : ''}}" data-tab="fill" bindtap="onTab">
+        要补 {{fillCount}}
+      </view>
     </view>
-    <view class="item__meta">
-      <text class="ui-badge {{item.expired ? 'ui-badge--danger' : 'ui-badge--brand'}}">
-        {{item.expired ? '已超时（未记账）' : '待确认'}}
-      </text>
+
+    <text class="hint">
+      {{tab === 'unconf' ? '说过但没点确认的卡。打开后还是同一张卡，不会重复扣次数。' : '账已经记了，就差这一项。点「补」直接填，不用打开整张卡。'}}
+    </text>
+
+    <view class="card">
+      <view wx:if="{{loading}}" class="empty">加载中…</view>
+      <view wx:elif="{{shown.length === 0 && (tab === 'unconf' || ledgerGaps.length === 0)}}" class="empty">
+        {{tab === 'fill' ? '没有要补的' : '都处理完了'}}
+      </view>
+
+      <view
+        wx:for="{{shown}}"
+        wx:key="cardId"
+        class="pend"
+        data-card="{{item.cardId}}"
+        bindtap="onOpen"
+        bindlongpress="onDiscardMenu"
+      >
+        <view class="pend__md">
+          <view class="pend__top">
+            <text class="pend__t">{{item.title}}</text>
+            <text class="tg {{item.expired ? 'tg--waste' : 'tg--owe'}}">{{item.statusText}}</text>
+          </view>
+          <text class="pend__said" wx:if="{{item.said}}">“{{item.said}}”</text>
+        </view>
+        <text
+          wx:if="{{item.gaps.length > 0}}"
+          class="pend__go"
+          data-card="{{item.cardId}}"
+          data-code="{{item.gaps[0].code}}"
+          data-label="{{item.gaps[0].label}}"
+          data-unit="{{item.gaps[0].unit}}"
+          catchtap="onFillStart"
+        >补 {{item.gaps[0].label}} ›</text>
+        <text wx:else class="pend__go">打开 ›</text>
+      </view>
+
+      <!-- 统一账本待补队列（缺进价 / 负库存 / 缺换算等） -->
+      <view
+        wx:if="{{tab === 'fill'}}"
+        wx:for="{{ledgerGaps}}"
+        wx:key="gapId"
+        class="pend"
+        data-gap="{{item.gapId}}"
+        bindtap="onLedgerGapTap"
+      >
+        <view class="pend__md">
+          <view class="pend__top">
+            <text class="pend__t">{{item.title}}</text>
+            <text class="tg {{item.kind === 'negative_stock' ? 'tg--waste' : 'tg--owe'}}">{{item.kindLabel}}</text>
+          </view>
+        </view>
+        <text class="pend__go">{{item.actionLabel}}</text>
+      </view>
     </view>
-    <view class="item__actions">
-      <button class="ui-btn ui-btn--primary item__btn" data-card="{{item.cardId}}" bindtap="onOpen">打开确认</button>
-      <button class="ui-btn ui-btn--ghost item__btn" data-card="{{item.cardId}}" bindtap="onDiscard">丢弃</button>
+
+    <view wx:if="{{errorText}}" class="bar" style="background:var(--dgrb);border-color:#e0b9b0;color:var(--dgr)">
+      <text>{{errorText}}</text>
     </view>
   </view>
 
-  <view class="error" wx:if="{{errorText}}">{{errorText}}</view>
+  <!-- 补数字：大键盘 -->
+  <view class="kpsheet" wx:if="{{editing}}">
+    <view class="kpsheet__in">
+      <text class="kpsheet__h">补 {{editing.label}}</text>
+      <text class="kpsheet__v">{{keypad || '0'}}<text class="kpsheet__u">{{editing.unit}}</text></text>
+      <view class="kp">
+        <view wx:for="{{['1','2','3','4','5','6','7','8','9','.','0','del']}}" wx:key="*this" class="kp__k" data-key="{{item}}" bindtap="onKey">{{item === 'del' ? '删' : item}}</view>
+      </view>
+      <view class="kp__acts">
+        <button class="kp__c" bindtap="onKeyClose">取消</button>
+        <button class="kp__ok" bindtap="onKeyOk">补上</button>
+      </view>
+    </view>
+  </view>
 </view>

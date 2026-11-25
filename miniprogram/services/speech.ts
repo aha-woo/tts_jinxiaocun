@@ -62,6 +62,17 @@ export interface SpeechGateState extends GateState {
 /** 状态回调（与 `AudioGate.onState` 同形）。 */
 export type SpeechListener = (state: SpeechGateState) => void;
 
+/** 端侧语音识别适配器接口（方便未来无痛切换云端 ASR 实现）。 */
+export interface SpeechAdapter {
+  readonly available: boolean;
+  unavailableReason: SpeechUnavailableReason | '';
+  onState(listener: SpeechListener): void;
+  onAutoStop(listener: (result: SpeechResult | null) => void): void;
+  start(): Promise<PrivacyOutcome>;
+  stop(): Promise<SpeechResult | null>;
+  dispose(): void;
+}
+
 /**
  * 同声传译插件的最小类型声明。
  *
@@ -163,7 +174,7 @@ export function pseudoBars(durationMs: number, gotSpeech: boolean): number[] {
  * 插件缺失时**绝不抛错、绝不白屏**：``available === false``，页面据此降级成
  * 「语音未启用、走键盘」，点了也只给一句提示。
  */
-export class SpeechGate {
+export class SpeechGate implements SpeechAdapter {
   /** 插件是否可用（构造期一次性判定；页面用它决定是否显示降级提示） */
   readonly available: boolean;
 
@@ -189,6 +200,12 @@ export class SpeechGate {
   private partialText = '';
 
   private resolver: ((result: SpeechResult | null) => void) | null = null;
+
+  private autoStopListener: ((result: SpeechResult | null) => void) | null = null;
+
+  private autoStopping = false;
+
+  private stopTimeoutTimer: number | null = null;
 
   /**
    * 正在进行的启动流程（隐私授权 → 开始录音）。
@@ -222,6 +239,27 @@ export class SpeechGate {
   /** 绑定状态回调（页面 onLoad 里调一次）；与 `AudioGate.onState` 同形。 */
   onState(listener: SpeechListener): void {
     this.listener = listener;
+  }
+
+  /** 绑定录音到达时长上限自动停止的结果回调（防止 20s 录音静默丢失）。 */
+  onAutoStop(listener: (result: SpeechResult | null) => void): void {
+    this.autoStopListener = listener;
+  }
+
+  /** 页面卸载时清理定时器和回调，避免内存泄漏。 */
+  dispose(): void {
+    this.clearTimer();
+    this.clearStopTimeout();
+    this.listener = null;
+    this.autoStopListener = null;
+    if (this.recording && this.manager !== null) {
+      this.recording = false;
+      try {
+        this.manager.stop();
+      } catch (_error) {
+        // ignore
+      }
+    }
   }
 
   /** 是否正在说话（录音）。 */
@@ -318,6 +356,18 @@ export class SpeechGate {
     }
     return new Promise<SpeechResult | null>((resolve) => {
       this.resolver = resolve;
+      this.clearStopTimeout();
+      this.stopTimeoutTimer = setTimeout(() => {
+        if (this.resolver !== null) {
+          const cb = this.resolver;
+          this.resolver = null;
+          this.recording = false;
+          this.clearTimer();
+          this.emit();
+          wx.showToast({ title: '语音服务响应超时，请重试', icon: 'none' });
+          cb(null);
+        }
+      }, 4000) as unknown as number;
       manager.stop();
     });
   }
@@ -342,15 +392,22 @@ export class SpeechGate {
     manager.onStop = (res: { result?: string }) => {
       this.recording = false;
       this.clearTimer();
+      this.clearStopTimeout();
       const durationMs = Math.max(0, Date.now() - this.startedAt);
       const text = (res.result ?? '').trim();
+      const wasAuto = this.autoStopping;
+      this.autoStopping = false;
       this.emit();
 
       const resolve = this.resolver;
       this.resolver = null;
-      if (resolve === null) {
-        return;
-      }
+      const deliver = (out: SpeechResult | null): void => {
+        if (resolve !== null) {
+          resolve(out);
+        } else if (wasAuto && this.autoStopListener !== null) {
+          this.autoStopListener(out);
+        }
+      };
 
       // 门禁**复用** `audio-gate.ts` 的 judgeRecording，不另立一套阈值。
       // 插件不吐逐帧能量，所以用「有没有听到过内容」合成一个等价能量序列：
@@ -359,21 +416,23 @@ export class SpeechGate {
       const verdict = judgeRecording(durationMs, heard ? [1] : []);
       if (!verdict.ok) {
         wx.showToast({ title: verdict.message, icon: 'none' });
-        resolve(null);
+        deliver(null);
         return;
       }
       if (text === '') {
         // 门禁过了（时长够、也听到过动静），但插件最后没给文字：按「没听清」处理
         wx.showToast({ title: '没听清，再说一遍', icon: 'none' });
-        resolve(null);
+        deliver(null);
         return;
       }
-      resolve({ text, durationMs });
+      deliver({ text, durationMs });
     };
 
     manager.onError = (res: { errMsg?: string; msg?: string; retmsg?: string; retcode?: number }) => {
       this.recording = false;
+      this.autoStopping = false;
       this.clearTimer();
+      this.clearStopTimeout();
       this.emit();
       // 插件错误对象的字段名不统一（errMsg / msg / retmsg），且常常只带 retcode。
       // 原样打进 console 便于排查；toast 只显示短文案（太长会被截断）。
@@ -393,7 +452,9 @@ export class SpeechGate {
   /** 每 100ms 刷一次状态；到硬上限自己停（与 `AudioGate.tick()` 同一逻辑）。 */
   private tick(): void {
     if (Date.now() - this.startedAt >= GATE.hardMaxMs) {
-      void this.stop();
+      this.autoStopping = true;
+      this.clearTimer();
+      this.manager?.stop();
       return;
     }
     this.emit();
@@ -403,6 +464,13 @@ export class SpeechGate {
     if (this.timer !== null) {
       clearInterval(this.timer);
       this.timer = null;
+    }
+  }
+
+  private clearStopTimeout(): void {
+    if (this.stopTimeoutTimer !== null) {
+      clearTimeout(this.stopTimeoutTimer);
+      this.stopTimeoutTimer = null;
     }
   }
 

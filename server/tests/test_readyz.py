@@ -58,7 +58,7 @@ def test_readyz_reports_db_and_isolation(client: TestClient) -> None:
 
     data = body["data"]
     assert data["database"]["reachable"] is True
-    assert data["database"]["tables"] == EXPECTED_TABLES == 34
+    assert data["database"]["tables"] == EXPECTED_TABLES == 42
     assert data["database"]["tables_ok"] is True
     assert data["database"]["dialect"] == "sqlite"
 

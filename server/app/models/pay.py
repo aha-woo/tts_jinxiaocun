@@ -15,7 +15,7 @@ from __future__ import annotations
 import uuid
 from datetime import datetime
 
-from sqlalchemy import BigInteger, CheckConstraint, Index, Integer, String, Text, UniqueConstraint
+from sqlalchemy import BigInteger, CheckConstraint, DateTime, Index, Integer, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.models.base import Base, TenantMixin, created_at_column, uuid_pk
@@ -28,8 +28,8 @@ class Entitlement(Base, TenantMixin):
 
     entitlement_id: Mapped[uuid.UUID] = uuid_pk()
     plan_code: Mapped[str] = mapped_column(String(16), nullable=False, server_default="free")
-    valid_from: Mapped[datetime] = mapped_column(nullable=False)
-    valid_until: Mapped[datetime] = mapped_column(nullable=False)
+    valid_from: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    valid_until: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     #: 付费已发放语音额度（与 usage_ledger 的消耗口径分离）
     quota_granted: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
     remaining: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")

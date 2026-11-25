@@ -20,6 +20,8 @@ dependencies = [
   "psycopg[binary]>=3.1,<4",
   # JWT：wx.login -> openid -> tenant_id
   "PyJWT>=2.8,<3",
+  # 微信平台证书验签（RSA-SHA256）
+  "cryptography>=42.0,<45",
   # 微信 code2session（RealWxProvider）；FakeWxProvider 不走网络
   "httpx>=0.27,<1",
 ]

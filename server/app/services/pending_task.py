@@ -139,11 +139,11 @@ class PendingTaskService:
             payload=dict(payload or {}),
             status="pending",
         )
-        self._session.add(task)
         try:
-            self._session.flush()
+            with self._session.begin_nested():
+                self._session.add(task)
+                self._session.flush()
         except IntegrityError:
-            self._session.rollback()
             existing = self._find(tenant_id, session_id, intent_id)
             if existing is None:  # pragma: no cover - 唯一约束冲突后必然能查到
                 raise

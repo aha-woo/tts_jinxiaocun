@@ -48,8 +48,8 @@ export function devCall(request: DevRequest): Promise<DevResponse> {
   return new Promise<DevResponse>((resolve, reject) => {
     wx.request({
       url: `${DEV_BASE_URL}${request.path}`,
-      // 微信 wx.request 的类型声明里没有 PATCH（平台限制），dev 通道降级成 POST
-      method: request.method === 'PATCH' ? 'POST' : request.method,
+      // 保留真实 HTTP 方法（如 PATCH），避免后端报 405
+      method: request.method as unknown as 'POST',
       header: request.header,
       data: request.data,
       timeout: request.timeout,

@@ -5,10 +5,10 @@ from __future__ import annotations
 import uuid
 from datetime import date, datetime
 
-from sqlalchemy import CheckConstraint, Date, Index, String, Text, UniqueConstraint
+from sqlalchemy import CheckConstraint, Date, DateTime, Index, Integer, String, Text, UniqueConstraint, Uuid
 from sqlalchemy.orm import Mapped, mapped_column
 
-from app.models.base import Base, JSONType, TenantMixin, created_at_column, uuid_pk
+from app.models.base import Base, JSONType, StoreScopedMixin, TenantMixin, created_at_column, uuid_pk
 
 
 class PendingTask(Base, TenantMixin):
@@ -90,4 +90,49 @@ class ExportJob(Base, TenantMixin):
         Index("ix_export_job_tenant_id_status", "tenant_id", "status"),
         CheckConstraint("status IN ('queued','running','done','failed')", name="ck_export_job_status"),
         CheckConstraint("file_format IN ('csv','xlsx')", name="ck_export_job_format"),
+    )
+
+
+class Gap(Base, TenantMixin, StoreScopedMixin):
+    """统一待处理条目（负库存 / 缺进价 / 缺金额 / 缺往来 / 未确认卡 / 疑似重货）。"""
+
+    __tablename__ = "gap"
+
+    gap_id: Mapped[uuid.UUID] = uuid_pk()
+    kind: Mapped[str] = mapped_column(String(32), nullable=False)
+    ref_entity: Mapped[str] = mapped_column(String(32), nullable=False)
+    ref_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
+    title: Mapped[str] = mapped_column(Text, nullable=False)
+    detail_json: Mapped[dict | None] = mapped_column(JSONType, nullable=True)
+    priority: Mapped[int] = mapped_column(Integer, nullable=False, server_default="50")
+    status: Mapped[str] = mapped_column(String(16), nullable=False, server_default="open")
+    snoozed_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    resolved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = created_at_column()
+
+    __table_args__ = (
+        Index("ix_gap_open", "tenant_id", "store_id", "status", "priority", "created_at"),
+        CheckConstraint(
+            "kind IN ('missing_cost','missing_amount','missing_partner','negative_stock','unconfirmed','dup_suspect','unit_change','expiring_batch')",
+            name="ck_gap_kind",
+        ),
+        CheckConstraint("status IN ('open','snoozed','resolved')", name="ck_gap_status"),
+    )
+
+
+class Attachment(Base, TenantMixin, StoreScopedMixin):
+    """凭证附件（拍进货单原图与识别 JSON，随单据存档）。"""
+
+    __tablename__ = "attachment"
+
+    attachment_id: Mapped[uuid.UUID] = uuid_pk()
+    doc_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True)
+    kind: Mapped[str] = mapped_column(String(24), nullable=False, server_default="delivery_note")
+    object_ref: Mapped[str] = mapped_column(Text, nullable=False)
+    ocr_json: Mapped[dict | None] = mapped_column(JSONType, nullable=True)
+    created_by: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
+    created_at: Mapped[datetime] = created_at_column()
+
+    __table_args__ = (
+        Index("ix_attachment_doc", "tenant_id", "doc_id"),
     )

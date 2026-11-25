@@ -104,34 +104,4 @@ export function rememberSpokenText(text: string, nowMs = Date.now()): void {
   writeRecords(records);
 }
 
-let lastScope = '';
-let lastWindow = 0;
-let lastKey = '';
-
-/**
- * 生成幂等键（同一作用域 + 同一 60s 窗口内**稳定**）。
- *
- * ⚠️ 语义提醒：稳定是刻意的——用户点「确认」两下必须复用同一个键，
- * 服务端才能识别成同一次操作；换一张卡片（card_id 变了）作用域自然就变了。
- *
- * @param scope 作用域（如 `POST:/api/v1/voice/cards/x/confirm`）
- * @param nowMs 当前时间戳（注入便于测试）
- * @returns 幂等键字符串
- */
-export function nextIdempotencyKey(scope: string, nowMs = Date.now()): string {
-  const window = Math.floor(nowMs / DEDUPE_WINDOW_MS);
-  if (scope === lastScope && window === lastWindow && lastKey !== '') {
-    return lastKey;
-  }
-  lastScope = scope;
-  lastWindow = window;
-  lastKey = `${scope}#${window}`;
-  return lastKey;
-}
-
-/** 强制换一个幂等键（用户明确要「重新提交」时用）。 */
-export function resetIdempotencyKey(): void {
-  lastScope = '';
-  lastWindow = 0;
-  lastKey = '';
-}
+export { nextIdempotencyKey, resetIdempotencyKey } from '../services/idempotency';
