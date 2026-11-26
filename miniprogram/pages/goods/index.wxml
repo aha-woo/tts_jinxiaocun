@@ -2,9 +2,13 @@
 <view class="page {{wide ? 'page--wide' : ''}}">
   <view class="page__gap">
     <view class="goods-bar">
-      <button class="cta cta--ink goods-bar__cta" bindtap="onStartCount">开始盘点 · 边说边数</button>
+      <button class="cta cta--ink goods-bar__cta" bindtap="onStartCount">
+        <view class="ico ico--btn ico--count-white"></view>
+        <text>开始盘点 · 边说边数</text>
+      </button>
 
       <view class="goods-search">
+        <view class="ico ico--sm ico--search-mu"></view>
         <input
           class="goods-search__in"
           value="{{keyword}}"
@@ -28,7 +32,10 @@
     </view>
 
     <view wx:if="{{gapsCount > 0 && !costHidden}}" class="bar" bindtap="onGoGaps">
-      <text>有 {{gapsCount}} 件货缺进价，补上毛利才准</text>
+      <view class="bar__lead">
+        <view class="ico ico--sm ico--warn-wn"></view>
+        <text>有 {{gapsCount}} 件货缺进价，补上毛利才准</text>
+      </view>
       <text class="bar__more">去补</text>
     </view>
 

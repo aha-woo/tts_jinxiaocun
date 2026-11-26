@@ -25,3 +25,13 @@
   font-size: 30rpx;
   line-height: 1.55;
 }
+
+.manual-photo-btn {
+  margin: 0;
+}
+
+.manual-photo-btn__in {
+  display: inline-flex;
+  align-items: center;
+  gap: 8rpx;
+}

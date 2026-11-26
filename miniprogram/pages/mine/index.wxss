@@ -62,6 +62,19 @@
   background: var(--acs);
 }
 
+.mi__lead {
+  display: flex;
+  align-items: center;
+  gap: 20rpx;
+  min-width: 0;
+  flex: 1;
+}
+
+.mi__body {
+  min-width: 0;
+  flex: 1;
+}
+
 .mi__t {
   display: block;
   font-size: 30rpx;
@@ -126,6 +139,10 @@
     padding: 14px 20px;
     border-top-width: 1px;
     cursor: pointer;
+  }
+
+  .mi__lead {
+    gap: 12px;
   }
 
   .mi:hover {

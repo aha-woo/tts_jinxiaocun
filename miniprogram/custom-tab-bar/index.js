@@ -2,12 +2,12 @@ Component({
   data: {
     selected: 0,
     left: [
-      { index: 0, pagePath: '/pages/index/index', text: '今天' },
-      { index: 1, pagePath: '/pages/goods/index', text: '货品' },
+      { index: 0, key: 'today', pagePath: '/pages/index/index', text: '今天' },
+      { index: 1, key: 'goods', pagePath: '/pages/goods/index', text: '货品' },
     ],
     right: [
-      { index: 2, pagePath: '/pages/debts/index', text: '欠款' },
-      { index: 3, pagePath: '/pages/mine/index', text: '我的' },
+      { index: 2, key: 'debts', pagePath: '/pages/debts/index', text: '欠款' },
+      { index: 3, key: 'mine', pagePath: '/pages/mine/index', text: '我的' },
     ],
   },
 

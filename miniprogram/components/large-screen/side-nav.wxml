@@ -7,7 +7,10 @@
     data-key="{{item.key}}"
     bindtap="onSelect"
   >
-    <text class="item__label">{{item.label}}</text>
+    <view class="item__lead">
+      <view class="nav-ico nav-ico--{{item.key}}"></view>
+      <text class="item__label">{{item.label}}</text>
+    </view>
     <text class="item__lock" wx:if="{{item.bossOnly && !isBoss}}">老板</text>
   </view>
 </view>

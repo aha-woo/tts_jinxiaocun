@@ -13,9 +13,14 @@
       </view>
 
       <view class="card dsum">
-        <view>
-          <text class="dsum__k">{{tab === 'in' ? '一共有人欠你' : '你一共欠别人'}}</text>
-          <text class="dsum__v serif-num">¥{{sumText}}</text>
+        <view class="dsum__lead">
+          <view class="ico-badge {{tab === 'in' ? 'ico-badge--wn' : 'ico-badge--ac'}}">
+            <view class="ico {{tab === 'in' ? 'ico--ar-wn' : 'ico--ap-ac'}}"></view>
+          </view>
+          <view>
+            <text class="dsum__k">{{tab === 'in' ? '一共有人欠你' : '你一共欠别人'}}</text>
+            <text class="dsum__v serif-num">¥{{sumText}}</text>
+          </view>
         </view>
         <text class="dsum__n">{{shown.length}} 个人</text>
       </view>
@@ -54,7 +59,12 @@
         <!-- 左栏：别人欠我 -->
         <view class="card debt-col">
           <view class="debt-col__head">
-            <text class="debt-col__title">别人欠我 · 应收</text>
+            <view class="debt-col__lead">
+              <view class="ico-badge ico-badge--sm ico-badge--wn">
+                <view class="ico ico--sm ico--ar-wn"></view>
+              </view>
+              <text class="debt-col__title">别人欠我 · 应收</text>
+            </view>
             <text class="debt-col__meta">{{inRows.length}} 户 · ¥{{inSumText}}</text>
           </view>
           <view wx:if="{{loading}}" class="empty">读取中…</view>
@@ -75,7 +85,12 @@
         <!-- 右栏：我欠别人 -->
         <view class="card debt-col">
           <view class="debt-col__head">
-            <text class="debt-col__title">我欠别人 · 应付</text>
+            <view class="debt-col__lead">
+              <view class="ico-badge ico-badge--sm ico-badge--ac">
+                <view class="ico ico--sm ico--ap-ac"></view>
+              </view>
+              <text class="debt-col__title">我欠别人 · 应付</text>
+            </view>
             <text class="debt-col__meta">{{outRows.length}} 户 · ¥{{outSumText}}</text>
           </view>
           <view wx:if="{{loading}}" class="empty">读取中…</view>

@@ -3,12 +3,12 @@
     <view
       wx:for="{{left}}"
       wx:key="pagePath"
-      class="tb__i {{selected === item.index ? 'tb__i--on' : ''}}"
+      class="tb__i {{selected === item.index ? 'tb__i--on tb__i--' + item.key : ''}}"
       data-index="{{item.index}}"
       bindtap="onTab"
     >
-      <text>{{item.text}}</text>
-      <view class="tb__dot" wx:if="{{selected === item.index}}"></view>
+      <view class="tb__ico tb__ico--{{item.key}} {{selected === item.index ? 'tb__ico--on' : ''}}"></view>
+      <text class="tb__txt">{{item.text}}</text>
     </view>
 
     <view class="tb__gap"></view>
@@ -16,16 +16,17 @@
     <view
       wx:for="{{right}}"
       wx:key="pagePath"
-      class="tb__i {{selected === item.index ? 'tb__i--on' : ''}}"
+      class="tb__i {{selected === item.index ? 'tb__i--on tb__i--' + item.key : ''}}"
       data-index="{{item.index}}"
       bindtap="onTab"
     >
-      <text>{{item.text}}</text>
-      <view class="tb__dot" wx:if="{{selected === item.index}}"></view>
+      <view class="tb__ico tb__ico--{{item.key}} {{selected === item.index ? 'tb__ico--on' : ''}}"></view>
+      <text class="tb__txt">{{item.text}}</text>
     </view>
   </view>
 
   <view class="tb__mic" bindtap="onMic">
+    <view class="tb__mic-ico"></view>
     <text class="tb__mic-t">说</text>
   </view>
 </view>

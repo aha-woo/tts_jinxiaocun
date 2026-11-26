@@ -819,3 +819,168 @@ page {
     padding: 10px 20px;
   }
 }
+
+/* ==========================================================================
+ * Style D 语义彩标图标系统（纯本地 base64 SVG，兼容手机端与电脑版微信）
+ * ========================================================================== */
+.bar__lead {
+  display: flex;
+  align-items: center;
+  gap: 12rpx;
+  min-width: 0;
+  flex: 1;
+}
+
+.ico-badge {
+  width: 64rpx;
+  height: 64rpx;
+  border-radius: 18rpx;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.ico-badge--sm {
+  width: 44rpx;
+  height: 44rpx;
+  border-radius: 12rpx;
+}
+
+.ico-badge--ac {
+  background: var(--acs);
+}
+
+.ico-badge--ok {
+  background: var(--okb);
+}
+
+.ico-badge--wn {
+  background: var(--wnb);
+}
+
+.ico-badge--vl {
+  background: var(--vlb);
+}
+
+.ico-badge--dgr {
+  background: var(--dgrb);
+}
+
+.ico {
+  width: 36rpx;
+  height: 36rpx;
+  flex-shrink: 0;
+  background-repeat: no-repeat;
+  background-position: center;
+  background-size: contain;
+}
+
+.ico--sm {
+  width: 28rpx;
+  height: 28rpx;
+}
+
+.ico--btn {
+  width: 32rpx;
+  height: 32rpx;
+  margin-right: 10rpx;
+}
+
+.ico--photo {
+  background-image: url("data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNCAyNCIgZmlsbD0ibm9uZSIgc3Ryb2tlPSIjYzI0MTBjIiBzdHJva2Utd2lkdGg9IjIiIHN0cm9rZS1saW5lY2FwPSJyb3VuZCIgc3Ryb2tlLWxpbmVqb2luPSJyb3VuZCI+PHBhdGggZD0iTTQgOFY2YTIgMiAwIDAgMSAyLTJoMk0xNiA0aDJhMiAyIDAgMCAxIDIgMnYyTTIwIDE2djJhMiAyIDAgMCAxLTIgMmgtMk04IDIwSDZhMiAyIDAgMCAxLTItMnYtMiIvPjxwYXRoIGQ9Ik04IDEyaDhNMTIgOHY4Ii8+PC9zdmc+");
+}
+
+.ico--photo-white {
+  background-image: url("data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNCAyNCIgZmlsbD0ibm9uZSIgc3Ryb2tlPSIjZmZmZmZmIiBzdHJva2Utd2lkdGg9IjIiIHN0cm9rZS1saW5lY2FwPSJyb3VuZCIgc3Ryb2tlLWxpbmVqb2luPSJyb3VuZCI+PHBhdGggZD0iTTQgOFY2YTIgMiAwIDAgMSAyLTJoMk0xNiA0aDJhMiAyIDAgMCAxIDIgMnYyTTIwIDE2djJhMiAyIDAgMCAxLTIgMmgtMk04IDIwSDZhMiAyIDAgMCAxLTItMnYtMiIvPjxyZWN0IHg9IjgiIHk9IjgiIHdpZHRoPSI4IiBoZWlnaHQ9IjgiIHJ4PSIxLjUiLz48L3N2Zz4=");
+}
+
+.ico--manual {
+  background-image: url("data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNCAyNCIgZmlsbD0ibm9uZSIgc3Ryb2tlPSIjMzU1YTM1IiBzdHJva2Utd2lkdGg9IjIiIHN0cm9rZS1saW5lY2FwPSJyb3VuZCIgc3Ryb2tlLWxpbmVqb2luPSJyb3VuZCI+PHJlY3QgeD0iNCIgeT0iNCIgd2lkdGg9IjE2IiBoZWlnaHQ9IjE2IiByeD0iMyIvPjxwYXRoIGQ9Ik04IDEwaDhNOCAxNGg1Ii8+PC9zdmc+");
+}
+
+.ico--pending-wn {
+  background-image: url("data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNCAyNCIgZmlsbD0ibm9uZSIgc3Ryb2tlPSIjOTQ1NjBhIiBzdHJva2Utd2lkdGg9IjIiIHN0cm9rZS1saW5lY2FwPSJyb3VuZCIgc3Ryb2tlLWxpbmVqb2luPSJyb3VuZCI+PHBhdGggZD0iTTE4IDhhNiA2IDAgMSAwLTEyIDBjMCA3LTMgOC0zIDhoMThzLTMtMS0zLTgiLz48cGF0aCBkPSJNMTAuMyAyMGEyIDIgMCAwIDAgMy40IDAiLz48L3N2Zz4=");
+}
+
+.ico--warn-wn {
+  background-image: url("data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNCAyNCIgZmlsbD0ibm9uZSIgc3Ryb2tlPSIjOTQ1NjBhIiBzdHJva2Utd2lkdGg9IjIiIHN0cm9rZS1saW5lY2FwPSJyb3VuZCIgc3Ryb2tlLWxpbmVqb2luPSJyb3VuZCI+PGNpcmNsZSBjeD0iMTIiIGN5PSIxMiIgcj0iOSIvPjxwYXRoIGQ9Ik0xMiA4djVNMTIgMTYuNWguMDEiLz48L3N2Zz4=");
+}
+
+.ico--shield-ok {
+  background-image: url("data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNCAyNCIgZmlsbD0ibm9uZSIgc3Ryb2tlPSIjMzU1YTM1IiBzdHJva2Utd2lkdGg9IjIiIHN0cm9rZS1saW5lY2FwPSJyb3VuZCIgc3Ryb2tlLWxpbmVqb2luPSJyb3VuZCI+PHBhdGggZD0iTTEyIDNsNyAzdjUuNWMwIDQuNS0zIDcuOC03IDkuNS00LTEuNy03LTUtNy05LjVWNmw3LTN6Ii8+PHBhdGggZD0iTTkgMTJsMiAyIDQtNCIvPjwvc3ZnPg==");
+}
+
+.ico--search-mu {
+  background-image: url("data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNCAyNCIgZmlsbD0ibm9uZSIgc3Ryb2tlPSIjN2M3MzY3IiBzdHJva2Utd2lkdGg9IjIiIHN0cm9rZS1saW5lY2FwPSJyb3VuZCIgc3Ryb2tlLWxpbmVqb2luPSJyb3VuZCI+PGNpcmNsZSBjeD0iMTEiIGN5PSIxMSIgcj0iNi41Ii8+PHBhdGggZD0iTTE2IDE2bDQuNSA0LjUiLz48L3N2Zz4=");
+}
+
+.ico--count-white {
+  background-image: url("data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNCAyNCIgZmlsbD0ibm9uZSIgc3Ryb2tlPSIjZmZmZmZmIiBzdHJva2Utd2lkdGg9IjIiIHN0cm9rZS1saW5lY2FwPSJyb3VuZCIgc3Ryb2tlLWxpbmVqb2luPSJyb3VuZCI+PHJlY3QgeD0iNSIgeT0iNCIgd2lkdGg9IjE0IiBoZWlnaHQ9IjE3IiByeD0iMi41Ii8+PHBhdGggZD0iTTkgNGg2TTkgMTFsMiAyIDQtNE05IDE2aDUiLz48L3N2Zz4=");
+}
+
+.ico--ar-wn {
+  background-image: url("data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNCAyNCIgZmlsbD0ibm9uZSIgc3Ryb2tlPSIjOTQ1NjBhIiBzdHJva2Utd2lkdGg9IjIiIHN0cm9rZS1saW5lY2FwPSJyb3VuZCIgc3Ryb2tlLWxpbmVqb2luPSJyb3VuZCI+PGNpcmNsZSBjeD0iMTIiIGN5PSIxMiIgcj0iOSIvPjxwYXRoIGQ9Ik0xNSA5bC02IDZNOSAxMHY1aDUiLz48L3N2Zz4=");
+}
+
+.ico--ap-ac {
+  background-image: url("data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNCAyNCIgZmlsbD0ibm9uZSIgc3Ryb2tlPSIjYzI0MTBjIiBzdHJva2Utd2lkdGg9IjIiIHN0cm9rZS1saW5lY2FwPSJyb3VuZCIgc3Ryb2tlLWxpbmVqb2luPSJyb3VuZCI+PGNpcmNsZSBjeD0iMTIiIGN5PSIxMiIgcj0iOSIvPjxwYXRoIGQ9Ik05IDE1bDYtNk0xMCA5aDV2NSIvPjwvc3ZnPg==");
+}
+
+.ico--dict-ac {
+  background-image: url("data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNCAyNCIgZmlsbD0ibm9uZSIgc3Ryb2tlPSIjYzI0MTBjIiBzdHJva2Utd2lkdGg9IjIiIHN0cm9rZS1saW5lY2FwPSJyb3VuZCIgc3Ryb2tlLWxpbmVqb2luPSJyb3VuZCI+PHBhdGggZD0iTTQgNWgxNnYxMUg5bC01IDRWNXoiLz48cGF0aCBkPSJNOCA5LjVoOE04IDEyLjVoNSIvPjwvc3ZnPg==");
+}
+
+.ico--staff-vl {
+  background-image: url("data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNCAyNCIgZmlsbD0ibm9uZSIgc3Ryb2tlPSIjNGEzZDczIiBzdHJva2Utd2lkdGg9IjIiIHN0cm9rZS1saW5lY2FwPSJyb3VuZCIgc3Ryb2tlLWxpbmVqb2luPSJyb3VuZCI+PGNpcmNsZSBjeD0iOSIgY3k9IjguNSIgcj0iMyIvPjxwYXRoIGQ9Ik0zLjUgMTljMS0yLjggMy00LjIgNS41LTQuMnM0LjUgMS40IDUuNSA0LjIiLz48cGF0aCBkPSJNMTYgMTFoNU0xOC41IDguNXY1Ii8+PC9zdmc+");
+}
+
+.ico--summary-ok {
+  background-image: url("data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNCAyNCIgZmlsbD0ibm9uZSIgc3Ryb2tlPSIjMzU1YTM1IiBzdHJva2Utd2lkdGg9IjIiIHN0cm9rZS1saW5lY2FwPSJyb3VuZCIgc3Ryb2tlLWxpbmVqb2luPSJyb3VuZCI+PHBhdGggZD0iTTQgMTdsNS01IDQgMyA3LTgiLz48cGF0aCBkPSJNMTYgN2g0djQiLz48L3N2Zz4=");
+}
+
+.ico--plan-wn {
+  background-image: url("data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNCAyNCIgZmlsbD0ibm9uZSIgc3Ryb2tlPSIjOTQ1NjBhIiBzdHJva2Utd2lkdGg9IjIiIHN0cm9rZS1saW5lY2FwPSJyb3VuZCIgc3Ryb2tlLWxpbmVqb2luPSJyb3VuZCI+PHBhdGggZD0iTTQgOGEyIDIgMCAwIDEgMi0yaDEyYTIgMiAwIDAgMSAyIDJ2Mi41YTEuNSAxLjUgMCAwIDAgMCAzVjE2YTIgMiAwIDAgMS0yIDJINmEyIDIgMCAwIDEtMi0ydi0yLjVhMS41IDEuNSAwIDAgMCAwLTNWOHoiLz48cGF0aCBkPSJNMTAgMTBoNE0xMCAxNGg0Ii8+PC9zdmc+");
+}
+
+.ico--export-ok {
+  background-image: url("data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNCAyNCIgZmlsbD0ibm9uZSIgc3Ryb2tlPSIjMzU1YTM1IiBzdHJva2Utd2lkdGg9IjIiIHN0cm9rZS1saW5lY2FwPSJyb3VuZCIgc3Ryb2tlLWxpbmVqb2luPSJyb3VuZCI+PHJlY3QgeD0iMyIgeT0iNCIgd2lkdGg9IjE4IiBoZWlnaHQ9IjEyIiByeD0iMiIvPjxwYXRoIGQ9Ik04IDIwaDhNMTIgMTZ2NCIvPjwvc3ZnPg==");
+}
+
+.ico--inv-vl {
+  background-image: url("data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNCAyNCIgZmlsbD0ibm9uZSIgc3Ryb2tlPSIjNGEzZDczIiBzdHJva2Utd2lkdGg9IjIiIHN0cm9rZS1saW5lY2FwPSJyb3VuZCIgc3Ryb2tlLWxpbmVqb2luPSJyb3VuZCI+PHBhdGggZD0iTTQgN2gxNk00IDEyaDE2TTQgMTdoMTYiLz48Y2lyY2xlIGN4PSI5IiBjeT0iNyIgcj0iMS44IiBmaWxsPSIjZTllNGYxIi8+PGNpcmNsZSBjeD0iMTUiIGN5PSIxMiIgcj0iMS44IiBmaWxsPSIjZTllNGYxIi8+PGNpcmNsZSBjeD0iMTAiIGN5PSIxNyIgcj0iMS44IiBmaWxsPSIjZTllNGYxIi8+PC9zdmc+");
+}
+
+@media (min-width: 768px) {
+  .bar__lead {
+    gap: 8px;
+  }
+
+  .ico-badge {
+    width: 34px;
+    height: 34px;
+    border-radius: 9px;
+  }
+
+  .ico-badge--sm {
+    width: 24px;
+    height: 24px;
+    border-radius: 6px;
+  }
+
+  .ico {
+    width: 18px;
+    height: 18px;
+  }
+
+  .ico--sm {
+    width: 15px;
+    height: 15px;
+  }
+
+  .ico--btn {
+    width: 16px;
+    height: 16px;
+    margin-right: 6px;
+  }
+}

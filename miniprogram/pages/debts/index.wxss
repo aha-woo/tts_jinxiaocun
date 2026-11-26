@@ -12,6 +12,12 @@
   align-items: center;
 }
 
+.dsum__lead {
+  display: flex;
+  align-items: center;
+  gap: 20rpx;
+}
+
 .dsum__k {
   display: block;
   font-size: 24rpx;
@@ -125,6 +131,12 @@
   padding: 14px 20px;
   background: #f7f3ea;
   border-bottom: 1px solid var(--ln);
+}
+
+.debt-col__lead {
+  display: flex;
+  align-items: center;
+  gap: 8px;
 }
 
 .debt-col__title {

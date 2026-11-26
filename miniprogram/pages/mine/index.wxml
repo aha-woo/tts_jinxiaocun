@@ -46,9 +46,14 @@
     <view class="mine-col-right">
       <view class="card">
         <view class="mi" bindtap="onToggleDict">
-          <view>
-            <text class="mi__t">说法本</text>
-            <text class="mi__s">你和店里教过的说法，{{aliasCount}} 条</text>
+          <view class="mi__lead">
+            <view class="ico-badge ico-badge--ac">
+              <view class="ico ico--dict-ac"></view>
+            </view>
+            <view class="mi__body">
+              <text class="mi__t">说法本</text>
+              <text class="mi__s">你和店里教过的说法，{{aliasCount}} 条</text>
+            </view>
           </view>
           <text class="mi__ar">{{dictOpen ? '⌄' : '›'}}</text>
         </view>
@@ -60,9 +65,14 @@
           <button class="sub" style="margin-top:12rpx;height:72rpx;font-size:26rpx" bindtap="onAddDict">+ 教一个说法</button>
         </view>
         <view class="mi" bindtap="onToggleMembers">
-          <view>
-            <text class="mi__t">店里的人</text>
-            <text class="mi__s">共 {{members.length}} 人 · 邀请或停用店员</text>
+          <view class="mi__lead">
+            <view class="ico-badge ico-badge--vl">
+              <view class="ico ico--staff-vl"></view>
+            </view>
+            <view class="mi__body">
+              <text class="mi__t">店里的人</text>
+              <text class="mi__s">共 {{members.length}} 人 · 邀请或停用店员</text>
+            </view>
           </view>
           <text class="mi__ar">{{membersOpen ? '⌄' : '›'}}</text>
         </view>
@@ -77,37 +87,62 @@
           </view>
         </view>
         <view wx:if="{{isBoss}}" class="mi" bindtap="onSendClosingSummary">
-          <view>
-            <text class="mi__t">今日收摊总结</text>
-            <text class="mi__s">三账核对体检 + 一键看收摊简报</text>
+          <view class="mi__lead">
+            <view class="ico-badge ico-badge--ok">
+              <view class="ico ico--summary-ok"></view>
+            </view>
+            <view class="mi__body">
+              <text class="mi__t">今日收摊总结</text>
+              <text class="mi__s">三账核对体检 + 一键看收摊简报</text>
+            </view>
           </view>
           <text class="mi__ar">›</text>
         </view>
         <view class="mi" bindtap="onGoPay">
-          <view>
-            <text class="mi__t">套餐</text>
-            <text class="mi__s">次数、续期、发票</text>
+          <view class="mi__lead">
+            <view class="ico-badge ico-badge--wn">
+              <view class="ico ico--plan-wn"></view>
+            </view>
+            <view class="mi__body">
+              <text class="mi__t">套餐</text>
+              <text class="mi__s">次数、续期、发票</text>
+            </view>
           </view>
           <text class="mi__ar">›</text>
         </view>
         <view class="mi" bindtap="onGoAdmin">
-          <view>
-            <text class="mi__t">导出全部账 / 电脑上用</text>
-            <text class="mi__s">在电脑版微信里打开导出 Excel 并转发</text>
+          <view class="mi__lead">
+            <view class="ico-badge ico-badge--ok">
+              <view class="ico ico--export-ok"></view>
+            </view>
+            <view class="mi__body">
+              <text class="mi__t">导出全部账 / 电脑上用</text>
+              <text class="mi__s">在电脑版微信里打开导出 Excel 并转发</text>
+            </view>
           </view>
           <text class="mi__ar">›</text>
         </view>
         <view class="mi" bindtap="onGoPending">
-          <view>
-            <text class="mi__t">待处理</text>
-            <text class="mi__s">要补的、没确认的</text>
+          <view class="mi__lead">
+            <view class="ico-badge ico-badge--wn">
+              <view class="ico ico--pending-wn"></view>
+            </view>
+            <view class="mi__body">
+              <text class="mi__t">待处理</text>
+              <text class="mi__s">要补的、没确认的</text>
+            </view>
           </view>
           <text class="mi__ar">›</text>
         </view>
         <view class="mi" bindtap="onGoInventory">
-          <view>
-            <text class="mi__t">库存设置</text>
-            <text class="mi__s">成本法、负库存、批次余量</text>
+          <view class="mi__lead">
+            <view class="ico-badge ico-badge--vl">
+              <view class="ico ico--inv-vl"></view>
+            </view>
+            <view class="mi__body">
+              <text class="mi__t">库存设置</text>
+              <text class="mi__s">成本法、负库存、批次余量</text>
+            </view>
           </view>
           <text class="mi__ar">›</text>
         </view>
