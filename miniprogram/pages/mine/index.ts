@@ -20,6 +20,7 @@ import {
   type NoviceStatus,
 } from '../../services/api';
 import { ensureLogin } from '../../services/auth';
+import { isWideScreen } from '../../utils/screen';
 
 const ROLE_LABELS: Record<string, string> = {
   boss: '老板',
@@ -29,6 +30,7 @@ const ROLE_LABELS: Record<string, string> = {
 };
 
 interface MineData {
+  wide: boolean;
   displayName: string;
   storeName: string;
   roleLabel: string;
@@ -49,6 +51,7 @@ interface MineData {
 
 Page<MineData, WechatMiniprogram.Page.CustomOption>({
   data: {
+    wide: false,
     displayName: '店主',
     storeName: '本店',
     roleLabel: '老板',
@@ -71,8 +74,12 @@ Page<MineData, WechatMiniprogram.Page.CustomOption>({
     const bar = (this as unknown as { getTabBar?: () => { setData: (d: object) => void } }).getTabBar?.();
     bar?.setData({ selected: 3 });
     const savedSize = (wx.getStorageSync('dsh:fontSize') as string) === 'std' ? 'std' : 'big';
-    this.setData({ fontSize: savedSize });
+    this.setData({ wide: isWideScreen(), fontSize: savedSize });
     void this.load();
+  },
+
+  onResize() {
+    this.setData({ wide: isWideScreen() });
   },
 
   async load(): Promise<void> {

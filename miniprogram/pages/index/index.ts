@@ -36,6 +36,7 @@ import {
 import { ensureLogin } from '../../services/auth';
 import { rememberSpokenText, wasSaidRecently } from '../../utils/dedupe';
 import { formatDateTime } from '../../utils/format';
+import { isWideScreen } from '../../utils/screen';
 
 /** 降级态（L0 正常 → L4 只读）：UI 上必须**看得出来差别**，不能只写进配置。 */
 export interface DegradeView {
@@ -232,7 +233,7 @@ Page<IndexData, WechatMiniprogram.Page.CustomOption>({
     const app = getApp<IAppOption>();
     app.detectScreen();
     const savedSize = (wx.getStorageSync('dsh:fontSize') as string) === 'std' ? 'std' : 'big';
-    this.setData({ wide: app.globalData.screen === 'wide', fontSize: savedSize });
+    this.setData({ wide: app.globalData.screen === 'wide' || isWideScreen(), fontSize: savedSize });
     this.refreshHeader();
 
     // Tab 中间键：回到今天页并请求开始/结束说话
@@ -252,6 +253,12 @@ Page<IndexData, WechatMiniprogram.Page.CustomOption>({
     }
 
     void this.loadDashboard();
+  },
+
+  onResize() {
+    const app = getApp<IAppOption>();
+    app.detectScreen();
+    this.setData({ wide: isWideScreen() });
   },
 
   async loadDashboard(): Promise<void> {

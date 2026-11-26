@@ -1,4 +1,10 @@
-/* 欠款页：合计卡 + 往来行 */
+/* 欠款页：手机端合计卡 + 往来行；电脑版微信大屏（>=768px）应收/应付并排双栏 */
+.debt-mobile {
+  display: flex;
+  flex-direction: column;
+  gap: 24rpx;
+}
+
 .dsum {
   padding: 28rpx;
   display: flex;
@@ -43,6 +49,7 @@
 
 .al__l {
   min-width: 0;
+  flex: 1;
 }
 
 .al__name {
@@ -62,4 +69,127 @@
   font-size: 32rpx;
   font-weight: 700;
   white-space: nowrap;
+}
+
+/* 电脑版微信大屏（>=768px）：KPI 汇总条 + 应收/应付左右并排 */
+.debt-desktop {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.debt-kpis {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  padding: 16px 8px;
+}
+
+.debt-kpi {
+  text-align: center;
+  padding: 0 12px;
+}
+
+.debt-kpi + .debt-kpi {
+  border-left: 1px solid var(--ln);
+}
+
+.debt-kpi__k {
+  display: block;
+  font-size: 12px;
+  color: var(--mu);
+}
+
+.debt-kpi__v {
+  display: block;
+  font-size: 26px;
+  font-weight: 700;
+  margin-top: 4px;
+  color: var(--wn);
+}
+
+.debt-kpi__v--out {
+  color: var(--ink);
+}
+
+.debt-cols {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 20px;
+  align-items: start;
+}
+
+.debt-col__head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 14px 20px;
+  background: #f7f3ea;
+  border-bottom: 1px solid var(--ln);
+}
+
+.debt-col__title {
+  font-family: 'Songti SC', 'Noto Serif SC', serif;
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--ink);
+}
+
+.debt-col__meta {
+  font-size: 12px;
+  color: var(--mu);
+}
+
+.al-desk {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 13px 20px;
+  border-top: 1px solid var(--ln);
+  cursor: pointer;
+}
+
+.al-desk:first-of-type {
+  border-top: 0;
+}
+
+.al-desk:hover {
+  background: #faf6ee;
+}
+
+.al-desk .al__name {
+  font-size: 15px;
+}
+
+.al-desk .al__sub {
+  font-size: 12px;
+  margin-top: 2px;
+}
+
+.al-desk .al__amt {
+  font-size: 16px;
+}
+
+.al-desk__btns {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.al-btn {
+  padding: 5px 10px;
+  border-radius: 8px;
+  border: 1px solid var(--ln);
+  background: var(--sf);
+  color: var(--ink);
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.al-btn--main {
+  background: var(--acs);
+  border-color: #eabaa0;
+  color: var(--act);
 }

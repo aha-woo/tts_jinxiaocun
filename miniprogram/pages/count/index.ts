@@ -16,6 +16,7 @@ import {
 import { ensureLogin } from '../../services/auth';
 import { SpeechGate, type SpeechResult } from '../../services/speech';
 import { appendNumericKey } from '../../utils/format';
+import { isWideScreen } from '../../utils/screen';
 
 interface CountDisplayLine extends CountLineRow {
   hasDiff: boolean;
@@ -24,6 +25,7 @@ interface CountDisplayLine extends CountLineRow {
 }
 
 interface CountData {
+  wide: boolean;
   loading: boolean;
   countId: string;
   resumedOpen: boolean;
@@ -40,6 +42,7 @@ interface CountData {
 
 Page<CountData, WechatMiniprogram.Page.CustomOption>({
   data: {
+    wide: false,
     loading: true,
     countId: '',
     resumedOpen: false,
@@ -57,6 +60,7 @@ Page<CountData, WechatMiniprogram.Page.CustomOption>({
   speechGate: null as SpeechGate | null,
 
   onLoad() {
+    this.setData({ wide: isWideScreen() });
     this.speechGate = new SpeechGate();
     this.speechGate.onAutoStop((said: SpeechResult | null) => {
       if (said !== null) {
@@ -64,6 +68,14 @@ Page<CountData, WechatMiniprogram.Page.CustomOption>({
       }
     });
     void this.init(false);
+  },
+
+  onShow() {
+    this.setData({ wide: isWideScreen() });
+  },
+
+  onResize() {
+    this.setData({ wide: isWideScreen() });
   },
 
   onUnload() {

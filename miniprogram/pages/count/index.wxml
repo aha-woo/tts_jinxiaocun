@@ -1,14 +1,19 @@
-<!-- 盘点（接后端） -->
-<view class="page">
+<!-- 盘点（接后端）：手机端单列；电脑版微信大屏（>=768px）桌面工具栏 + 2 列盘点卡网格 -->
+<view class="page {{wide ? 'page--wide' : ''}}">
   <view class="page__gap">
-    <view class="cstat">
-      <text>已数 <text class="cstat__b">{{counted}}</text> 样</text>
-      <text class="cstat__mu">共 {{lines.length}} 样 · 没填的不算 0</text>
-    </view>
+    <view class="count-top">
+      <view class="cstat">
+        <text>已数 <text class="cstat__b">{{counted}}</text> 样</text>
+        <text class="cstat__mu">共 {{lines.length}} 样 · 没填的不算 0</text>
+      </view>
 
-    <view class="c-actions">
-      <view class="c-act-btn" bindtap="onVoiceBatch">🎙 {{recordingVoice ? '说完点此识别' : '语音连说盘点'}}</view>
-      <view class="c-act-btn" bindtap="onRestartCount">↻ 重开新盘点</view>
+      <view class="c-actions">
+        <view class="c-act-btn" bindtap="onVoiceBatch">🎙 {{recordingVoice ? '说完点此识别' : '语音连说盘点'}}</view>
+        <view class="c-act-btn" bindtap="onRestartCount">↻ 重开新盘点</view>
+        <button class="cta cta--ink count-top__apply" bindtap="onApply" loading="{{applying}}" disabled="{{counted === 0 || applying}}">
+          {{counted === 0 ? '先数几样再应用' : '应用盘点（写差异流水）'}}
+        </button>
+      </view>
     </view>
 
     <view wx:if="{{resumedOpen}}" class="bar" style="background:var(--sf);border-color:var(--ln)">
@@ -18,7 +23,7 @@
     <view wx:if="{{loading}}" class="empty">正在开盘点…</view>
     <view wx:elif="{{lines.length === 0}}" class="empty">还没有库存可以盘</view>
 
-    <view wx:else class="card">
+    <view wx:else class="card count-grid">
       <view
         wx:for="{{lines}}"
         wx:key="product_id"
@@ -28,7 +33,7 @@
       >
         <view class="ci__md">
           <text class="ci__n">{{item.name || item.product_id}}</text>
-          <text class="ci__s">账面 {{item.qty_book}} {{item.unit}}</text>
+          <text class="ci__s">账面 {{item.qty_book}} {{item.unit}}{{item.reason ? ' · ' + item.reason : ''}}</text>
         </view>
         <view class="ci__rt">
           <text class="ci__q">{{item.qty_counted !== null ? item.qty_counted : '没数'}}</text>
@@ -39,7 +44,7 @@
       </view>
     </view>
 
-    <button class="cta cta--ink" bindtap="onApply" loading="{{applying}}" disabled="{{counted === 0 || applying}}">
+    <button class="cta cta--ink count-bottom-apply" bindtap="onApply" loading="{{applying}}" disabled="{{counted === 0 || applying}}">
       {{counted === 0 ? '先数几样再应用' : '应用盘点（写差异流水）'}}
     </button>
 

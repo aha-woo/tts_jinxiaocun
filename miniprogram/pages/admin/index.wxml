@@ -19,31 +19,110 @@
 
     <!-- 档案 -->
     <view class="panel" wx:if="{{active === 'profile'}}">
-      <view class="panel__title">商品与库存</view>
-      <view wx:for="{{rows}}" wx:key="text" class="row">{{item.text}}</view>
+      <view class="panel__title">商品与库存（共 {{stockRows.length}} 件）</view>
+      <view wx:if="{{stockRows.length === 0}}" class="row">暂无商品档案</view>
+      <view wx:else class="atbl">
+        <view class="atbl__head atbl__head--stock">
+          <text>商品名称</text>
+          <text>规格 / 单位</text>
+          <text class="atbl__num">当前库存</text>
+          <text class="atbl__num">参考进价</text>
+          <text>状态</text>
+        </view>
+        <view wx:for="{{stockRows}}" wx:key="id" class="atbl__row atbl__row--stock">
+          <text class="atbl__strong">{{item.name}}</text>
+          <text class="atbl__muted">{{item.specUnit}}</text>
+          <text class="atbl__num {{item.negative ? 'atbl__danger' : ''}}">{{item.stock}}</text>
+          <text class="atbl__num">{{item.costText}}</text>
+          <text class="atbl__tag {{item.negative ? 'atbl__tag--danger' : ''}}">{{item.statusText}}</text>
+        </view>
+      </view>
     </view>
 
     <!-- 单据 -->
     <view class="panel" wx:if="{{active === 'docs'}}">
       <view class="panel__title">单据（撤销不删单，会生成一张反向单）</view>
-      <view wx:for="{{rows}}" wx:key="text" class="row">{{item.text}}</view>
+      <view wx:if="{{docRows.length === 0}}" class="row">暂无单据记录</view>
+      <view wx:else class="atbl">
+        <view class="atbl__head atbl__head--docs">
+          <text>单号</text>
+          <text>业务日期</text>
+          <text>类型</text>
+          <text>结算状态</text>
+          <text class="atbl__num">金额</text>
+          <text>状态</text>
+        </view>
+        <view wx:for="{{docRows}}" wx:key="docId" class="atbl__row atbl__row--docs {{item.reversed ? 'atbl__row--rev' : ''}}">
+          <text class="atbl__strong">{{item.docNo}}</text>
+          <text class="atbl__muted">{{item.bizDate}}</text>
+          <text>{{item.typeLabel}}</text>
+          <text class="atbl__muted">{{item.paymentLabel}}</text>
+          <text class="atbl__num atbl__strong">{{item.amountText}}</text>
+          <text class="atbl__tag {{item.reversed ? 'atbl__tag--danger' : ''}}">{{item.statusLabel}}</text>
+        </view>
+      </view>
     </view>
 
     <!-- 报表 -->
     <view class="panel" wx:if="{{active === 'report'}}">
       <view class="panel__title">报表（今日 / 本月 / 毛利）</view>
-      <view wx:for="{{rows}}" wx:key="text" class="row">{{item.text}}</view>
+      <view class="rep-grid">
+        <view wx:for="{{reportCards}}" wx:key="key" class="rep-card">
+          <view class="rep-card__head">
+            <text class="rep-card__title">{{item.title}}</text>
+            <text class="rep-card__date">{{item.bizDate}}</text>
+          </view>
+          <view class="rep-card__kv">
+            <text class="rep-card__k">销售额</text>
+            <text class="rep-card__v serif-num">{{item.sales}}</text>
+          </view>
+          <view class="rep-card__kv">
+            <text class="rep-card__k">进货额</text>
+            <text class="rep-card__v serif-num">{{item.purchase}}</text>
+          </view>
+          <view class="rep-card__kv">
+            <text class="rep-card__k">毛利额</text>
+            <text class="rep-card__v rep-card__v--accent serif-num">{{item.profit}}</text>
+          </view>
+          <view class="rep-card__foot">
+            <text>单据 {{item.docCount}} 笔</text>
+            <text>应收 {{item.receivable}} · 应付 {{item.payable}}</text>
+          </view>
+        </view>
+      </view>
+
+      <view class="panel__title" style="margin-top:20px" wx:if="{{topProducts.length > 0}}">近 7 天热销商品 Top {{topProducts.length}}</view>
+      <view class="atbl" wx:if="{{topProducts.length > 0}}">
+        <view class="atbl__head atbl__head--top">
+          <text>排名</text>
+          <text>商品</text>
+          <text class="atbl__num">销量</text>
+          <text class="atbl__num">销售额</text>
+        </view>
+        <view wx:for="{{topProducts}}" wx:key="name" class="atbl__row atbl__row--top">
+          <text class="atbl__muted">#{{item.rank}}</text>
+          <text class="atbl__strong">{{item.name}}</text>
+          <text class="atbl__num">{{item.qty}}</text>
+          <text class="atbl__num atbl__strong">{{item.amount}}</text>
+        </view>
+      </view>
     </view>
 
     <!-- 用量与套餐 -->
     <view class="panel" wx:if="{{active === 'usage'}}">
-      <view class="panel__title">本月用量（自然月）</view>
-      <view class="row" wx:if="{{usageView}}">
-        已用 {{usageView.used}} / {{usageView.quota}} 次
-      </view>
-      <view class="panel__title">套餐（30 天滚动窗口）</view>
-      <view class="row" wx:if="{{entitlementView}}">
-        {{entitlementView.plan_name}}：剩 {{entitlementView.remaining_quota}} 次 / {{entitlementView.days_left}} 天
+      <view class="usage-grid">
+        <view class="usage-box">
+          <view class="panel__title">本月用量（自然月）</view>
+          <view class="row" wx:if="{{usageView}}">
+            已用 {{usageView.used}} / {{usageView.quota}} 次
+          </view>
+        </view>
+        <view class="usage-box">
+          <view class="panel__title">套餐（30 天滚动窗口）</view>
+          <view class="row" wx:if="{{entitlementView}}">
+            {{entitlementView.plan_name}}：剩 {{entitlementView.remaining_quota}} 次 / {{entitlementView.days_left}} 天
+          </view>
+        </view>
       </view>
       <view class="row muted">{{usageNote}}</view>
     </view>

@@ -1,115 +1,121 @@
-<!-- 我的：真实资料 + 记账方式 + 确认方式 + 字号 + 说法本 + 入口 -->
-<view class="page {{fontSize === 'big' ? 'page--big' : ''}}">
-  <view class="page__gap">
-    <view class="hello">
-      <view>
-        <view class="hello__t">{{displayName}}</view>
-        <text class="hello__sub">{{storeName}} · {{roleLabel}}</text>
+<!-- 我的：手机端单列；电脑版微信大屏（>=768px）左偏好与看板 + 右功能入口双栏 -->
+<view class="page {{fontSize === 'big' ? 'page--big' : ''}} {{wide ? 'page--wide' : ''}}">
+  <view class="page__gap mine-grid">
+    <!-- 左栏：店主资料 + 今日营业额 + 记账/确认/字号设置 -->
+    <view class="mine-col-left">
+      <view class="hello">
+        <view>
+          <view class="hello__t">{{displayName}}</view>
+          <text class="hello__sub">{{storeName}} · {{roleLabel}}</text>
+        </view>
       </view>
-    </view>
 
-    <view class="card est">
-      <text class="est__k">今日卖了 · 毛利约</text>
-      <text class="est__v serif-num">{{monthlySell}} · {{monthlyProfit}}</text>
-      <text class="est__note">来自今日真实单据汇总</text>
-    </view>
+      <view class="card est">
+        <text class="est__k">今日卖了 · 毛利约</text>
+        <text class="est__v serif-num">{{monthlySell}} · {{monthlyProfit}}</text>
+        <text class="est__note">来自今日真实单据汇总</text>
+      </view>
 
-    <text class="sec">记账方式</text>
-    <view class="card mine-card">
+      <text class="sec">记账方式</text>
+      <view class="card mine-card">
+        <view class="seg">
+          <view class="seg__item {{mode === 'each' ? 'seg__item--on' : ''}}" data-mode="each" bindtap="onMode">逐笔记</view>
+          <view class="seg__item {{mode === 'count' ? 'seg__item--on' : ''}}" data-mode="count" bindtap="onMode">进货 + 盘点倒推</view>
+        </view>
+        <text class="mine-hint">{{mode === 'each' ? '每卖一笔都说。盘点时差额当作「可能漏记」提醒你。' : '只记进货、赊账、退货。卖了多少靠盘点倒推。'}}</text>
+      </view>
+
+      <text class="sec">语音确认方式</text>
+      <view class="card mine-card">
+        <view class="seg">
+          <view class="seg__item {{confirmMode === 'always' ? 'seg__item--on' : ''}}" data-confirm="always" bindtap="onConfirmMode">每笔都确认</view>
+          <view class="seg__item {{confirmMode === 'auto' ? 'seg__item--on' : ''}}" data-confirm="auto" bindtap="onConfirmMode">有把握直接记</view>
+        </view>
+        <text class="mine-hint" wx:if="{{novice && novice.in_novice}}">新手期 {{novice.count}}/{{novice.target}}：系统还在熟悉你的口音，每笔都会先给你看确认卡。</text>
+        <text class="mine-hint" wx:else>{{confirmMode === 'auto' ? '老货高频单直接入账（底部 5 秒可点撤销），陌生货或欠账仍弹确认卡。' : '无论老货新货，每句话都先弹卡片确认后再记账。'}}</text>
+      </view>
+
+      <text class="sec">字号</text>
       <view class="seg">
-        <view class="seg__item {{mode === 'each' ? 'seg__item--on' : ''}}" data-mode="each" bindtap="onMode">逐笔记</view>
-        <view class="seg__item {{mode === 'count' ? 'seg__item--on' : ''}}" data-mode="count" bindtap="onMode">进货 + 盘点倒推</view>
-      </view>
-      <text class="mine-hint">{{mode === 'each' ? '每卖一笔都说。盘点时差额当作「可能漏记」提醒你。' : '只记进货、赊账、退货。卖了多少靠盘点倒推。'}}</text>
-    </view>
-
-    <text class="sec">语音确认方式</text>
-    <view class="card mine-card">
-      <view class="seg">
-        <view class="seg__item {{confirmMode === 'always' ? 'seg__item--on' : ''}}" data-confirm="always" bindtap="onConfirmMode">每笔都确认</view>
-        <view class="seg__item {{confirmMode === 'auto' ? 'seg__item--on' : ''}}" data-confirm="auto" bindtap="onConfirmMode">有把握直接记</view>
-      </view>
-      <text class="mine-hint" wx:if="{{novice && novice.in_novice}}">新手期 {{novice.count}}/{{novice.target}}：系统还在熟悉你的口音，每笔都会先给你看确认卡。</text>
-      <text class="mine-hint" wx:else>{{confirmMode === 'auto' ? '老货高频单直接入账（底部 5 秒可点撤销），陌生货或欠账仍弹确认卡。' : '无论老货新货，每句话都先弹卡片确认后再记账。'}}</text>
-    </view>
-
-    <text class="sec">字号</text>
-    <view class="seg">
-      <view class="seg__item {{fontSize === 'big' ? 'seg__item--on' : ''}}" data-size="big" bindtap="onFontSize">大</view>
-      <view class="seg__item {{fontSize === 'std' ? 'seg__item--on' : ''}}" data-size="std" bindtap="onFontSize">标准</view>
-    </view>
-
-    <view class="card">
-      <view class="mi" bindtap="onToggleDict">
-        <view>
-          <text class="mi__t">说法本</text>
-          <text class="mi__s">你和店里教过的说法，{{aliasCount}} 条</text>
-        </view>
-        <text class="mi__ar">{{dictOpen ? '⌄' : '›'}}</text>
-      </view>
-      <view wx:if="{{dictOpen}}" style="padding:0 24rpx 20rpx;border-top:2rpx solid var(--ln)">
-        <view wx:for="{{dictItems}}" wx:key="dict_id" style="display:flex;justify-content:space-between;align-items:center;padding:12rpx 0;font-size:26rpx">
-          <text>{{item.raw_text}}（{{item.mapped_type}}）</text>
-          <text style="color:var(--dgr)" data-id="{{item.dict_id}}" bindtap="onDeleteDict">删除</text>
-        </view>
-        <button class="sub" style="margin-top:12rpx;height:72rpx;font-size:26rpx" bindtap="onAddDict">+ 教一个说法</button>
-      </view>
-      <view class="mi" bindtap="onToggleMembers">
-        <view>
-          <text class="mi__t">店里的人</text>
-          <text class="mi__s">共 {{members.length}} 人 · 邀请或停用店员</text>
-        </view>
-        <text class="mi__ar">{{membersOpen ? '⌄' : '›'}}</text>
-      </view>
-      <view wx:if="{{membersOpen}}" style="padding:0 24rpx 20rpx;border-top:2rpx solid var(--ln)">
-        <view wx:for="{{members}}" wx:key="member_id" style="display:flex;justify-content:space-between;align-items:center;padding:12rpx 0;font-size:26rpx">
-          <text>{{item.name}}（{{item.role}} · {{item.status === 'active' ? '正常' : '已停用'}}）</text>
-          <text wx:if="{{isBoss && !item.is_self}}" style="color:{{item.status === 'active' ? 'var(--dgr)' : 'var(--ac)'}}" data-id="{{item.member_id}}" data-status="{{item.status}}" bindtap="onToggleMemberStatus">{{item.status === 'active' ? '停用' : '启用'}}</text>
-        </view>
-        <view style="display:flex;gap:12rpx;margin-top:12rpx">
-          <button wx:if="{{isBoss}}" class="sub" style="flex:1;height:72rpx;font-size:24rpx" bindtap="onCreateInvite">+ 生成店员邀请码</button>
-          <button class="sub" style="flex:1;height:72rpx;font-size:24rpx" bindtap="onJoinByInvite">输入邀请码入店</button>
-        </view>
-      </view>
-      <view wx:if="{{isBoss}}" class="mi" bindtap="onSendClosingSummary">
-        <view>
-          <text class="mi__t">今日收摊总结</text>
-          <text class="mi__s">三账核对体检 + 一键看收摊简报</text>
-        </view>
-        <text class="mi__ar">›</text>
-      </view>
-      <view class="mi" bindtap="onGoPay">
-        <view>
-          <text class="mi__t">套餐</text>
-          <text class="mi__s">次数、续期、发票</text>
-        </view>
-        <text class="mi__ar">›</text>
-      </view>
-      <view class="mi" bindtap="onGoAdmin">
-        <view>
-          <text class="mi__t">导出全部账 / 电脑上用</text>
-          <text class="mi__s">在电脑版微信里打开导出 Excel 并转发</text>
-        </view>
-        <text class="mi__ar">›</text>
-      </view>
-      <view class="mi" bindtap="onGoPending">
-        <view>
-          <text class="mi__t">待处理</text>
-          <text class="mi__s">要补的、没确认的</text>
-        </view>
-        <text class="mi__ar">›</text>
-      </view>
-      <view class="mi" bindtap="onGoInventory">
-        <view>
-          <text class="mi__t">库存设置</text>
-          <text class="mi__s">成本法、负库存、批次余量</text>
-        </view>
-        <text class="mi__ar">›</text>
+        <view class="seg__item {{fontSize === 'big' ? 'seg__item--on' : ''}}" data-size="big" bindtap="onFontSize">大</view>
+        <view class="seg__item {{fontSize === 'std' ? 'seg__item--on' : ''}}" data-size="std" bindtap="onFontSize">标准</view>
       </view>
     </view>
 
-    <view wx:if="{{errorText}}" class="bar" style="background:var(--dgrb);border-color:#e0b9b0;color:var(--dgr)">
-      <text>{{errorText}}</text>
+    <!-- 右栏：说法本 + 店员协同 + 管理入口 -->
+    <view class="mine-col-right">
+      <view class="card">
+        <view class="mi" bindtap="onToggleDict">
+          <view>
+            <text class="mi__t">说法本</text>
+            <text class="mi__s">你和店里教过的说法，{{aliasCount}} 条</text>
+          </view>
+          <text class="mi__ar">{{dictOpen ? '⌄' : '›'}}</text>
+        </view>
+        <view wx:if="{{dictOpen}}" style="padding:0 24rpx 20rpx;border-top:2rpx solid var(--ln)">
+          <view wx:for="{{dictItems}}" wx:key="dict_id" style="display:flex;justify-content:space-between;align-items:center;padding:12rpx 0;font-size:26rpx">
+            <text>{{item.raw_text}}（{{item.mapped_type}}）</text>
+            <text style="color:var(--dgr)" data-id="{{item.dict_id}}" bindtap="onDeleteDict">删除</text>
+          </view>
+          <button class="sub" style="margin-top:12rpx;height:72rpx;font-size:26rpx" bindtap="onAddDict">+ 教一个说法</button>
+        </view>
+        <view class="mi" bindtap="onToggleMembers">
+          <view>
+            <text class="mi__t">店里的人</text>
+            <text class="mi__s">共 {{members.length}} 人 · 邀请或停用店员</text>
+          </view>
+          <text class="mi__ar">{{membersOpen ? '⌄' : '›'}}</text>
+        </view>
+        <view wx:if="{{membersOpen}}" style="padding:0 24rpx 20rpx;border-top:2rpx solid var(--ln)">
+          <view wx:for="{{members}}" wx:key="member_id" style="display:flex;justify-content:space-between;align-items:center;padding:12rpx 0;font-size:26rpx">
+            <text>{{item.name}}（{{item.role}} · {{item.status === 'active' ? '正常' : '已停用'}}）</text>
+            <text wx:if="{{isBoss && !item.is_self}}" style="color:{{item.status === 'active' ? 'var(--dgr)' : 'var(--ac)'}}" data-id="{{item.member_id}}" data-status="{{item.status}}" bindtap="onToggleMemberStatus">{{item.status === 'active' ? '停用' : '启用'}}</text>
+          </view>
+          <view style="display:flex;gap:12rpx;margin-top:12rpx">
+            <button wx:if="{{isBoss}}" class="sub" style="flex:1;height:72rpx;font-size:24rpx" bindtap="onCreateInvite">+ 生成店员邀请码</button>
+            <button class="sub" style="flex:1;height:72rpx;font-size:24rpx" bindtap="onJoinByInvite">输入邀请码入店</button>
+          </view>
+        </view>
+        <view wx:if="{{isBoss}}" class="mi" bindtap="onSendClosingSummary">
+          <view>
+            <text class="mi__t">今日收摊总结</text>
+            <text class="mi__s">三账核对体检 + 一键看收摊简报</text>
+          </view>
+          <text class="mi__ar">›</text>
+        </view>
+        <view class="mi" bindtap="onGoPay">
+          <view>
+            <text class="mi__t">套餐</text>
+            <text class="mi__s">次数、续期、发票</text>
+          </view>
+          <text class="mi__ar">›</text>
+        </view>
+        <view class="mi" bindtap="onGoAdmin">
+          <view>
+            <text class="mi__t">导出全部账 / 电脑上用</text>
+            <text class="mi__s">在电脑版微信里打开导出 Excel 并转发</text>
+          </view>
+          <text class="mi__ar">›</text>
+        </view>
+        <view class="mi" bindtap="onGoPending">
+          <view>
+            <text class="mi__t">待处理</text>
+            <text class="mi__s">要补的、没确认的</text>
+          </view>
+          <text class="mi__ar">›</text>
+        </view>
+        <view class="mi" bindtap="onGoInventory">
+          <view>
+            <text class="mi__t">库存设置</text>
+            <text class="mi__s">成本法、负库存、批次余量</text>
+          </view>
+          <text class="mi__ar">›</text>
+        </view>
+      </view>
+
+      <view wx:if="{{errorText}}" class="bar" style="background:var(--dgrb);border-color:#e0b9b0;color:var(--dgr)">
+        <text>{{errorText}}</text>
+      </view>
     </view>
   </view>
 </view>

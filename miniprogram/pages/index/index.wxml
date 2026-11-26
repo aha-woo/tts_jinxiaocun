@@ -1,127 +1,139 @@
-<!-- 今天（首页）：三数 + 新手提醒 + 今日流水 + 圈形说话键 -->
-<view class="page {{fontSize === 'big' ? 'page--big' : ''}}">
-  <view class="page__gap">
-    <!-- 问候 -->
-    <view class="hello">
-      <view>
-        <view class="hello__t">{{greeting}}</view>
-        <text class="hello__sub">{{dateLabel}}</text>
+<!-- 今天（首页）：手机端单列纵向；电脑版微信大屏左看板 + 右流水双栏 -->
+<view class="page {{fontSize === 'big' ? 'page--big' : ''}} {{wide ? 'page--wide' : ''}}">
+  <view class="page__gap desk-home">
+    <!-- 左栏（手机端为上半部） -->
+    <view class="desk-home__left">
+      <!-- 问候 -->
+      <view class="hello">
+        <view>
+          <view class="hello__t">{{greeting}}</view>
+          <text class="hello__sub">{{dateLabel}}</text>
+        </view>
+        <view class="pbadge" bindtap="onGoPending">
+          <text>待处理</text>
+          <text class="pbadge__n">{{pendingCount}}</text>
+        </view>
       </view>
-      <view class="pbadge" bindtap="onGoPending">
-        <text>待处理</text>
-        <text class="pbadge__n">{{pendingCount}}</text>
+
+      <!-- 快捷记账：拍整张进货单 / 手动点选 -->
+      <view class="quick-strip">
+        <view class="quick-chip" bindtap="onGoDeliveryNote">
+          <text>📷 拍进货单</text>
+          <text class="quick-chip__sub">整单自动建档</text>
+        </view>
+        <view class="quick-chip" bindtap="onGoManual">
+          <text>⌨️ 手动点选</text>
+          <text class="quick-chip__sub">不方便说话时用</text>
+        </view>
+      </view>
+
+      <!-- 新手期前 20 笔进度 -->
+      <view wx:if="{{novice && novice.in_novice}}" class="bar" style="background:var(--sf);border-color:var(--ln)">
+        <text>新手期 {{novice.count}}/{{novice.target}} · 每笔先给你看卡片，顺便记住你的说话习惯</text>
+      </view>
+
+      <!-- 周期切换 -->
+      <view class="seg">
+        <view
+          wx:for="{{periods}}"
+          wx:key="key"
+          class="seg__item {{period === item.key ? 'seg__item--on' : ''}}"
+          data-key="{{item.key}}"
+          bindtap="onPeriod"
+        >{{item.label}}</view>
+      </view>
+
+      <!-- 三个数 -->
+      <view class="card stats">
+        <view class="stats__i">
+          <text class="stats__k">卖了</text>
+          <text class="stats__v">¥{{stats.sell}}</text>
+        </view>
+        <view class="stats__i">
+          <text class="stats__k">进货</text>
+          <text class="stats__v">¥{{stats.buy}}</text>
+        </view>
+        <view class="stats__i">
+          <text class="stats__k">赊出去</text>
+          <text class="stats__v stats__v--owe">¥{{stats.owe}}</text>
+        </view>
+      </view>
+
+      <!-- 降级提醒（只在非 L0 出现） -->
+      <view wx:if="{{degrade.level !== 'L0'}}" class="bar" bindtap="onOpenSelfCheck">
+        <text>{{degrade.title}} · {{degrade.hint}}</text>
+        <text class="bar__more">看详情</text>
+      </view>
+
+      <!-- 待补提醒：越早补，毛利越准 -->
+      <view wx:if="{{fillCount > 0}}" class="bar" bindtap="onGoPending">
+        <text>有 {{fillCount}} 笔缺价格，越早补，毛利越准</text>
+        <text class="bar__more">去补</text>
+      </view>
+
+      <!-- 待处理提醒 -->
+      <view wx:if="{{pendingCount > 0}}" class="bar" bindtap="onGoPending">
+        <text>还有 {{pendingCount}} 笔没处理，确认或补上再算今天的账</text>
+        <text class="bar__more">去处理</text>
+      </view>
+
+      <!-- 自检（收起态，长按标题展开） -->
+      <view class="card self-check-card" bindlongpress="onToggleSelfCheck" bindtap="{{wide ? 'onToggleSelfCheck' : ''}}">
+        <view class="self-check-head">
+          <text class="self-check-txt">系统自检 · {{statusText}}</text>
+          <text class="self-check-txt">{{selfCheckOpen ? '收起' : '长按展开'}}</text>
+        </view>
+        <view wx:if="{{selfCheckOpen}}" class="self-check-body">
+          <view>后端：{{statusText}} {{backendVersion}}</view>
+          <view>契约：{{contractText}}</view>
+          <view>登录：{{loginOk ? '已登录' : '未登录'}}</view>
+          <view>语音：{{speechReady ? '同声传译已就绪' : '未启用（走键盘）'}}</view>
+          <view wx:if="{{speechReason}}">原因：{{speechReason}}</view>
+        </view>
+      </view>
+
+      <view wx:if="{{errorText}}" class="bar" style="background:var(--dgrb);border-color:#e0b9b0;color:var(--dgr)">
+        <text>{{errorText}}</text>
       </view>
     </view>
 
-    <!-- 快捷记账：拍整张进货单 / 手动点选 -->
-    <view class="quick-strip">
-      <view class="quick-chip" bindtap="onGoDeliveryNote">
-        <text>📷 拍进货单</text>
-        <text class="quick-chip__sub">整单自动建档</text>
-      </view>
-      <view class="quick-chip" bindtap="onGoManual">
-        <text>⌨️ 手动点选</text>
-        <text class="quick-chip__sub">不方便说话时用</text>
-      </view>
-    </view>
+    <!-- 右栏：流水卡片（手机端紧跟在下方） -->
+    <view class="desk-home__right">
+      <view class="card flow">
+        <view class="flow__h">
+          <text>{{periodLabel}}流水 · {{flow.length}} 笔</text>
+          <text>点一笔可以改</text>
+        </view>
 
-    <!-- 新手期前 20 笔进度 -->
-    <view wx:if="{{novice && novice.in_novice}}" class="bar" style="background:var(--sf);border-color:var(--ln)">
-      <text>新手期 {{novice.count}}/{{novice.target}} · 每笔先给你看卡片，顺便记住你的说话习惯</text>
-    </view>
+        <!-- 桌面表头（仅 >=768px 显示） -->
+        <view class="flow__cols" wx:if="{{flow.length > 0}}">
+          <text class="flow__col-tm">时间</text>
+          <text class="flow__col-md">类型与摘要</text>
+          <text class="flow__col-rt">金额</text>
+        </view>
 
-    <!-- 周期切换 -->
-    <view class="seg">
-      <view
-        wx:for="{{periods}}"
-        wx:key="key"
-        class="seg__item {{period === item.key ? 'seg__item--on' : ''}}"
-        data-key="{{item.key}}"
-        bindtap="onPeriod"
-      >{{item.label}}</view>
-    </view>
+        <view wx:if="{{flow.length === 0}}" class="empty">还没有记录。点下面的圆钮说一句。</view>
 
-    <!-- 三个数 -->
-    <view class="card stats">
-      <view class="stats__i">
-        <text class="stats__k">卖了</text>
-        <text class="stats__v">¥{{stats.sell}}</text>
-      </view>
-      <view class="stats__i">
-        <text class="stats__k">进货</text>
-        <text class="stats__v">¥{{stats.buy}}</text>
-      </view>
-      <view class="stats__i">
-        <text class="stats__k">赊出去</text>
-        <text class="stats__v stats__v--owe">¥{{stats.owe}}</text>
-      </view>
-    </view>
-
-    <!-- 降级提醒（只在非 L0 出现） -->
-    <view wx:if="{{degrade.level !== 'L0'}}" class="bar" bindtap="onOpenSelfCheck">
-      <text>{{degrade.title}} · {{degrade.hint}}</text>
-      <text class="bar__more">看详情</text>
-    </view>
-
-    <!-- 待补提醒：越早补，毛利越准 -->
-    <view wx:if="{{fillCount > 0}}" class="bar" bindtap="onGoPending">
-      <text>有 {{fillCount}} 笔缺价格，越早补，毛利越准</text>
-      <text class="bar__more">去补</text>
-    </view>
-
-    <!-- 待处理提醒 -->
-    <view wx:if="{{pendingCount > 0}}" class="bar" bindtap="onGoPending">
-      <text>还有 {{pendingCount}} 笔没处理，确认或补上再算今天的账</text>
-      <text class="bar__more">去处理</text>
-    </view>
-
-    <!-- 今日流水 -->
-    <view class="card flow">
-      <view class="flow__h">
-        <text>{{periodLabel}}流水 · {{flow.length}} 笔</text>
-        <text>点一笔可以改</text>
-      </view>
-
-      <view wx:if="{{flow.length === 0}}" class="empty">还没有记录。点下面的圆钮说一句。</view>
-
-      <view
-        wx:for="{{flow}}"
-        wx:key="id"
-        class="fi {{item.reversed ? 'fi--rev' : ''}}"
-        data-id="{{item.id}}"
-        bindtap="onOpenFlow"
-      >
-        <text class="fi__tm">{{item.time}}</text>
-        <view class="fi__md">
-          <view>
-            <text class="tg {{item.tagClass}}">{{item.tag}}</text>
-            <text class="{{item.reversed ? 'fi__strike' : ''}}" style="font-weight:500">{{item.title}}</text>
+        <view
+          wx:for="{{flow}}"
+          wx:key="id"
+          class="fi {{item.reversed ? 'fi--rev' : ''}}"
+          data-id="{{item.id}}"
+          bindtap="onOpenFlow"
+        >
+          <text class="fi__tm">{{item.time}}</text>
+          <view class="fi__md">
+            <view>
+              <text class="tg {{item.tagClass}}">{{item.tag}}</text>
+              <text class="{{item.reversed ? 'fi__strike' : ''}}" style="font-weight:500">{{item.title}}</text>
+            </view>
+            <text class="fi__md small" wx:if="{{item.meta}}">{{item.meta}}</text>
           </view>
-          <text class="fi__md small" wx:if="{{item.meta}}">{{item.meta}}</text>
+          <view class="fi__rt">
+            <text class="{{item.reversed ? 'fi__strike' : ''}}" wx:if="{{item.amount}}">¥{{item.amount}}</text>
+          </view>
         </view>
-        <view class="fi__rt">
-          <text class="{{item.reversed ? 'fi__strike' : ''}}" wx:if="{{item.amount}}">¥{{item.amount}}</text>
-        </view>
       </view>
-    </view>
-
-    <!-- 自检（收起态，长按标题展开） -->
-    <view class="card" style="padding:22rpx 24rpx" bindlongpress="onToggleSelfCheck">
-      <view style="display:flex;justify-content:space-between">
-        <text style="font-size:24rpx;color:var(--mu)">系统自检 · {{statusText}}</text>
-        <text style="font-size:24rpx;color:var(--mu)">{{selfCheckOpen ? '收起' : '长按展开'}}</text>
-      </view>
-      <view wx:if="{{selfCheckOpen}}" style="margin-top:14rpx;font-size:24rpx;color:var(--mu);line-height:1.8">
-        <view>后端：{{statusText}} {{backendVersion}}</view>
-        <view>契约：{{contractText}}</view>
-        <view>登录：{{loginOk ? '已登录' : '未登录'}}</view>
-        <view>语音：{{speechReady ? '同声传译已就绪' : '未启用（走键盘）'}}</view>
-        <view wx:if="{{speechReason}}">原因：{{speechReason}}</view>
-      </view>
-    </view>
-
-    <view wx:if="{{errorText}}" class="bar" style="background:var(--dgrb);border-color:#e0b9b0;color:var(--dgr)">
-      <text>{{errorText}}</text>
     </view>
   </view>
 

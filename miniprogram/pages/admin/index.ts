@@ -4,7 +4,7 @@
  * 双栏实现
  * -------
  * `resizable: true` 让同一个页面在电脑版微信里拿到更宽的窗口：
- * 宽 ≥ 768px → 左导航 + 右内容；窄 → 导航变顶部横向标签（**入口一个都不少**）。
+ * 宽 ≥ 768px → 左导航 + 右内容（结构化表格与 KPI 经营报表）；窄 → 导航变顶部横向标签（**入口一个都不少**）。
  *
  * 八个面板（块一个都不能少）
  * -----------------------
@@ -63,6 +63,48 @@ const NAV: NavItem[] = [
   { key: 'dict', label: '说法训练审核' },
 ];
 
+interface AdminStockRow {
+  id: string;
+  name: string;
+  specUnit: string;
+  stock: string;
+  costText: string;
+  statusText: string;
+  negative: boolean;
+  trackBatch: boolean;
+}
+
+interface AdminDocRow {
+  docId: string;
+  docNo: string;
+  bizDate: string;
+  typeLabel: string;
+  paymentLabel: string;
+  amountText: string;
+  statusLabel: string;
+  reversed: boolean;
+}
+
+interface AdminReportCard {
+  key: 'today' | 'week' | 'month';
+  title: string;
+  bizDate: string;
+  sales: string;
+  purchase: string;
+  profit: string;
+  docCount: number;
+  receivable: string;
+  payable: string;
+  missingCost: number;
+}
+
+interface AdminTopProduct {
+  rank: number;
+  name: string;
+  qty: string;
+  amount: string;
+}
+
 interface AdminData {
   nav: NavItem[];
   active: PanelKey;
@@ -75,6 +117,10 @@ interface AdminData {
   errorText: string;
   message: string;
   rows: { text: string }[];
+  stockRows: AdminStockRow[];
+  docRows: AdminDocRow[];
+  reportCards: AdminReportCard[];
+  topProducts: AdminTopProduct[];
   usageView: UsagePayload | null;
   entitlementView: EntitlementPayload | null;
   usageNote: string;
@@ -94,6 +140,33 @@ interface AdminData {
   deliverModes: string[];
 }
 
+const DOC_TYPE_LABELS: Record<string, string> = {
+  sales: '卖货',
+  purchase: '进货',
+  sales_return: '销退',
+  purchase_return: '采退',
+  receipt: '收款',
+  payment: '付款',
+  count_adjust: '盘点调整',
+  waste: '报损',
+};
+
+const DOC_PAYMENT_LABELS: Record<string, string> = {
+  paid: '已结清',
+  unpaid: '赊账未结',
+  partial: '部分结算',
+  已结: '已结清',
+  未结: '赊账未结',
+  部分: '部分结算',
+};
+
+const DOC_STATUS_LABELS: Record<string, string> = {
+  confirmed: '已入账',
+  posted: '已入账',
+  reversed: '已撤销',
+  draft: '草稿',
+};
+
 /** 角色代码 → 中文（界面不出现 boss / manager 这类英文枚举）。 */
 export function roleLabelOf(code: string): string {
   const table: Record<string, string> = {
@@ -106,15 +179,75 @@ export function roleLabelOf(code: string): string {
   return table[code] ?? (code === '' ? '未登录' : code);
 }
 
-function flatten(item: unknown): { text: string } {
-  if (item === null || typeof item !== 'object') {
-    return { text: String(item) };
+function fenDisplay(value: unknown, fallback = '¥0.00'): string {
+  if (value === null || value === undefined) {
+    return fallback;
   }
-  const entries = Object.entries(item as Record<string, unknown>).filter(
-    ([, value]) => value !== null && value !== undefined && value !== ''
-  );
-  const text = entries.map(([key, value]) => `${key}: ${String(value)}`).join(' · ');
-  return { text: text === '' ? '（空）' : text };
+  const n = Number(value);
+  if (!Number.isFinite(n)) {
+    return fallback;
+  }
+  return `¥${(n / 100).toFixed(2)}`;
+}
+
+function toStockRow(item: unknown, index: number): AdminStockRow {
+  const o = (item && typeof item === 'object' ? item : {}) as Record<string, unknown>;
+  const id = String(o['product_id'] ?? o['id'] ?? `s${index}`);
+  const name = String(o['product_name'] ?? o['name'] ?? `商品 ${index + 1}`);
+  const spec = String(o['spec'] ?? '');
+  const unit = String(o['base_unit'] ?? o['unit'] ?? '');
+  const specUnit = [spec, unit].filter(Boolean).join(' / ') || '—';
+  const stock = String(o['qty_display'] ?? o['qty_base'] ?? '0');
+  const costHidden = Boolean(o['cost_hidden']);
+  const avgFen = o['avg_cost_fen'];
+  const lastFen = o['last_purchase_price_fen'];
+  const costVal = avgFen ?? lastFen;
+  const costText = costHidden
+    ? '仅老板可见'
+    : costVal !== null && costVal !== undefined
+      ? fenDisplay(costVal)
+      : '待补进价';
+  const negative = Boolean(o['negative_flag']);
+  const trackBatch = Boolean(o['track_batch']);
+  const statusText = negative ? '负库存预警' : trackBatch ? '分批管理' : '正常';
+  return { id, name, specUnit, stock, costText, statusText, negative, trackBatch };
+}
+
+function toDocRow(item: unknown, index: number): AdminDocRow {
+  const o = (item && typeof item === 'object' ? item : {}) as Record<string, unknown>;
+  const docId = String(o['doc_id'] ?? `doc-${index}`);
+  const docNo = String(o['doc_no'] ?? '—');
+  const bizDate = String(o['biz_date'] ?? '—');
+  const rawType = String(o['doc_type'] ?? '');
+  const typeLabel = DOC_TYPE_LABELS[rawType] ?? (rawType || '单据');
+  const rawPay = String(o['payment_status'] ?? '');
+  const paymentLabel = DOC_PAYMENT_LABELS[rawPay] ?? (rawPay || '—');
+  const amountText = String(o['total_amount_display'] ?? fenDisplay(o['total_amount_fen']));
+  const rawStatus = String(o['status'] ?? '');
+  const reversed = rawStatus === 'reversed';
+  const statusLabel = DOC_STATUS_LABELS[rawStatus] ?? (rawStatus || '—');
+  return { docId, docNo, bizDate, typeLabel, paymentLabel, amountText, statusLabel, reversed };
+}
+
+function toReportCard(key: 'today' | 'week' | 'month', title: string, reportObj: unknown): AdminReportCard {
+  const r = (reportObj && typeof reportObj === 'object' ? reportObj : {}) as Record<string, unknown>;
+  return {
+    key,
+    title,
+    bizDate: String(r['biz_date'] ?? ''),
+    sales: String(r['sales_display'] ?? fenDisplay(r['sales_fen'])),
+    purchase: String(r['purchase_display'] ?? fenDisplay(r['purchase_fen'])),
+    profit:
+      r['gross_profit_display'] !== undefined && r['gross_profit_display'] !== null
+        ? String(r['gross_profit_display'])
+        : r['gross_profit_fen'] === null
+          ? '缺成本或权限'
+          : fenDisplay(r['gross_profit_fen'], '—'),
+    docCount: Number(r['doc_count'] ?? 0),
+    receivable: fenDisplay(r['receivable_open_fen']),
+    payable: fenDisplay(r['payable_open_fen']),
+    missingCost: Number(r['missing_cost_count'] ?? 0),
+  };
 }
 
 Page<AdminData, WechatMiniprogram.Page.CustomOption>({
@@ -129,6 +262,10 @@ Page<AdminData, WechatMiniprogram.Page.CustomOption>({
     errorText: '',
     message: '',
     rows: [],
+    stockRows: [],
+    docRows: [],
+    reportCards: [],
+    topProducts: [],
     usageView: null,
     entitlementView: null,
     usageNote: '',
@@ -192,27 +329,44 @@ Page<AdminData, WechatMiniprogram.Page.CustomOption>({
 
   /** 按面板取数（每个面板只调它自己的接口，不预取一堆没用的）。 */
   async loadPanel(key: PanelKey): Promise<void> {
-    this.setData({ active: key, loading: true, errorText: '', message: '', rows: [] });
+    this.setData({
+      active: key,
+      loading: true,
+      errorText: '',
+      message: '',
+      rows: [],
+      stockRows: [],
+      docRows: [],
+      reportCards: [],
+      topProducts: [],
+    });
     try {
       if (key === 'profile') {
         const stock = await queryStock('');
-        this.setData({ rows: (stock.items ?? []).map(flatten) });
+        this.setData({ stockRows: (stock.items ?? []).map(toStockRow) });
       } else if (key === 'docs') {
         const docs = await queryDocs('');
-        this.setData({ rows: (docs.items ?? []).map(flatten) });
+        this.setData({ docRows: (docs.items ?? []).map(toDocRow) });
       } else if (key === 'report') {
-        const kinds: ('today' | 'month' | 'profit')[] = ['today', 'month', 'profit'];
-        const parts = await Promise.all(kinds.map((kind) => queryReport(kind)));
-        const rows: { text: string }[] = [];
-        parts.forEach((part, index) => {
-          rows.push({ text: `【${kinds[index]}】` });
-          // 报表接口返回的是 `report` 单个对象，不是 items 列表
-          if (part.report !== undefined) {
-            rows.push(flatten(part.report));
-          }
-          (part.items ?? []).forEach((item) => rows.push(flatten(item)));
-        });
-        this.setData({ rows });
+        const [todayRes, weekRes, monthRes, topRes] = await Promise.all([
+          queryReport('today'),
+          queryReport('week'),
+          queryReport('month'),
+          queryReport('top'),
+        ]);
+        const reportCards = [
+          toReportCard('today', '今日经营与毛利', todayRes.report),
+          toReportCard('week', '本周经营', weekRes.report),
+          toReportCard('month', '本月经营与毛利', monthRes.report),
+        ];
+        const rawTop = ((topRes as { top_products?: unknown[] }).top_products ?? []) as Record<string, unknown>[];
+        const topProducts: AdminTopProduct[] = rawTop.map((item, idx) => ({
+          rank: idx + 1,
+          name: String(item['product_name'] ?? '未命名'),
+          qty: String(item['qty_base'] ?? '0'),
+          amount: String(item['amount_display'] ?? fenDisplay(item['amount_fen'])),
+        }));
+        this.setData({ reportCards, topProducts });
       } else if (key === 'usage') {
         const [usagePayload, entitlementPayload] = await Promise.all([usage(), entitlement()]);
         // 两个口径**分开存、分开显示**，绝不拼进同一个进度条
@@ -224,9 +378,9 @@ Page<AdminData, WechatMiniprogram.Page.CustomOption>({
       } else if (key === 'permission') {
         this.setData({
           rows: [
-            { text: `当前角色：${this.data.roleCode === '' ? '未登录' : this.data.roleCode}` },
+            { text: `当前角色：${this.data.roleLabel}（${this.data.roleCode === '' ? '未登录' : this.data.roleCode}）` },
             { text: 'R3 高风险动作：仅老板（boss）+ 电脑版微信大屏 + 二次确认可执行' },
-            { text: '普通员工：可语音记账、可查库存/欠款；不能审批、不能导出' },
+            { text: '普通员工：可语音记账、可查库存/欠款；默认隐藏进价与毛利，不能审批或导出' },
             { text: '没有账号密码体系：身份来自微信登录态（同一 AppID）' },
           ],
         });

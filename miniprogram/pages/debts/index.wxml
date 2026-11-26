@@ -1,32 +1,97 @@
-<!-- 欠款（原型 vDebt）：两个分页 + 合计 + 每人一行 -->
-<view class="page">
+<!-- 欠款：手机端切换分页；电脑版微信大屏（>=768px）应收/应付左右并排 + 行内快捷核销/发对账单 -->
+<view class="page {{wide ? 'page--wide' : ''}}">
   <view class="page__gap">
-    <view class="seg">
-      <view class="seg__item {{tab === 'in' ? 'seg__item--on' : ''}}" data-tab="in" bindtap="onTab">别人欠我</view>
-      <view class="seg__item {{tab === 'out' ? 'seg__item--on' : ''}}" data-tab="out" bindtap="onTab">我欠别人</view>
-    </view>
-
-    <view class="card dsum">
-      <view>
-        <text class="dsum__k">{{tab === 'in' ? '一共有人欠你' : '你一共欠别人'}}</text>
-        <text class="dsum__v serif-num">¥{{sumText}}</text>
-      </view>
-      <text class="dsum__n">{{shown.length}} 个人</text>
-    </view>
-
     <view wx:if="{{errorText}}" class="bar" style="background:var(--dgrb);border-color:#e0b9b0;color:var(--dgr)">
       <text>{{errorText}}</text>
     </view>
 
-    <view class="card">
-      <view wx:if="{{loading}}" class="empty">读取中…</view>
-      <view wx:elif="{{shown.length === 0}}" class="empty">都清干净了</view>
-      <view wx:for="{{shown}}" wx:key="id" class="al" data-id="{{item.id}}" bindtap="onOpen">
-        <view class="al__l">
-          <text class="al__name">{{item.name}}</text>
-          <text class="al__sub">最后往来 {{item.last || '—'}} · 点一下核销或发对账单</text>
+    <!-- 手机端视图（<768px） -->
+    <view wx:if="{{!wide}}" class="debt-mobile">
+      <view class="seg">
+        <view class="seg__item {{tab === 'in' ? 'seg__item--on' : ''}}" data-tab="in" bindtap="onTab">别人欠我</view>
+        <view class="seg__item {{tab === 'out' ? 'seg__item--on' : ''}}" data-tab="out" bindtap="onTab">我欠别人</view>
+      </view>
+
+      <view class="card dsum">
+        <view>
+          <text class="dsum__k">{{tab === 'in' ? '一共有人欠你' : '你一共欠别人'}}</text>
+          <text class="dsum__v serif-num">¥{{sumText}}</text>
         </view>
-        <text class="al__amt serif-num">{{item.amountText}}</text>
+        <text class="dsum__n">{{shown.length}} 个人</text>
+      </view>
+
+      <view class="card">
+        <view wx:if="{{loading}}" class="empty">读取中…</view>
+        <view wx:elif="{{shown.length === 0}}" class="empty">都清干净了</view>
+        <view wx:for="{{shown}}" wx:key="id" class="al" data-id="{{item.id}}" bindtap="onOpen">
+          <view class="al__l">
+            <text class="al__name">{{item.name}}</text>
+            <text class="al__sub">最后往来 {{item.last || '—'}} · 点一下核销或发对账单</text>
+          </view>
+          <text class="al__amt serif-num">{{item.amountText}}</text>
+        </view>
+      </view>
+    </view>
+
+    <!-- 电脑版微信大屏视图（>=768px）：应收与应付左右并排 -->
+    <view wx:else class="debt-desktop">
+      <view class="card debt-kpis">
+        <view class="debt-kpi">
+          <text class="debt-kpi__k">别人欠我（应收） · {{inRows.length}} 户</text>
+          <text class="debt-kpi__v serif-num">¥{{inSumText}}</text>
+        </view>
+        <view class="debt-kpi">
+          <text class="debt-kpi__k">我欠别人（应付） · {{outRows.length}} 户</text>
+          <text class="debt-kpi__v serif-num debt-kpi__v--out">¥{{outSumText}}</text>
+        </view>
+        <view class="debt-kpi">
+          <text class="debt-kpi__k">净应收差额（应收 − 应付）</text>
+          <text class="debt-kpi__v serif-num">¥{{netSumText}}</text>
+        </view>
+      </view>
+
+      <view class="debt-cols">
+        <!-- 左栏：别人欠我 -->
+        <view class="card debt-col">
+          <view class="debt-col__head">
+            <text class="debt-col__title">别人欠我 · 应收</text>
+            <text class="debt-col__meta">{{inRows.length}} 户 · ¥{{inSumText}}</text>
+          </view>
+          <view wx:if="{{loading}}" class="empty">读取中…</view>
+          <view wx:elif="{{inRows.length === 0}}" class="empty">客户欠款都清干净了</view>
+          <view wx:for="{{inRows}}" wx:key="id" class="al-desk" data-id="{{item.id}}" bindtap="onOpen">
+            <view class="al__l">
+              <text class="al__name">{{item.name}}</text>
+              <text class="al__sub">最后往来 {{item.last || '近期'}}</text>
+            </view>
+            <text class="al__amt serif-num">{{item.amountText}}</text>
+            <view class="al-desk__btns">
+              <text class="al-btn al-btn--main" data-id="{{item.id}}" catchtap="onQuickSettle">收款核销</text>
+              <text class="al-btn" data-id="{{item.id}}" catchtap="onQuickStatement">对账单</text>
+            </view>
+          </view>
+        </view>
+
+        <!-- 右栏：我欠别人 -->
+        <view class="card debt-col">
+          <view class="debt-col__head">
+            <text class="debt-col__title">我欠别人 · 应付</text>
+            <text class="debt-col__meta">{{outRows.length}} 户 · ¥{{outSumText}}</text>
+          </view>
+          <view wx:if="{{loading}}" class="empty">读取中…</view>
+          <view wx:elif="{{outRows.length === 0}}" class="empty">供应商货款都结清了</view>
+          <view wx:for="{{outRows}}" wx:key="id" class="al-desk" data-id="{{item.id}}" bindtap="onOpen">
+            <view class="al__l">
+              <text class="al__name">{{item.name}}</text>
+              <text class="al__sub">最后往来 {{item.last || '近期'}}</text>
+            </view>
+            <text class="al__amt serif-num">{{item.amountText}}</text>
+            <view class="al-desk__btns">
+              <text class="al-btn al-btn--main" data-id="{{item.id}}" catchtap="onQuickSettle">付款核销</text>
+              <text class="al-btn" data-id="{{item.id}}" catchtap="onQuickStatement">对账单</text>
+            </view>
+          </view>
+        </view>
       </view>
     </view>
   </view>

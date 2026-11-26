@@ -5,6 +5,7 @@
 
 import { ApiError, getPartnerStatement, queryDebt, settleDebt } from '../../services/api';
 import { ensureLogin } from '../../services/auth';
+import { isWideScreen } from '../../utils/screen';
 
 type Dir = 'in' | 'out';
 
@@ -19,11 +20,17 @@ interface Row {
 }
 
 interface DebtsData {
+  wide: boolean;
   tab: Dir;
   loading: boolean;
   rows: Row[];
   shown: Row[];
   sumText: string;
+  inRows: Row[];
+  outRows: Row[];
+  inSumText: string;
+  outSumText: string;
+  netSumText: string;
   errorText: string;
 }
 
@@ -71,12 +78,30 @@ export function toDebtRow(item: unknown, index: number): Row {
 }
 
 Page<DebtsData, WechatMiniprogram.Page.CustomOption>({
-  data: { tab: 'in', loading: true, rows: [], shown: [], sumText: '0.00', errorText: '' },
+  data: {
+    wide: false,
+    tab: 'in',
+    loading: true,
+    rows: [],
+    shown: [],
+    sumText: '0.00',
+    inRows: [],
+    outRows: [],
+    inSumText: '0.00',
+    outSumText: '0.00',
+    netSumText: '0.00',
+    errorText: '',
+  },
 
   onShow() {
     const bar = (this as unknown as { getTabBar?: () => { setData: (d: object) => void } }).getTabBar?.();
     bar?.setData({ selected: 2 });
+    this.setData({ wide: isWideScreen() });
     void this.load();
+  },
+
+  onResize() {
+    this.setData({ wide: isWideScreen() });
   },
 
   async load(): Promise<void> {
@@ -95,9 +120,37 @@ Page<DebtsData, WechatMiniprogram.Page.CustomOption>({
 
   applyTab(): void {
     const { rows, tab } = this.data;
-    const shown = rows.filter((row) => row.dir === tab);
-    const sum = shown.reduce((total, row) => total + row.amount, 0);
-    this.setData({ shown, sumText: sum.toFixed(2) });
+    const inRows = rows.filter((row) => row.dir === 'in');
+    const outRows = rows.filter((row) => row.dir === 'out');
+    const inSum = inRows.reduce((total, row) => total + row.amount, 0);
+    const outSum = outRows.reduce((total, row) => total + row.amount, 0);
+    const shown = tab === 'in' ? inRows : outRows;
+    const sum = tab === 'in' ? inSum : outSum;
+    this.setData({
+      shown,
+      sumText: sum.toFixed(2),
+      inRows,
+      outRows,
+      inSumText: inSum.toFixed(2),
+      outSumText: outSum.toFixed(2),
+      netSumText: (inSum - outSum).toFixed(2),
+    });
+  },
+
+  onQuickSettle(event: WechatMiniprogram.TouchEvent): void {
+    const id = String(event.currentTarget.dataset['id'] ?? '');
+    const row = this.data.rows.find((item) => item.id === id);
+    if (row !== undefined) {
+      this.promptSettle(row);
+    }
+  },
+
+  onQuickStatement(event: WechatMiniprogram.TouchEvent): void {
+    const id = String(event.currentTarget.dataset['id'] ?? '');
+    const row = this.data.rows.find((item) => item.id === id);
+    if (row !== undefined) {
+      void this.shareStatementImage(row);
+    }
   },
 
   onTab(event: WechatMiniprogram.TouchEvent): void {

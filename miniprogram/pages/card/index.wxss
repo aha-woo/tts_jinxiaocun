@@ -310,8 +310,148 @@
   background: var(--sf);
 }
 
+.card-layout,
+.card-main,
+.card-r-rest {
+  display: flex;
+  flex-direction: column;
+  gap: 24rpx;
+  min-width: 0;
+}
+
 .kp__ok {
   background: var(--ac);
   color: #fff;
   font-weight: 700;
+}
+
+/* 电脑版微信大屏（>=768px）：左明细 + 右操作与影响预览双栏；键盘居中弹窗 */
+@media (min-width: 768px) {
+  .card-layout {
+    display: grid;
+    grid-template-columns: minmax(0, 1.35fr) 360px;
+    gap: 16px 20px;
+    align-items: start;
+  }
+
+  .card-main {
+    grid-column: 1;
+    grid-row: 1 / span 4;
+    gap: 16px;
+  }
+
+  .card-r-top {
+    grid-column: 2;
+    grid-row: 1;
+  }
+
+  .card-r-rest {
+    grid-column: 2;
+    grid-row: 2;
+    gap: 14px;
+    align-self: start;
+  }
+
+  .act,
+  .pad {
+    padding: 18px 20px;
+  }
+
+  .act {
+    gap: 14px;
+  }
+
+  .act__amt {
+    font-size: 28px;
+  }
+
+  .c-title {
+    font-size: 16px;
+    margin-bottom: 10px;
+  }
+
+  .said {
+    font-size: 15px;
+    padding: 12px 14px;
+    border-radius: 10px;
+  }
+
+  .hint,
+  .link,
+  .trace {
+    font-size: 12px;
+  }
+
+  .rows {
+    border-width: 1px;
+    border-radius: 12px;
+    padding: 0 14px;
+  }
+
+  .r {
+    padding: 11px 0;
+    border-top-width: 1px;
+  }
+
+  .r__k,
+  .r__v {
+    font-size: 14px;
+  }
+
+  .total {
+    padding-top: 12px;
+    font-size: 14px;
+  }
+
+  .total__n {
+    font-size: 22px;
+  }
+
+  .sub {
+    height: 44px;
+    border-radius: 12px;
+    border-width: 1px;
+    font-size: 14px;
+    cursor: pointer;
+  }
+
+  .kpsheet {
+    align-items: center;
+    justify-content: center;
+  }
+
+  .kpsheet__in {
+    max-width: 420px;
+    border-radius: 18px;
+    padding: 24px;
+  }
+
+  .kpsheet__h {
+    font-size: 15px;
+  }
+
+  .kpsheet__v {
+    font-size: 36px;
+    padding: 6px 0 12px;
+  }
+
+  .kp {
+    gap: 8px;
+    margin-top: 14px;
+  }
+
+  .kp__k {
+    height: 48px;
+    border-radius: 10px;
+    font-size: 20px;
+    cursor: pointer;
+  }
+
+  .kp__c,
+  .kp__ok {
+    height: 44px;
+    border-radius: 10px;
+    font-size: 15px;
+    cursor: pointer;
+  }
 }

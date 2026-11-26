@@ -1,22 +1,35 @@
-<!-- 货品：开始盘点 + 筛选（含负库存/分批标签） + 库存列表 -->
-<view class="page">
+<!-- 货品：手机端卡片列表；电脑版微信大屏（>=768px）桌面工具栏 + 4 列库存表格 -->
+<view class="page {{wide ? 'page--wide' : ''}}">
   <view class="page__gap">
-    <button class="cta cta--ink" bindtap="onStartCount">开始盘点 · 边说边数</button>
+    <view class="goods-bar">
+      <button class="cta cta--ink goods-bar__cta" bindtap="onStartCount">开始盘点 · 边说边数</button>
+
+      <view class="goods-search">
+        <input
+          class="goods-search__in"
+          value="{{keyword}}"
+          placeholder="搜索商品名 / 进价状态"
+          confirm-type="search"
+          bindinput="onSearchInput"
+        />
+        <text wx:if="{{keyword}}" class="goods-search__clr" bindtap="onClearSearch">清空</text>
+      </view>
+
+      <view class="chips">
+        <view class="chip {{filter === 'all' ? 'chip--on' : ''}}" data-filter="all" bindtap="onFilter">
+          全部 {{total}}
+        </view>
+        <view wx:if="{{negativeCount > 0}}" class="chip {{filter === 'negative' ? 'chip--on' : ''}}" data-filter="negative" bindtap="onFilter">
+          负库存 {{negativeCount}}
+        </view>
+        <view class="chip {{filter === 'low' ? 'chip--on' : ''}}" data-filter="low" bindtap="onFilter">快没了</view>
+        <view wx:if="{{!costHidden}}" class="chip {{filter === 'nocost' ? 'chip--on' : ''}}" data-filter="nocost" bindtap="onFilter">缺进价</view>
+      </view>
+    </view>
 
     <view wx:if="{{gapsCount > 0 && !costHidden}}" class="bar" bindtap="onGoGaps">
       <text>有 {{gapsCount}} 件货缺进价，补上毛利才准</text>
       <text class="bar__more">去补</text>
-    </view>
-
-    <view class="chips">
-      <view class="chip {{filter === 'all' ? 'chip--on' : ''}}" data-filter="all" bindtap="onFilter">
-        全部 {{total}}
-      </view>
-      <view wx:if="{{negativeCount > 0}}" class="chip {{filter === 'negative' ? 'chip--on' : ''}}" data-filter="negative" bindtap="onFilter">
-        负库存 {{negativeCount}}
-      </view>
-      <view class="chip {{filter === 'low' ? 'chip--on' : ''}}" data-filter="low" bindtap="onFilter">快没了</view>
-      <view wx:if="{{!costHidden}}" class="chip {{filter === 'nocost' ? 'chip--on' : ''}}" data-filter="nocost" bindtap="onFilter">缺进价</view>
     </view>
 
     <view wx:if="{{errorText}}" class="bar" style="background:var(--dgrb);border-color:#e0b9b0;color:var(--dgr)">
@@ -24,8 +37,16 @@
     </view>
 
     <view class="card">
+      <!-- 桌面端 4 列表头（手机端隐藏） -->
+      <view wx:if="{{!loading && shown.length > 0}}" class="dtbl-head gtbl__head">
+        <text>货品与标签</text>
+        <text>参考进价 / 成本</text>
+        <text class="gtbl__h-right">当前库存</text>
+        <text class="gtbl__h-right">操作</text>
+      </view>
+
       <view wx:if="{{loading}}" class="empty">读取中…</view>
-      <view wx:elif="{{shown.length === 0}}" class="empty">这里还没有货</view>
+      <view wx:elif="{{shown.length === 0}}" class="empty">{{keyword ? '没有搜到匹配的货品' : '这里还没有货'}}</view>
       <view
         wx:for="{{shown}}"
         wx:key="id"
@@ -38,12 +59,19 @@
             <text class="gi__name">{{item.name}}</text>
             <text wx:if="{{item.trackBatch}}" class="gi__pill">分批</text>
             <text wx:if="{{item.negative}}" class="gi__pill gi__pill--neg">负库存</text>
+            <text wx:elif="{{item.low}}" class="gi__pill">低库存</text>
           </view>
-          <text class="gi__sub {{item.missingCost ? 'gi__sub--warn' : ''}}">{{item.costText}}</text>
+          <text class="gi__sub gi__sub--mobile {{item.missingCost ? 'gi__sub--warn' : ''}}">{{item.costText}}</text>
+        </view>
+        <view class="gi__cost-col">
+          <text class="gi__cost-txt {{item.missingCost ? 'gi__sub--warn' : ''}}">{{item.costText}}</text>
         </view>
         <view class="gi__rt {{item.negative ? 'gi__rt--neg' : item.low ? 'gi__rt--low' : ''}}">
           <text>{{item.stock}}</text>
           <text class="gi__unit">{{item.unit}}</text>
+        </view>
+        <view class="gi__act">
+          <text class="gi__act-link">分批 / 合并 ›</text>
         </view>
       </view>
     </view>

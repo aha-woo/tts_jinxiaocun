@@ -33,6 +33,7 @@ import {
 } from '../../services/api';
 import { SpeechGate, type SpeechResult } from '../../services/speech';
 import { appendNumericKey } from '../../utils/format';
+import { isWideScreen } from '../../utils/screen';
 
 /** 卡片 30 秒有效期（与服务端 `card_ttl_seconds` 一致；端上只倒计时提示）。 */
 export const CARD_TTL_SEC = 30;
@@ -214,7 +215,7 @@ Page<CardData, WechatMiniprogram.Page.CustomOption>({
         : '';
     this.setData({ cardId, sessionId, noviceText });
     const app = getApp<{ globalData: { screen: 'phone' | 'wide' } }>();
-    this.setData({ wide: app.globalData.screen === 'wide' });
+    this.setData({ wide: app.globalData.screen === 'wide' || isWideScreen() });
     if (cardId !== '') {
       void this.loadCard(cardId);
     } else {
@@ -235,6 +236,10 @@ Page<CardData, WechatMiniprogram.Page.CustomOption>({
         this.setData({ loading: false, errorText: '没有找到这张卡，回首页重新说一句' });
       }
     }
+  },
+
+  onResize() {
+    this.setData({ wide: isWideScreen() });
   },
 
   onUnload() {

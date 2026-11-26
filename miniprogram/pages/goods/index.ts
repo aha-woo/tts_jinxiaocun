@@ -4,6 +4,7 @@
 
 import { ApiError, listProductGaps, mergeProduct, patchProductPrice, queryStock } from '../../services/api';
 import { ensureLogin } from '../../services/auth';
+import { isWideScreen } from '../../utils/screen';
 
 type Filter = 'all' | 'negative' | 'low' | 'nocost';
 
@@ -22,6 +23,8 @@ interface Row {
 }
 
 interface GoodsData {
+  wide: boolean;
+  keyword: string;
   filter: Filter;
   loading: boolean;
   rows: Row[];
@@ -110,6 +113,8 @@ export function toGoodsRow(
 
 Page<GoodsData, WechatMiniprogram.Page.CustomOption>({
   data: {
+    wide: false,
+    keyword: '',
     filter: 'all',
     loading: true,
     rows: [],
@@ -124,7 +129,12 @@ Page<GoodsData, WechatMiniprogram.Page.CustomOption>({
   onShow() {
     const bar = (this as unknown as { getTabBar?: () => { setData: (d: object) => void } }).getTabBar?.();
     bar?.setData({ selected: 1 });
+    this.setData({ wide: isWideScreen() });
     void this.load();
+  },
+
+  onResize() {
+    this.setData({ wide: isWideScreen() });
   },
 
   async load(): Promise<void> {
@@ -151,8 +161,8 @@ Page<GoodsData, WechatMiniprogram.Page.CustomOption>({
   },
 
   applyFilter(): void {
-    const { rows, filter } = this.data;
-    const shown =
+    const { rows, filter, keyword } = this.data;
+    const byTab =
       filter === 'negative'
         ? rows.filter((row) => row.negative)
         : filter === 'low'
@@ -160,7 +170,21 @@ Page<GoodsData, WechatMiniprogram.Page.CustomOption>({
           : filter === 'nocost'
             ? rows.filter((row) => row.missingCost)
             : rows;
+    const kw = keyword.trim().toLowerCase();
+    const shown =
+      kw === ''
+        ? byTab
+        : byTab.filter((row) => row.name.toLowerCase().includes(kw) || row.costText.toLowerCase().includes(kw));
     this.setData({ shown });
+  },
+
+  onSearchInput(event: WechatMiniprogram.Input): void {
+    const keyword = String(event.detail?.value ?? '');
+    this.setData({ keyword }, () => this.applyFilter());
+  },
+
+  onClearSearch(): void {
+    this.setData({ keyword: '' }, () => this.applyFilter());
   },
 
   onFilter(event: WechatMiniprogram.TouchEvent): void {

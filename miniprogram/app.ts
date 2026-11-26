@@ -9,6 +9,7 @@
  */
 
 import { CLOUD_ENV, CLOUD_SERVICE, ensureCloudReady } from './services/api';
+import { isWideScreen } from './utils/screen';
 
 export interface IAppOption {
   globalData: {
@@ -52,13 +53,6 @@ App<IAppOption>({
    * 屏幕尺寸由 wx.getWindowInfo 读取（基础库 >= 2.20）。
    */
   detectScreen() {
-    try {
-      const info = wx.getWindowInfo();
-      this.globalData.screen = info.windowWidth >= 768 ? 'wide' : 'phone';
-    } catch (error) {
-      // 低版本基础库降级：按手机端布局，不影响功能
-      this.globalData.screen = 'phone';
-      console.warn('[app] getWindowInfo 不可用，按手机端布局', error);
-    }
+    this.globalData.screen = isWideScreen() ? 'wide' : 'phone';
   },
 });

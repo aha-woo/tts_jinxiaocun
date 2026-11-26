@@ -74,7 +74,74 @@
   margin-top: 4rpx;
 }
 
+.mine-grid,
+.mine-col-left,
+.mine-col-right {
+  display: flex;
+  flex-direction: column;
+  gap: 24rpx;
+  min-width: 0;
+}
+
 .mi__ar {
   color: var(--mu);
   font-size: 32rpx;
+}
+
+/* 电脑版微信大屏（>=768px）：左资料与设置 + 右功能菜单双栏 */
+@media (min-width: 768px) {
+  .mine-grid {
+    display: grid;
+    grid-template-columns: 380px minmax(0, 1fr);
+    gap: 20px;
+    align-items: start;
+  }
+
+  .mine-col-left,
+  .mine-col-right {
+    gap: 14px;
+  }
+
+  .est {
+    padding: 18px 20px;
+  }
+
+  .est__k,
+  .est__note,
+  .sec,
+  .mine-hint {
+    font-size: 12px;
+  }
+
+  .est__v {
+    font-size: 24px;
+  }
+
+  .mine-card {
+    padding: 16px 18px;
+    gap: 10px;
+  }
+
+  .mi {
+    padding: 14px 20px;
+    border-top-width: 1px;
+    cursor: pointer;
+  }
+
+  .mi:hover {
+    background: #faf6ee;
+  }
+
+  .mi__t {
+    font-size: 15px;
+  }
+
+  .mi__s {
+    font-size: 12px;
+    margin-top: 2px;
+  }
+
+  .mi__ar {
+    font-size: 18px;
+  }
 }
