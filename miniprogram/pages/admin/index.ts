@@ -408,32 +408,50 @@ Page<AdminData, WechatMiniprogram.Page.CustomOption>({
       } else if (key === 'permission') {
         this.setData({
           rows: [
-            { text: `当前角色：${this.data.roleLabel}（${this.data.roleCode === '' ? '未登录' : this.data.roleCode}）` },
-            { text: 'R3 高风险动作：仅老板（boss）+ 电脑版微信大屏 + 二次确认可执行' },
-            { text: '普通员工：可语音记账、可查库存/欠款；默认隐藏进价与毛利，不能审批或导出' },
-            { text: '没有账号密码体系：身份来自微信登录态（同一 AppID）' },
+            { text: `当前角色：${this.data.roleLabel}` },
+            { text: '重要高风险操作：仅老板在电脑版微信大屏二次确认后可执行' },
+            { text: '店员权限：可语音或手动记账、可查库存与欠款；默认隐藏进价与毛利，不能审批或导出' },
+            { text: '登录方式：使用当前微信账号自动绑定小店，无需设置账号密码' },
           ],
         });
       } else if (key === 'export') {
+        const scopeMap: Record<string, string> = {
+          stock: '库存表',
+          debt: '欠款对账表',
+          docs: '单据流水表',
+          audit: '操作记录',
+          usage: '用量账单',
+        };
+        const statusMap: Record<string, string> = {
+          done: '已生成',
+          ready: '可转发',
+          pending: '生成中',
+          failed: '生成失败',
+        };
         const payload = await listExports();
         this.setData({
           exports: payload.items.map((item) => ({
             jobId: item.job_id,
-            scope: item.scope,
-            status: item.status,
+            scope: scopeMap[item.scope] ?? item.scope,
+            status: statusMap[item.status] ?? item.status,
           })),
-          rows: [{ text: '导出是异步任务；生成后走微信转发/保存/预览，不提供网页下载' }],
+          rows: [{ text: '导出完成后会直接调用微信转发或保存，无需网页下载' }],
         });
       } else if (key === 'tasks') {
+        const taskStatusMap: Record<string, string> = {
+          pending: '待审批',
+          approved: '已执行',
+          rejected: '已驳回',
+        };
         const payload = await listTasks();
         this.setData({
           tasks: payload.items.map((item) => ({
             taskId: item.task_id,
             intentId: item.intent_id,
-            status: item.status,
+            status: taskStatusMap[item.status] ?? item.status,
             createdAt: formatDateTimeMinute(item.created_at),
             requiresPc: item.requires_pc,
-            requiredRole: item.required_role,
+            requiredRole: roleLabelOf(item.required_role),
             hint: item.hint_zh,
           })),
         });
@@ -490,11 +508,11 @@ Page<AdminData, WechatMiniprogram.Page.CustomOption>({
     const taskId = String(event.currentTarget.dataset['task'] ?? '');
     const action = String(event.currentTarget.dataset['action'] ?? 'approve') as 'approve' | 'reject';
     if (this.data.narrow) {
-      this.setData({ errorText: 'R3 审批只能在电脑版微信的大屏管理台执行（手机端会被服务端拦成 1206）' });
+      this.setData({ errorText: '重要操作审批只能在电脑版微信的大屏管理台执行' });
       return;
     }
     if (!this.data.isBoss) {
-      this.setData({ errorText: '只有老板（role=boss）能审批这类高风险动作' });
+      this.setData({ errorText: '只有老板可以审批这类重要操作' });
       return;
     }
     const confirmed = await new Promise<boolean>((resolve) => {

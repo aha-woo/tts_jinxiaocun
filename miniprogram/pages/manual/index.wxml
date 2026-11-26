@@ -79,7 +79,24 @@
         </view>
       </view>
 
-      <!-- ③ 数量 / 单价 & 数字键盘 -->
+      <!-- ③ 单位（选中店内货品自动切为基本单位，也可手动切换） -->
+      <view class="m-sec">
+        <view class="m-head">
+          <text class="m-label">单位</text>
+          <text class="m-unit-hint">当前按「{{unit}}」记账</text>
+        </view>
+        <view class="m-chips m-chips--units">
+          <text
+            wx:for="{{unitOptions}}"
+            wx:key="*this"
+            class="m-chip m-chip--sm {{unit === item ? 'm-chip--on' : ''}}"
+            data-unit="{{item}}"
+            bindtap="onPickUnit"
+          >{{item}}</text>
+        </view>
+      </view>
+
+      <!-- ④ 数量 / 单价 & 数字键盘 -->
       <num-keyboard
         showDirection="{{false}}"
         showProducts="{{false}}"

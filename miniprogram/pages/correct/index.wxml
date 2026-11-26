@@ -9,7 +9,7 @@
           <text class="tag">{{dirLabel}}</text>
           <text class="no">{{doc.doc_no}}</text>
         </view>
-        <text class="date">{{doc.biz_date}} · {{doc.payment_status}} · {{doc.status === 'confirmed' ? '已确认' : doc.status}}</text>
+        <text class="date">{{doc.biz_date}} · {{paymentLabel}} · {{statusLabel}}</text>
         <text class="total serif-num">合计 {{doc.total_amount_display}}</text>
       </view>
 

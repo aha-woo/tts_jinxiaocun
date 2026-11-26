@@ -187,6 +187,20 @@
   font-weight: 700;
 }
 
+.m-unit-hint {
+  font-size: 22rpx;
+  color: var(--mu);
+}
+
+.m-chips--units {
+  gap: 10rpx;
+}
+
+.m-chip--sm {
+  padding: 8rpx 18rpx;
+  font-size: 24rpx;
+}
+
 .said {
   background: var(--bg);
   border-radius: 20rpx;

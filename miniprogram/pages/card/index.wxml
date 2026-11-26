@@ -14,8 +14,8 @@
         </view>
         <text class="act__amt serif-num" data-role="amount">{{totalAmountText}}</text>
       </view>
-      <button class="cta" bindtap="onConfirm" loading="{{loading}}" disabled="{{hasMustGap}}">{{card.actions.primary_label}}</button>
-      <text wx:if="{{hasMustGap}}" class="hint" style="text-align:center">红色的项填上才能确认</text>
+      <button class="cta" bindtap="onConfirm" loading="{{loading}}" disabled="{{hasMustGap}}">{{confirmBtnLabel || card.actions.primary_label}}</button>
+      <text wx:if="{{hasMustGap}}" class="hint" style="text-align:center">红色项补全后即可确认入账</text>
     </view>
 
     <!-- 左主栏：澄清 + 原文 + 明细 + 基本信息 + 空格 + 解析 -->
@@ -116,19 +116,9 @@
         </view>
       </view>
 
-      <!-- 解析明细（开发用） -->
-      <view class="card pad" wx:if="{{card}}">
-        <view class="c-head" bindtap="onToggleDevDetail">
-          <text class="c-title">解析明细（开发用）</text>
-          <text class="link">{{devDetail ? '收起' : '展开'}}</text>
-        </view>
-        <block wx:if="{{devDetail}}">
-          <slot-table rows="{{card.slots}}" data-block="slots" />
-          <view class="trace" wx:for="{{card.calc.calc_traces}}" wx:key="*this">= {{item}}</view>
-          <text class="hint">风险 {{card.intent.risk_level}} · 确认方式 {{card.intent.confirm_policy}} · 数据版本 v{{card.meta.preview_version}}</text>
-        </block>
-        <view class="hidden" data-block="calc"></view>
-      </view>
+      <!-- 契约区块锚点（slots / calc 不再向店主展示开发调试面板） -->
+      <view wx:if="{{card}}" class="hidden" data-block="slots"></view>
+      <view wx:if="{{card}}" class="hidden" data-block="calc"></view>
 
       <view wx:if="{{errorText}}" class="bar" style="background:var(--dgrb);border-color:#e0b9b0;color:var(--dgr)">
         <text>{{errorText}}</text>
@@ -139,7 +129,7 @@
     <view class="card-r-rest">
       <!-- 商品未建档：进货自动建档；卖货没有库存，不能卖 -->
       <view class="bar" wx:if="{{card && hasPendingProduct}}" style="background:{{directionText === '卖货' ? 'var(--dgrb)' : 'var(--wnb)'}};border-color:{{directionText === '卖货' ? '#e0b9b0' : 'var(--wnl)'}};color:{{directionText === '卖货' ? 'var(--dgr)' : 'var(--wn)'}}">
-        <text>{{directionText === '卖货' ? '档案里没有这件货，库存也没有，卖不了；要卖请先记一笔进货。' : '这件货还没有档案，确认后会自动建档；缺的进价会进「要补」。'}}</text>
+        <text>{{directionText === '卖货' ? '档案里没有这件货，库存也没有，卖不了；要卖请先记一笔进货。' : hasMissingPriceGap ? '这件货还没有档案，确认后会自动建档；缺的进价会进「要补」。' : '这件货还没有档案，确认后会自动按本次进价建档入库。'}}</text>
       </view>
 
       <!-- ⑤ 影响预览 -->
@@ -159,7 +149,7 @@
       <!-- 底部次操作 -->
       <view class="subs" wx:if="{{card}}">
         <button class="sub" bindtap="onCancel">先不记</button>
-        <button class="sub sub--main" bindtap="onConfirm" loading="{{loading}}" disabled="{{hasMustGap}}">{{card.actions.primary_label}}</button>
+        <button class="sub sub--main" bindtap="onConfirm" loading="{{loading}}" disabled="{{hasMustGap}}">{{confirmShortLabel || '确认记账'}}</button>
       </view>
     </view>
   </view>

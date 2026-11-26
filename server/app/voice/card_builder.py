@@ -273,10 +273,12 @@ class ConfirmCardView:
     def to_payload(self) -> dict[str, Any]:
         """API 响应体：7 区块 + 落账元信息 + 待补缺口。"""
         payload = self.blocks()
+        spoken_unit = str(self.lines[0].unit or "") if self.lines else ""
         payload["gaps"] = gaps_for(
             self.intent_id,
             {slot.code: slot.display for slot in self.slots},
             {slot.code: slot.source for slot in self.slots},
+            spoken_unit=spoken_unit,
         )
         payload["meta"] = {
             "card_id": self.card_id,

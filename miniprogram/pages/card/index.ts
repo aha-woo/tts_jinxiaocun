@@ -106,13 +106,35 @@ export function buildInfoFields(card: CardPayload): { code: string; label: strin
  * 明细行 ``pending`` / ``P`` 槽位来源是 ``pending`` / 计算式里写了「未在商品档案」。
  */
 export function detectPendingProduct(card: CardPayload): boolean {
-  if ((card.calc.lines ?? []).some((line) => line.pending)) {
-    return true;
+  const lines = card.calc.lines ?? [];
+  if (lines.length > 0) {
+    if (lines.some((line) => !line.product_id && line.pending)) {
+      return true;
+    }
+    if (lines.every((line) => Boolean(line.product_id))) {
+      return false;
+    }
   }
   if ((card.slots ?? []).some((slot) => slot.code === 'P' && slot.source === 'pending')) {
     return true;
   }
   return (card.calc.calc_traces ?? []).some((trace) => trace.includes('未在商品档案'));
+}
+
+function shortVerbOf(card: CardPayload): string {
+  const raw = String(card.actions?.primary_label ?? '').trim();
+  const head = raw.split(/\s+/)[0] || '';
+  if (head !== '') {
+    return head;
+  }
+  const intentId = card.intent?.intent_id ?? '';
+  if (intentId.startsWith('purchase.')) {
+    return '确认入库';
+  }
+  if (intentId.startsWith('sales.')) {
+    return '确认卖出';
+  }
+  return '确认记账';
 }
 
 interface CardData {
@@ -138,8 +160,12 @@ interface CardData {
   infoFields: { code: string; label: string; value: string }[];
   /** 商品还没有档案：不能直接确认，要先建商品 */
   hasPendingProduct: boolean;
-  /** 是否展开「解析明细（开发用）」——默认折叠 */
-  devDetail: boolean;
+  /** 是否还缺少单价或总价（决定未建档提示是否提醒「要补进价」） */
+  hasMissingPriceGap: boolean;
+  /** 顶部主按钮精简文案 */
+  confirmBtnLabel: string;
+  /** 底部半宽确认按钮精简文案 */
+  confirmShortLabel: string;
   /** 服务端算出的「要补」缺口 */
   gaps: PendingGap[];
   /** 有红色缺口时禁止确认 */
@@ -198,11 +224,13 @@ Page<CardData, WechatMiniprogram.Page.CustomOption>({
     cardTitle: '',
     infoFields: [],
     hasPendingProduct: false,
+    hasMissingPriceGap: false,
+    confirmBtnLabel: '确认记账',
+    confirmShortLabel: '确认记账',
     gaps: [],
     hasMustGap: false,
     editingGap: null,
     gapKeypad: '',
-    devDetail: false,
     noviceText: '',
     similarProducts: [],
     similarDismissed: false,
@@ -266,11 +294,25 @@ Page<CardData, WechatMiniprogram.Page.CustomOption>({
         const value = typeof line.amount_fen === 'number' ? line.amount_fen : 0;
         return sum + value;
       }, 0);
+      const gaps = card.gaps ?? [];
+      const hasMustGap = gaps.some((gap) => gap.must);
+      const hasMissingPriceGap =
+        totalFen <= 0 || gaps.some((gap) => gap.code === 'UP' || gap.code === 'TA');
+      const shortVerb = shortVerbOf(card);
+      const confirmBtnLabel = hasMustGap
+        ? '请先补齐红项'
+        : totalFen > 0
+          ? `${shortVerb} · ${fenToYuanText(totalFen)}`
+          : shortVerb;
+      const confirmShortLabel = hasMustGap ? '先补齐红项' : shortVerb;
       const similar = (card.calc.lines[0]?.similar_products ?? []) as { product_id: string; name: string }[];
       this.setData({
         card,
-        gaps: card.gaps ?? [],
-        hasMustGap: (card.gaps ?? []).some((gap) => gap.must),
+        gaps,
+        hasMustGap,
+        hasMissingPriceGap,
+        confirmBtnLabel,
+        confirmShortLabel,
         directionText: direction.text === '' ? card.intent.intent_label_zh : direction.text,
         cardTitle:
           direction.text === ''
@@ -308,10 +350,6 @@ Page<CardData, WechatMiniprogram.Page.CustomOption>({
     } catch (error) {
       this.setData({ errorText: this.messageOf(error) });
     }
-  },
-  /** 展开/折叠「解析明细（开发用）」：默认折叠，不打扰终端用户。 */
-  onToggleDevDetail(): void {
-    this.setData({ devDetail: !this.data.devDetail });
   },
 
   /** 澄清点选（**不重调 AI**）。 */
@@ -360,11 +398,12 @@ Page<CardData, WechatMiniprogram.Page.CustomOption>({
 
   openGapEditor(gap: PendingGap): void {
     if (gap.code === 'S' || gap.code === 'C' || gap.code === 'P' || gap.code === 'U') {
+      const isUnit = gap.code === 'U';
       wx.showModal({
-        title: `修改${gap.label}`,
+        title: isUnit ? '填写商品基本单位' : `修改${gap.label}`,
         editable: true,
-        placeholderText: `输入${gap.label}`,
-        content: gap.current,
+        placeholderText: isUnit ? '输入基本单位（如 桶 / 瓶 / 箱 / 斤）' : `输入${gap.label}`,
+        content: isUnit ? '' : gap.current,
         success: (res) => {
           if (res.confirm) {
             void this.submitGap(gap.code, String(res.content ?? '').trim());

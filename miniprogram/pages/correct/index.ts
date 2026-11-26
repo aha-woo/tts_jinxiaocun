@@ -27,11 +27,29 @@ interface CorrectData {
   loading: boolean;
   doc: DocBrief | null;
   dirLabel: string;
+  paymentLabel: string;
+  statusLabel: string;
   lines: EditLine[];
   submitting: boolean;
   errorText: string;
   note: string;
 }
+
+const PAYMENT_LABELS: Record<string, string> = {
+  paid: '已付清',
+  unpaid: '赊账未结',
+  partial: '部分结算',
+  已结: '已付清',
+  未结: '赊账未结',
+  部分: '部分结算',
+};
+
+const STATUS_LABELS: Record<string, string> = {
+  confirmed: '已入账',
+  posted: '已入账',
+  reversed: '已撤销',
+  draft: '草稿',
+};
 
 function fenToYuan(fen: number | null): string {
   if (fen === null || fen === undefined) {
@@ -46,10 +64,12 @@ Page<CorrectData, WechatMiniprogram.Page.CustomOption>({
     loading: true,
     doc: null,
     dirLabel: '',
+    paymentLabel: '',
+    statusLabel: '',
     lines: [],
     submitting: false,
     errorText: '',
-    note: '一步改好：原单保留并自动反做冲销，更正后的新单同步生效（不重调 AI）。',
+    note: '一步改好：原单保留并自动反做冲销，更正后的新单同步生效。',
   },
 
   onLoad(query: Record<string, string | undefined>) {
@@ -72,6 +92,8 @@ Page<CorrectData, WechatMiniprogram.Page.CustomOption>({
       this.setData({
         doc,
         dirLabel: isSales ? '卖货' : doc.intent_id.startsWith('purchase') ? '进货' : '单据',
+        paymentLabel: PAYMENT_LABELS[doc.payment_status] ?? doc.payment_status,
+        statusLabel: STATUS_LABELS[doc.status] ?? doc.status,
         lines: detail.lines.map((line: DocLineDetail) => ({
           productId: line.product_id,
           productName: line.product_name || '货品',

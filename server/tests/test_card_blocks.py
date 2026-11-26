@@ -300,3 +300,37 @@ def test_confirm_actions_always_offer_button_fallback(seed) -> None:
     assert confirm.requires_voice is True
     assert confirm.button_fallback is True, "C2 没有按钮兜底"
     assert card.risk_banner.level == "danger"  # R2 必须显眼
+
+
+def test_unit_conversion_pending_gap_shows_spoken_unit_not_blank(seed) -> None:
+    """单位未设换算（U=pending）时，gaps 必须点明哪个单位未设换算，而不是报「单位：没填」。"""
+    parse = parse_of(
+        "purchase.create",
+        slots={"P": "康师傅红烧牛肉面", "Q": 25, "U": "待教学", "UP": 5800, "TA": 145000},
+        source={"P": "asr", "Q": "asr", "U": "pending", "UP": "asr", "TA": "computed"},
+        calc_traces=["25 × ¥58.00 = ¥1450.00"],
+    )
+    line = {
+        "product_id": str(seed.product_id),
+        "product_label": "康师傅红烧牛肉面",
+        "quantity": 25,
+        "unit": "件",
+        "qty_base": None,
+        "unit_price_fen": 5800,
+        "amount_fen": 145000,
+        "payment_status": "已结",
+        "pending": True,
+    }
+    card = ConfirmCardBuilder().build(
+        parse,
+        card_id="c-u-pending",
+        session_id="s-u-pending",
+        asr_text="进货，康师傅红烧牛肉面，25件，单价58元",
+        asr_confidence=0.95,
+        lines=[line],
+    )
+    payload = card.to_payload()
+    unit_gap = next(gap for gap in payload["gaps"] if gap["code"] == "U")
+    assert unit_gap["label"] == "单位换算"
+    assert "件" in unit_gap["current"]
+    assert unit_gap["must"] is True

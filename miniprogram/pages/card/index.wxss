@@ -154,6 +154,7 @@
 .sub {
   flex: 1;
   height: 96rpx;
+  padding: 0 20rpx;
   border-radius: 22rpx;
   border: 2rpx solid var(--ln);
   background: var(--sf);
@@ -161,6 +162,9 @@
   display: flex;
   align-items: center;
   justify-content: center;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .sub--main {
@@ -168,6 +172,12 @@
   border-color: var(--ac);
   color: #fff;
   font-weight: 700;
+}
+
+.sub--main[disabled] {
+  background: #efe9dc;
+  border-color: var(--ln);
+  color: var(--mu);
 }
 
 /* 空格：红=必须现在填，黄=可以后补 */

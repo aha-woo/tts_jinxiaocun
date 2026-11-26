@@ -25,6 +25,7 @@ def gaps_for(
     intent_id: str,
     values: Mapping[str, Any],
     sources: Mapping[str, str],
+    spoken_unit: str = "",
 ) -> list[dict[str, Any]]:
     """算出这张卡还缺什么。
 
@@ -33,6 +34,8 @@ def gaps_for(
     - 客户 / 供应商只在赊账意图里算；
     - 槽位没出现过、也没标 pending 的，不报；
     - 进货缺单价、卖货缺金额，按意图各补一条（可后补）。
+    - 当单位 `U` 已有值但未设置换算系数（`source == "pending"`）时，
+      明确提示「哪个单位未设换算」，而不是误报成「单位：没填」。
     """
     gaps: list[dict[str, Any]] = []
     unit = str(values.get("U") or "")
@@ -48,6 +51,23 @@ def gaps_for(
         value = values.get(code)
         if source != "pending" and value not in _PLACEHOLDERS:
             continue
+        if code == "U" and source == "pending":
+            hint_unit = (
+                spoken_unit.strip()
+                if spoken_unit and spoken_unit.strip() not in _PLACEHOLDERS
+                else (str(value).strip() if value not in _PLACEHOLDERS else "")
+            )
+            if hint_unit:
+                gaps.append(
+                    {
+                        "code": "U",
+                        "label": "单位换算",
+                        "unit": "",
+                        "must": must,
+                        "current": f"「{hint_unit}」未设换算，请改用商品基本单位",
+                    }
+                )
+                continue
         gaps.append(
             {
                 "code": code,

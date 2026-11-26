@@ -97,21 +97,11 @@
         <text class="bar__more">去处理</text>
       </view>
 
-      <!-- 自检（收起态，长按标题展开） -->
-      <view class="card self-check-card" bindlongpress="onToggleSelfCheck" bindtap="{{wide ? 'onToggleSelfCheck' : ''}}">
-        <view class="self-check-head">
-          <view class="self-check-lead">
-            <view class="ico ico--sm ico--shield-ok"></view>
-            <text class="self-check-txt">系统自检 · {{statusText}}</text>
-          </view>
-          <text class="self-check-txt">{{selfCheckOpen ? '收起' : '长按展开'}}</text>
-        </view>
-        <view wx:if="{{selfCheckOpen}}" class="self-check-body">
-          <view>后端：{{statusText}} {{backendVersion}}</view>
-          <view>契约：{{contractText}}</view>
-          <view>登录：{{loginOk ? '已登录' : '未登录'}}</view>
-          <view>语音：{{speechReady ? '同声传译已就绪' : '未启用（走键盘）'}}</view>
-          <view wx:if="{{speechReason}}">原因：{{speechReason}}</view>
+      <!-- 语音插件不可用时的温和提示（仅真实不可用时展示，不再展示开发者自检面板） -->
+      <view wx:if="{{!speechReady && speechReason}}" class="bar">
+        <view class="bar__lead">
+          <view class="ico ico--sm ico--warn-wn"></view>
+          <text>语音暂不可用：{{speechReason}}</text>
         </view>
       </view>
 

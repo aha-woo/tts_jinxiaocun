@@ -12,6 +12,7 @@ import { ApiError, createVoiceSession, parseSession, queryReport, queryStock } f
 
 const RECENT_STORAGE_KEY = 'vi.manual.recent';
 const MAX_QUICK_ITEMS = 6;
+const DEFAULT_UNITS = ['件', '桶', '瓶', '箱', '罐', '袋', '盒', '斤', '条', '包'];
 
 export interface CatalogItem {
   name: string;
@@ -24,12 +25,13 @@ export function composeUtterance(input: {
   direction: 'in' | 'out';
   product: string;
   quantity: string;
+  unit?: string;
   price: string;
 }): string {
   const verb = input.direction === 'in' ? '进货' : '卖货';
   const parts = [verb, input.product];
   if (input.quantity !== '') {
-    parts.push(`${input.quantity}件`);
+    parts.push(`${input.quantity}${input.unit || '件'}`);
   }
   if (input.price !== '') {
     parts.push(`单价${input.price}元`);
@@ -66,6 +68,8 @@ interface ManualData {
   product: string;
   customProduct: string;
   quantity: string;
+  unit: string;
+  unitOptions: string[];
   price: string;
   direction: 'in' | 'out';
   catalog: CatalogItem[];
@@ -85,6 +89,8 @@ Page<ManualData, WechatMiniprogram.Page.CustomOption>({
     product: '',
     customProduct: '',
     quantity: '',
+    unit: '件',
+    unitOptions: DEFAULT_UNITS,
     price: '',
     direction: 'in',
     catalog: [],
@@ -107,7 +113,7 @@ Page<ManualData, WechatMiniprogram.Page.CustomOption>({
       direction,
       quantity,
       price,
-      preview: composeUtterance({ direction, product: '', quantity, price }),
+      preview: composeUtterance({ direction, product: '', quantity, unit: '件', price }),
     });
     void this.loadCatalog();
   },
@@ -198,10 +204,18 @@ Page<ManualData, WechatMiniprogram.Page.CustomOption>({
   },
 
   selectProductName(name: string): void {
+    const matched = this.data.catalog.find((item) => item.name === name);
+    const nextUnit = matched && matched.unit !== '' ? matched.unit : this.data.unit || '件';
+    const unitOptions =
+      nextUnit !== '' && !DEFAULT_UNITS.includes(nextUnit)
+        ? [nextUnit, ...DEFAULT_UNITS]
+        : DEFAULT_UNITS;
     this.setData(
       {
         product: name,
         customProduct: name,
+        unit: nextUnit,
+        unitOptions,
         suggestions: [],
         pickerOpen: false,
       },
@@ -212,13 +226,30 @@ Page<ManualData, WechatMiniprogram.Page.CustomOption>({
   onCustomProductInput(event: WechatMiniprogram.Input): void {
     const val = String(event.detail.value ?? '').trim();
     const lower = val.toLowerCase();
+    const matched = this.data.catalog.find((item) => item.name === val);
+    const nextUnit = matched && matched.unit !== '' ? matched.unit : this.data.unit || '件';
+    const unitOptions =
+      nextUnit !== '' && !DEFAULT_UNITS.includes(nextUnit)
+        ? [nextUnit, ...DEFAULT_UNITS]
+        : DEFAULT_UNITS;
     const suggestions =
       val === ''
         ? []
         : this.data.catalog
             .filter((item) => item.name.toLowerCase().includes(lower) && item.name !== val)
             .slice(0, 5);
-    this.setData({ customProduct: val, product: val, suggestions }, () => this.refreshPreview());
+    this.setData(
+      { customProduct: val, product: val, unit: nextUnit, unitOptions, suggestions },
+      () => this.refreshPreview()
+    );
+  },
+
+  onPickUnit(event: WechatMiniprogram.TouchEvent): void {
+    const unit = String(event.currentTarget.dataset['unit'] ?? '').trim();
+    if (unit === '') {
+      return;
+    }
+    this.setData({ unit }, () => this.refreshPreview());
   },
 
   onClearProduct(): void {
@@ -273,6 +304,7 @@ Page<ManualData, WechatMiniprogram.Page.CustomOption>({
         direction: this.data.direction,
         product: this.data.product,
         quantity: this.data.quantity,
+        unit: this.data.unit,
         price: this.data.price,
       }),
     });
