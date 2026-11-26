@@ -71,9 +71,13 @@
 }
 
 .dn-add {
-  font-size: 26rpx;
-  color: var(--ac);
-  font-weight: 600;
+  font-size: 24rpx;
+  color: var(--act);
+  font-weight: 700;
+  padding: 8rpx 20rpx;
+  border-radius: var(--r-pill);
+  background: var(--acs);
+  border: 2rpx solid #eabaa0;
 }
 
 .dn-line {
@@ -100,9 +104,14 @@
 }
 
 .dn-del {
-  font-size: 24rpx;
+  font-size: 22rpx;
   color: var(--dgr);
-  padding: 6rpx 12rpx;
+  font-weight: 600;
+  padding: 6rpx 16rpx;
+  border-radius: var(--r-pill);
+  background: var(--dgrb);
+  border: 2rpx solid #e0b9b0;
+  flex-shrink: 0;
 }
 
 .dn-line__nums {

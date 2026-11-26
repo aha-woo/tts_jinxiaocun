@@ -57,12 +57,18 @@
           </view>
           <text class="mi__ar">{{dictOpen ? '⌄' : '›'}}</text>
         </view>
-        <view wx:if="{{dictOpen}}" style="padding:0 24rpx 20rpx;border-top:2rpx solid var(--ln)">
-          <view wx:for="{{dictItems}}" wx:key="dict_id" style="display:flex;justify-content:space-between;align-items:center;padding:12rpx 0;font-size:26rpx">
-            <text>{{item.raw_text}}（{{item.mapped_type}}）</text>
-            <text style="color:var(--dgr)" data-id="{{item.dict_id}}" bindtap="onDeleteDict">删除</text>
+        <view wx:if="{{dictOpen}}" class="mine-subpanel">
+          <view wx:if="{{dictItems.length === 0}}" class="mine-subpanel__empty">还没有教过的说法，点下面按钮加一条，或者直接对麦克风说「可乐别名叫快乐水」</view>
+          <view wx:for="{{dictItems}}" wx:key="dict_id" class="dict-row">
+            <view class="dict-row__main">
+              <text class="dict-row__raw">{{item.raw_text}}</text>
+              <text class="dict-row__arrow">→</text>
+              <text class="dict-row__target">{{item.targetText}}</text>
+              <text class="dict-row__tag">{{item.typeLabel}}</text>
+            </view>
+            <text class="act-pill act-pill--danger" data-id="{{item.dict_id}}" bindtap="onDeleteDict">删除</text>
           </view>
-          <button class="sub" style="margin-top:12rpx;height:72rpx;font-size:26rpx" bindtap="onAddDict">+ 教一个说法</button>
+          <button class="sub sub--ac mine-btn-full" bindtap="onAddDict">+ 教一个说法</button>
         </view>
         <view class="mi" bindtap="onToggleMembers">
           <view class="mi__lead">
@@ -76,14 +82,23 @@
           </view>
           <text class="mi__ar">{{membersOpen ? '⌄' : '›'}}</text>
         </view>
-        <view wx:if="{{membersOpen}}" style="padding:0 24rpx 20rpx;border-top:2rpx solid var(--ln)">
-          <view wx:for="{{members}}" wx:key="member_id" style="display:flex;justify-content:space-between;align-items:center;padding:12rpx 0;font-size:26rpx">
-            <text>{{item.name}}（{{item.role}} · {{item.status === 'active' ? '正常' : '已停用'}}）</text>
-            <text wx:if="{{isBoss && !item.is_self}}" style="color:{{item.status === 'active' ? 'var(--dgr)' : 'var(--ac)'}}" data-id="{{item.member_id}}" data-status="{{item.status}}" bindtap="onToggleMemberStatus">{{item.status === 'active' ? '停用' : '启用'}}</text>
+        <view wx:if="{{membersOpen}}" class="mine-subpanel">
+          <view wx:for="{{members}}" wx:key="member_id" class="member-row">
+            <view class="member-row__info">
+              <text class="member-row__name">{{item.name}}</text>
+              <text class="member-row__meta">{{item.roleLabel}} · {{item.status === 'active' ? '正常' : '已停用'}}</text>
+            </view>
+            <text
+              wx:if="{{isBoss && !item.is_self}}"
+              class="act-pill {{item.status === 'active' ? 'act-pill--danger' : 'act-pill--ac'}}"
+              data-id="{{item.member_id}}"
+              data-status="{{item.status}}"
+              bindtap="onToggleMemberStatus"
+            >{{item.status === 'active' ? '停用' : '启用'}}</text>
           </view>
-          <view style="display:flex;gap:12rpx;margin-top:12rpx">
-            <button wx:if="{{isBoss}}" class="sub" style="flex:1;height:72rpx;font-size:24rpx" bindtap="onCreateInvite">+ 生成店员邀请码</button>
-            <button class="sub" style="flex:1;height:72rpx;font-size:24rpx" bindtap="onJoinByInvite">输入邀请码入店</button>
+          <view class="mine-btn-row">
+            <button wx:if="{{isBoss}}" class="sub sub--ac mine-btn-half" bindtap="onCreateInvite">+ 生成店员邀请码</button>
+            <button class="sub mine-btn-half" bindtap="onJoinByInvite">输入邀请码入店</button>
           </view>
         </view>
         <view wx:if="{{isBoss}}" class="mi" bindtap="onSendClosingSummary">

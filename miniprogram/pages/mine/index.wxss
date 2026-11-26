@@ -101,6 +101,104 @@
   font-size: 32rpx;
 }
 
+/* 展开子面板（说法本 / 店里的人） */
+.mine-subpanel {
+  padding: 12rpx 24rpx 22rpx;
+  border-top: 2rpx solid var(--ln);
+  background: #fbf8f1;
+}
+
+.mine-subpanel__empty {
+  padding: 16rpx 0;
+  font-size: 24rpx;
+  color: var(--mu);
+  line-height: 1.5;
+}
+
+.dict-row,
+.member-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 16rpx;
+  padding: 16rpx 0;
+  border-bottom: 2rpx solid var(--ln);
+}
+
+.dict-row:last-of-type,
+.member-row:last-of-type {
+  border-bottom: 0;
+}
+
+.dict-row__main {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10rpx;
+  min-width: 0;
+  flex: 1;
+}
+
+.dict-row__raw {
+  font-size: 28rpx;
+  font-weight: 700;
+  color: var(--ink);
+}
+
+.dict-row__arrow {
+  font-size: 24rpx;
+  color: var(--mu);
+}
+
+.dict-row__target {
+  font-size: 28rpx;
+  font-weight: 600;
+  color: var(--act);
+}
+
+.dict-row__tag {
+  font-size: 20rpx;
+  color: var(--mu);
+  background: var(--sf);
+  border: 2rpx solid var(--ln);
+  border-radius: var(--r-pill);
+  padding: 2rpx 12rpx;
+}
+
+.member-row__info {
+  display: flex;
+  flex-direction: column;
+  gap: 4rpx;
+  min-width: 0;
+  flex: 1;
+}
+
+.member-row__name {
+  font-size: 28rpx;
+  font-weight: 700;
+  color: var(--ink);
+}
+
+.member-row__meta {
+  font-size: 22rpx;
+  color: var(--mu);
+}
+
+.mine-btn-full {
+  margin-top: 16rpx;
+}
+
+.mine-btn-row {
+  display: flex;
+  gap: 16rpx;
+  margin-top: 16rpx;
+}
+
+.mine-btn-half {
+  flex: 1;
+  width: auto !important;
+}
+
 /* 电脑版微信大屏（>=768px）：左资料与设置 + 右功能菜单双栏 */
 @media (min-width: 768px) {
   .mine-grid {
@@ -160,5 +258,45 @@
 
   .mi__ar {
     font-size: 18px;
+  }
+
+  .mine-subpanel {
+    padding: 8px 20px 16px;
+    border-top-width: 1px;
+  }
+
+  .mine-subpanel__empty {
+    padding: 10px 0;
+    font-size: 13px;
+  }
+
+  .dict-row,
+  .member-row {
+    gap: 12px;
+    padding: 10px 0;
+    border-bottom-width: 1px;
+  }
+
+  .dict-row__raw,
+  .dict-row__target,
+  .member-row__name {
+    font-size: 14px;
+  }
+
+  .dict-row__arrow,
+  .member-row__meta {
+    font-size: 12px;
+  }
+
+  .dict-row__tag {
+    font-size: 11px;
+    border-width: 1px;
+    padding: 1px 8px;
+  }
+
+  .mine-btn-full,
+  .mine-btn-row {
+    margin-top: 12px;
+    gap: 10px;
   }
 }

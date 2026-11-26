@@ -166,10 +166,10 @@
 
     <!-- 说法训练 -->
     <view class="panel" wx:if="{{active === 'dict'}}">
-      <view class="panel__title">说法训练</view>
-      <view wx:if="{{dicts.length === 0}}" class="row">还没有待审核的说法</view>
+      <view class="panel__title">说法本</view>
+      <view wx:if="{{dicts.length === 0}}" class="row">还没有教过的说法</view>
       <view wx:for="{{dicts}}" wx:key="dictId" class="row">
-        {{item.rawText}}（{{item.mappedType}}）
+        {{item.rawText}} → {{item.targetText}}（{{item.typeLabel}}）
       </view>
     </view>
 

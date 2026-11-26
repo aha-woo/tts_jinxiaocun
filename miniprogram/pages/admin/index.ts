@@ -135,7 +135,15 @@ interface AdminData {
     hint: string;
   }[];
   /** 个人词表（字段与 `GET /api/v1/dict` 一致） */
-  dicts: { dictId: string; rawText: string; mappedType: string; layer: string; version: number }[];
+  dicts: {
+    dictId: string;
+    rawText: string;
+    targetText: string;
+    typeLabel: string;
+    mappedType: string;
+    layer: string;
+    version: number;
+  }[];
   exports: { jobId: string; scope: string; status: string }[];
   deliverModes: string[];
 }
@@ -408,11 +416,20 @@ Page<AdminData, WechatMiniprogram.Page.CustomOption>({
           })),
         });
       } else {
+        const typeLabels: Record<string, string> = {
+          product: '商品叫法',
+          partner: '往来单位',
+          number: '数字读法',
+          unit: '单位说法',
+          intent: '动作说法',
+        };
         const payload = await listDict();
         this.setData({
           dicts: payload.items.map((item) => ({
             dictId: item.dict_id,
             rawText: item.raw_text,
+            targetText: item.mapped_name || '未指定对象',
+            typeLabel: item.mapped_type_label || typeLabels[item.mapped_type] || item.mapped_type,
             mappedType: item.mapped_type,
             layer: item.layer,
             version: item.version,

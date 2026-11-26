@@ -5,7 +5,7 @@
 
     <view class="card pad" style="display:flex;justify-content:space-between;align-items:center">
       <text style="font-size:26rpx;color:var(--mu)">货品多或刚进完一大单？</text>
-      <button size="mini" type="primary" class="manual-photo-btn" bindtap="onGoPhoto">
+      <button class="manual-photo-btn" bindtap="onGoPhoto">
         <view class="manual-photo-btn__in">
           <view class="ico ico--sm ico--photo-white"></view>
           <text>拍进货单</text>

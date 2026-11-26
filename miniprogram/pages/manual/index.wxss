@@ -28,6 +28,17 @@
 
 .manual-photo-btn {
   margin: 0;
+  padding: 12rpx 24rpx;
+  border-radius: var(--r-pill);
+  background: var(--ac);
+  color: #fff;
+  font-size: 24rpx;
+  font-weight: 700;
+  flex-shrink: 0;
+}
+
+.manual-photo-btn:active {
+  background: var(--act);
 }
 
 .manual-photo-btn__in {

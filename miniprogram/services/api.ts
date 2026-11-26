@@ -442,7 +442,9 @@ export interface DictRow {
   dict_id: string;
   raw_text: string;
   mapped_type: string;
+  mapped_type_label?: string;
   mapped_id: string | null;
+  mapped_name?: string | null;
   layer: string;
   version: number;
 }
@@ -1311,10 +1313,14 @@ export function teachDict(body: {
   raw_text: string;
   mapped_type?: string;
   mapped_id?: string;
+  target_name?: string;
 }): Promise<{
   dict_id: string;
   raw_text: string;
   mapped_type: string;
+  mapped_type_label?: string;
+  mapped_id?: string | null;
+  mapped_name?: string | null;
   dict_version: number;
   effective_immediately: boolean;
   note: string;

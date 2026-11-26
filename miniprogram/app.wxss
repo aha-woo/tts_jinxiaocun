@@ -358,6 +358,71 @@ button::after {
   white-space: nowrap;
 }
 
+/* 次级按钮与行内操作胶囊（全局共用，避免折叠面板内 <button class="sub"> 退化成纯文字） */
+.sub {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  margin: 0;
+  min-height: 76rpx;
+  padding: 0 24rpx;
+  border-radius: 18rpx;
+  background: var(--bg);
+  border: 2rpx solid var(--ln);
+  color: var(--ink);
+  font-size: 26rpx;
+  font-weight: 600;
+  line-height: 1.2;
+}
+
+.sub:active {
+  background: #ebe3d3;
+}
+
+.sub--ac {
+  background: var(--acs);
+  border-color: #eabaa0;
+  color: var(--act);
+}
+
+.sub--ac:active {
+  background: #f6d5c1;
+}
+
+.sub--ink {
+  background: var(--ink);
+  border-color: var(--ink);
+  color: var(--sf);
+}
+
+.act-pill {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 8rpx 20rpx;
+  border-radius: var(--r-pill);
+  border: 2rpx solid var(--ln);
+  background: var(--bg);
+  color: var(--ink);
+  font-size: 24rpx;
+  font-weight: 600;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.act-pill--ac {
+  background: var(--acs);
+  border-color: #eabaa0;
+  color: var(--act);
+}
+
+.act-pill--danger {
+  background: var(--dgrb);
+  border-color: #e0b9b0;
+  color: var(--dgr);
+}
+
 /* 说话键（圆环） */
 .ring-wrap {
   position: fixed;
@@ -982,5 +1047,33 @@ page {
     width: 16px;
     height: 16px;
     margin-right: 6px;
+  }
+
+  .sub {
+    min-height: 38px;
+    padding: 0 16px;
+    border-radius: 10px;
+    border-width: 1px;
+    font-size: 13px;
+    cursor: pointer;
+  }
+
+  .sub:hover {
+    background: #ede5d5;
+  }
+
+  .sub--ac:hover {
+    background: #f8d8c6;
+  }
+
+  .act-pill {
+    padding: 4px 12px;
+    border-width: 1px;
+    font-size: 12px;
+    cursor: pointer;
+  }
+
+  .act-pill:hover {
+    opacity: 0.9;
   }
 }

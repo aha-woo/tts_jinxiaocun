@@ -55,24 +55,22 @@ def get_me(
     tenant = session.get(Tenant, ids.tenant_id)
     store_name = resolve_store_name(session, tenant_id=ids.tenant_id, store_id=ids.store_id)
 
-    personal_count = int(
+    personal_texts = list(
         session.execute(
-            select(func.count())
-            .select_from(PersonalDict)
-            .where(
+            select(PersonalDict.raw_text).where(
                 PersonalDict.tenant_id == ids.tenant_id,
                 PersonalDict.member_id == ids.member_id,
             )
-        ).scalar_one()
-        or 0
+        ).scalars()
     )
-    product_alias_count = int(
+    product_alias_texts = list(
         session.execute(
-            select(func.count())
-            .select_from(ProductAlias)
-            .where(ProductAlias.tenant_id == ids.tenant_id)
-        ).scalar_one()
-        or 0
+            select(ProductAlias.alias_text).where(ProductAlias.tenant_id == ids.tenant_id)
+        ).scalars()
+    )
+    alias_count = len(
+        {str(t).strip() for t in personal_texts if str(t).strip()}
+        | {str(t).strip() for t in product_alias_texts if str(t).strip()}
     )
 
     role_lower = (ids.role or "").strip().lower()
@@ -128,7 +126,7 @@ def get_me(
                 "can_view_cost": can_view_cost(session, context),
                 "novice": novice_status_of(member),
                 "auto_post_enabled": bool(member.auto_post_enabled) if member is not None else False,
-                "alias_count": personal_count + product_alias_count,
+                "alias_count": alias_count,
                 "members": members_list,
             }
         ),

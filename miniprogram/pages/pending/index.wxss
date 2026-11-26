@@ -53,6 +53,10 @@
   font-size: 24rpx;
   font-weight: 700;
   color: var(--act);
+  padding: 8rpx 20rpx;
+  border-radius: var(--r-pill);
+  background: var(--acs);
+  border: 2rpx solid #eabaa0;
 }
 
 /* 补数字 */

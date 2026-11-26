@@ -29,6 +29,23 @@ const ROLE_LABELS: Record<string, string> = {
   readonly: '只读',
 };
 
+const MAPPED_TYPE_LABELS: Record<string, string> = {
+  product: '商品叫法',
+  partner: '往来单位',
+  number: '数字读法',
+  unit: '单位说法',
+  intent: '动作说法',
+};
+
+interface MineDictView extends DictRow {
+  targetText: string;
+  typeLabel: string;
+}
+
+interface MineMemberView extends MeMemberRow {
+  roleLabel: string;
+}
+
 interface MineData {
   wide: boolean;
   displayName: string;
@@ -42,10 +59,10 @@ interface MineData {
   monthlySell: string;
   monthlyProfit: string;
   dictOpen: boolean;
-  dictItems: DictRow[];
+  dictItems: MineDictView[];
   membersOpen: boolean;
   isBoss: boolean;
-  members: MeMemberRow[];
+  members: MineMemberView[];
   errorText: string;
 }
 
@@ -96,6 +113,15 @@ Page<MineData, WechatMiniprogram.Page.CustomOption>({
         const n = Number(fen);
         return Number.isFinite(n) ? `¥${(n / 100).toFixed(2).replace(/\.00$/, '')}` : '—';
       };
+      const dictItems: MineDictView[] = (dict.items ?? []).map((row) => ({
+        ...row,
+        targetText: row.mapped_name || '未绑定对象',
+        typeLabel: row.mapped_type_label || MAPPED_TYPE_LABELS[row.mapped_type] || row.mapped_type,
+      }));
+      const members: MineMemberView[] = (me.members ?? []).map((m) => ({
+        ...m,
+        roleLabel: ROLE_LABELS[m.role] ?? m.role,
+      }));
       this.setData({
         displayName: me.display_name || '店主',
         storeName: me.store_name || '本店',
@@ -104,11 +130,11 @@ Page<MineData, WechatMiniprogram.Page.CustomOption>({
         mode: me.accounting_mode === 'count_derive' ? 'count' : 'each',
         confirmMode: me.auto_post_enabled ? 'auto' : 'always',
         novice: me.novice,
-        aliasCount: me.alias_count,
+        aliasCount: dictItems.length > 0 ? dictItems.length : me.alias_count,
         monthlySell: yuan(sellFen),
         monthlyProfit: me.can_view_cost ? yuan(profitFen) : '已隐藏',
-        dictItems: dict.items ?? [],
-        members: me.members ?? [],
+        dictItems,
+        members,
         errorText: '',
       });
     } catch (error) {
@@ -165,15 +191,28 @@ Page<MineData, WechatMiniprogram.Page.CustomOption>({
     wx.showModal({
       title: '教一个新说法',
       editable: true,
-      placeholderText: '例如：快乐水',
+      placeholderText: '例如：快乐水=可乐（别名=商品名）',
       success: (res) => {
-        const raw = String(res.content ?? '').trim();
-        if (res.confirm && raw) {
-          void teachDict({ raw_text: raw, mapped_type: 'product' }).then(() => {
+        const input = String(res.content ?? '').trim();
+        if (!res.confirm || !input) {
+          return;
+        }
+        const parts = input.split(/\s*(?:=|＝|->|→|就是)\s*/).filter(Boolean);
+        if (parts.length < 2) {
+          wx.showToast({ title: '请用「别名=商品名」格式，如：快乐水=可乐', icon: 'none' });
+          return;
+        }
+        const raw_text = parts[0];
+        const target_name = parts.slice(1).join(' ').trim();
+        void teachDict({ raw_text, mapped_type: 'product', target_name }).then(
+          () => {
             wx.showToast({ title: '已记住', icon: 'success' });
             void this.load();
-          });
-        }
+          },
+          (err: unknown) => {
+            wx.showToast({ title: err instanceof ApiError ? err.message : '保存失败', icon: 'none' });
+          }
+        );
       },
     });
   },
