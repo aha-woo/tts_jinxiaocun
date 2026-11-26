@@ -6,13 +6,16 @@
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
 import json
 from pathlib import Path
 from typing import Any, Callable
+from zoneinfo import ZoneInfoNotFoundError
 
 import pytest
 
-from app.utils.date_utils import add_days, add_months, resolve_relative_date
+from app.utils import date_utils
+from app.utils.date_utils import add_days, add_months, resolve_relative_date, today_in_tz
 from app.utils.money import fen_to_yuan_str, format_fen, parse_cny_text, yuan_to_fen
 from app.utils.unit import convert_quantity, format_dual_unit, normalize_unit
 
@@ -140,3 +143,23 @@ def test_money_never_uses_float_multiply() -> None:
     money_py = (Path(__file__).resolve().parents[1] / "app" / "utils" / "money.py").read_text(encoding="utf-8")
     assert "ROUND_HALF_UP" in money_py
     assert "Decimal" in money_py
+
+
+def test_today_in_tz_falls_back_to_utc_plus_8_when_tzdata_missing(monkeypatch) -> None:
+    """容器缺 tzdata 时，中国时区必须回退 UTC+8（防止早 0~8 点业务日倒退成昨天）。"""
+    def _missing_zone(_name: str) -> Any:
+        raise ZoneInfoNotFoundError("no tzdata")
+
+    monkeypatch.setattr(date_utils, "ZoneInfo", _missing_zone)
+    # UTC 2026-11-26 23:30 = 北京时间 2026-11-27 07:30
+    utc_now = datetime(2026, 11, 26, 23, 30, tzinfo=timezone.utc)
+    assert today_in_tz("Asia/Shanghai", now=utc_now) == "2026-11-27"
+    assert today_in_tz("PRC", now=utc_now) == "2026-11-27"
+    assert today_in_tz("UTC", now=utc_now) == "2026-11-26"
+
+
+def test_container_bundles_tzdata() -> None:
+    """容器镜像与依赖声明都必须包含 tzdata，消除 psycopg PRC 时区告警。"""
+    server_root = Path(__file__).resolve().parents[1]
+    assert "tzdata" in (server_root / "Dockerfile").read_text(encoding="utf-8")
+    assert "tzdata" in (server_root / "pyproject.toml").read_text(encoding="utf-8")

@@ -228,6 +228,10 @@ def today_in_tz(tz_name: str = DEFAULT_TENANT_TZ, now: datetime | None = None) -
         current = current.replace(tzinfo=timezone.utc)
     try:
         tzinfo = ZoneInfo(tz_name)
-    except ZoneInfoNotFoundError:  # 容器缺 tzdata 时退回 UTC，避免启动失败
-        tzinfo = timezone.utc
+    except ZoneInfoNotFoundError:  # 容器缺 tzdata 时，中国时区固定回退 UTC+8（避免早 0~8 点记成昨天）
+        tzinfo = (
+            timezone(timedelta(hours=8))
+            if tz_name in ("Asia/Shanghai", "PRC", "Asia/Chongqing", "Asia/Harbin")
+            else timezone.utc
+        )
     return current.astimezone(tzinfo).date().isoformat()

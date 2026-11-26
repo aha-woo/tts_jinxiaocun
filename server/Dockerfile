@@ -19,7 +19,7 @@ RUN mkdir -p /app/app && printf '__all__ = []\n' > /app/app/__init__.py \
     && pip install --upgrade pip \
     && pip install "fastapi>=0.110,<1.0" "uvicorn[standard]>=0.29" "pydantic>=2.6,<3" "redis>=5,<7" \
        "sqlalchemy>=2.0.30,<3" "alembic>=1.13,<2" "psycopg[binary]>=3.1,<4" "PyJWT>=2.8,<3" \
-       "cryptography>=42.0,<45" "httpx>=0.27,<1" \
+       "cryptography>=42.0,<45" "httpx>=0.27,<1" "tzdata>=2024.1" \
     && rm -rf /app/app
 
 # 服务端代码 + 迁移（生产建表走 `alembic upgrade head`，不再用 create_all）
