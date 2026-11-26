@@ -33,6 +33,25 @@ STATUS_ON_SHELF = "on_shelf"
 STATUS_OFF_SHELF = "off_shelf"
 
 
+def _format_price_text(fen: int) -> str:
+    """分 -> 人民币展示文案（整数元省去小数，有角分保留两位）。"""
+    yuan, rem = divmod(max(0, fen), 100)
+    return f"¥{yuan}" if rem == 0 else f"¥{fen / 100:.2f}"
+
+
+def _build_goods_desc(view: "GoodsView") -> str:
+    """拼装套餐/加油包摘要说明，供前端购买卡片展示。"""
+    parts: list[str] = []
+    if view.quota_amount > 0:
+        parts.append(f"{view.quota_amount} 次额度")
+    if view.validity_days > 0:
+        parts.append(f"{view.validity_days} 天有效")
+    head = " · ".join(parts)
+    if head and view.benefits_zh:
+        return f"{head}｜{view.benefits_zh}"
+    return view.benefits_zh or head
+
+
 @dataclass(frozen=True)
 class GoodsView:
     """一个道具的视图（字段与 ``goods.json`` 一一对应）。"""
@@ -53,12 +72,15 @@ class GoodsView:
             "goods_id": self.goods_id,
             "goods_type": self.goods_type,
             "name_zh": self.name_zh,
+            "name": self.name_zh,
             "price_fen": self.price_fen,
+            "price_text": _format_price_text(self.price_fen),
             "quota_amount": self.quota_amount,
             "validity_days": self.validity_days,
             "status": self.status,
             "plan_code": self.plan_code,
             "benefits_zh": self.benefits_zh,
+            "desc": _build_goods_desc(self),
             "auto_renew": False,
         }
 

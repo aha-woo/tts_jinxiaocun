@@ -1,10 +1,11 @@
-<!-- 手动记账：不说话也能记完整一单（选商品→数量→单价→方向→生成卡片） -->
+<!-- 手动记账：选方向 → 搜/选商品 → 填数量单价 → 生成卡片 -->
 <view class="page">
   <view class="page__gap">
-    <text class="hint">不想说话就点着记。和语音走同一条解析、同一条落账链路，最后还要在卡片上确认。</text>
-
-    <view class="card pad" style="display:flex;justify-content:space-between;align-items:center">
-      <text style="font-size:26rpx;color:var(--mu)">货品多或刚进完一大单？</text>
+    <view class="card pad manual-photo-card">
+      <view class="manual-photo-card__copy">
+        <text class="manual-photo-card__t">整单进货直接拍单更快</text>
+        <text class="manual-photo-card__s">不想说话时在下面点选或打字，照样走确认卡落账</text>
+      </view>
       <button class="manual-photo-btn" bindtap="onGoPhoto">
         <view class="manual-photo-btn__in">
           <view class="ico ico--sm ico--photo-white"></view>
@@ -14,19 +15,77 @@
     </view>
 
     <view class="card pad">
-      <view style="margin-bottom:16rpx">
-        <text class="c-title">货品名（可点选下方常用货或直接输入新货名）</text>
-        <input
-          value="{{customProduct}}"
-          placeholder="例如：鲜虾 / 可乐 500ml"
-          bindinput="onCustomProductInput"
-          style="margin-top:8rpx;padding:12rpx 16rpx;border:2rpx solid var(--ln);border-radius:12rpx;background:var(--bg)"
-        />
+      <!-- ① 方向 -->
+      <view class="m-sec">
+        <text class="m-label">这是</text>
+        <view class="seg">
+          <view
+            class="seg__item {{direction === 'in' ? 'seg__item--on' : ''}}"
+            data-direction="in"
+            bindtap="onPickDirectionTab"
+          >进货</view>
+          <view
+            class="seg__item {{direction === 'out' ? 'seg__item--on' : ''}}"
+            data-direction="out"
+            bindtap="onPickDirectionTab"
+          >卖货</view>
+        </view>
       </view>
+
+      <!-- ② 统一选货区：搜索/直接输入 + 全部货品抽屉 + 最近/热销快捷标签 -->
+      <view class="m-sec">
+        <view class="m-head">
+          <text class="m-label">货品</text>
+          <text wx:if="{{catalog.length > 0}}" class="m-all" bindtap="onOpenPicker">全部货品（{{catalog.length}}）›</text>
+        </view>
+
+        <view class="m-search">
+          <view class="ico ico--sm ico--search-mu"></view>
+          <input
+            class="m-search__in"
+            value="{{customProduct}}"
+            placeholder="搜店内货品，或直接输入新货名"
+            bindinput="onCustomProductInput"
+          />
+          <text wx:if="{{customProduct}}" class="m-search__clr" bindtap="onClearProduct">清空</text>
+        </view>
+
+        <!-- 输入关键词时的实时联想 -->
+        <view wx:if="{{suggestions.length > 0}}" class="m-suggest">
+          <view
+            wx:for="{{suggestions}}"
+            wx:key="name"
+            class="m-suggest__row"
+            data-name="{{item.name}}"
+            bindtap="onPickSuggestion"
+          >
+            <text class="m-suggest__name">{{item.name}}</text>
+            <text wx:if="{{item.stockText}}" class="m-suggest__stock">库存 {{item.stockText}}</text>
+          </view>
+        </view>
+
+        <!-- 快捷常用货：仅展示最近手记 / 近7天热销 / 兜底店内前几样 -->
+        <view wx:if="{{quickProducts.length > 0}}" class="m-quick">
+          <text class="m-quick__k">{{quickLabel}}</text>
+          <view class="m-chips">
+            <text
+              wx:for="{{quickProducts}}"
+              wx:key="*this"
+              class="m-chip {{product === item ? 'm-chip--on' : ''}}"
+              data-name="{{item}}"
+              bindtap="onPickProductChip"
+            >{{item}}</text>
+          </view>
+        </view>
+      </view>
+
+      <!-- ③ 数量 / 单价 & 数字键盘 -->
       <num-keyboard
+        showDirection="{{false}}"
+        showProducts="{{false}}"
         quantity="{{quantity}}"
         price="{{price}}"
-        products="{{products}}"
+        products="{{quickProducts}}"
         product="{{product}}"
         direction="{{direction}}"
         bind:product="onProduct"
@@ -45,5 +104,37 @@
       <text>{{errorText}}</text>
     </view>
     <text wx:if="{{submitting}}" class="hint">生成卡片中…</text>
+  </view>
+
+  <!-- 全部货品抽屉 -->
+  <view wx:if="{{pickerOpen}}" class="picker-mask" bindtap="onClosePicker">
+    <view class="picker-sheet" catchtap="noop">
+      <view class="picker-head">
+        <text class="picker-title">选一件店内货品</text>
+        <text class="picker-close" bindtap="onClosePicker">关闭</text>
+      </view>
+      <view class="m-search">
+        <view class="ico ico--sm ico--search-mu"></view>
+        <input
+          class="m-search__in"
+          value="{{pickerKeyword}}"
+          placeholder="输入货品名称筛选…"
+          bindinput="onPickerSearchInput"
+        />
+      </view>
+      <scroll-view scroll-y="true" class="picker-list">
+        <view wx:if="{{pickerFiltered.length === 0}}" class="picker-empty">没有搜到匹配的货品，可在外面直接输入新货名</view>
+        <view
+          wx:for="{{pickerFiltered}}"
+          wx:key="name"
+          class="picker-row {{product === item.name ? 'picker-row--on' : ''}}"
+          data-name="{{item.name}}"
+          bindtap="onPickProductChip"
+        >
+          <text class="picker-row__name">{{item.name}}</text>
+          <text wx:if="{{item.stockText}}" class="picker-row__stock">在库 {{item.stockText}}</text>
+        </view>
+      </scroll-view>
+    </view>
   </view>
 </view>

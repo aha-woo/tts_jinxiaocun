@@ -45,6 +45,29 @@ def current_period(now: datetime | None = None) -> str:
     return (now or datetime.now(timezone.utc)).strftime(_PERIOD_FORMAT)
 
 
+def _date_only(iso_str: str | None) -> str:
+    """ISO 时间戳截取日期部分（YYYY-MM-DD）；空值返回长期有效。"""
+    if not iso_str:
+        return "长期有效"
+    return str(iso_str)[:10]
+
+
+def _plan_name_of(plan_code: str, quota_granted: int, contracts: ContractBundle) -> str:
+    """把内部 plan_code 映射为面向店主的中文套餐名。"""
+    if plan_code == "free":
+        return "免费体验版"
+    for item in contracts.goods.get("goods", []):
+        if str(item.get("plan_code") or "") == plan_code and int(item.get("quota_amount") or 0) == quota_granted:
+            name_zh = str(item.get("name_zh") or "").strip()
+            if name_zh:
+                return name_zh
+    fallback = {
+        "30day": "30 天权益版",
+        "quota_pack": "语音加油包",
+    }
+    return fallback.get(plan_code, plan_code or "免费体验版")
+
+
 @dataclass(frozen=True)
 class EntitlementView:
     """30 天滚动窗口口径（权益有效期）。"""
@@ -58,6 +81,7 @@ class EntitlementView:
     remaining: int
     degrade_level: str
     auto_renew: bool = False
+    plan_name: str = ""
 
     @property
     def expired(self) -> bool:
@@ -66,14 +90,18 @@ class EntitlementView:
 
     def as_dict(self) -> dict[str, Any]:
         """JSON 形态。"""
+        resolved_name = self.plan_name or ("免费体验版" if self.plan_code == "free" else self.plan_code)
         return {
             "plan_code": self.plan_code,
+            "plan_name": resolved_name,
             "status": self.status,
             "valid_from": self.valid_from,
             "valid_until": self.valid_until,
+            "valid_until_display": _date_only(self.valid_until),
             "days_left": self.days_left,
             "quota_granted": self.quota_granted,
             "remaining": self.remaining,
+            "remaining_quota": self.remaining,
             "degrade_level": self.degrade_level,
             "auto_renew": self.auto_renew,
             "expired": self.expired,
@@ -96,7 +124,9 @@ class UsageView:
         return {
             "period": self.period,
             "used_count": self.used_count,
+            "used": self.used_count,
             "free_quota": self.free_quota,
+            "quota": self.free_quota,
             "remaining": self.remaining,
             "degrade_level": self.degrade_level,
             "caliber": "自然月 YYYY-MM（用量归集与成本归因）",
@@ -141,20 +171,24 @@ class EntitlementService:
                 quota_granted=0,
                 remaining=0,
                 degrade_level="L0",
+                plan_name="免费体验版",
             )
         valid_until = row.valid_until
         if valid_until.tzinfo is None:
             valid_until = valid_until.replace(tzinfo=timezone.utc)
         days_left = max(0, (valid_until - moment).days)
+        plan_code = str(row.plan_code)
+        quota_granted = int(row.quota_granted)
         return EntitlementView(
-            plan_code=str(row.plan_code),
+            plan_code=plan_code,
             status=str(row.status) if days_left > 0 else "expired",
             valid_from=row.valid_from.isoformat(),
             valid_until=row.valid_until.isoformat(),
             days_left=days_left,
-            quota_granted=int(row.quota_granted),
+            quota_granted=quota_granted,
             remaining=int(row.remaining),
             degrade_level=str(row.degrade_level),
+            plan_name=_plan_name_of(plan_code, quota_granted, self._contracts),
         )
 
     # ------------------------------------------------------------------ 用量
@@ -169,8 +203,13 @@ class EntitlementService:
             .limit(1)
         ).scalar_one_or_none()
         if row is None:
+            default_quota = int(self.free_plan().get("quota_amount") or 0)
             return UsageView(
-                period=bucket, used_count=0, free_quota=0, remaining=0, degrade_level="L0"
+                period=bucket,
+                used_count=0,
+                free_quota=default_quota,
+                remaining=default_quota,
+                degrade_level="L0",
             )
         used = int(row.used_count)
         quota = int(row.free_quota)

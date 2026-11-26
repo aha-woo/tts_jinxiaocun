@@ -20,6 +20,10 @@ Component({
     product: { type: String, value: '' },
     /** 方向：in = 进货，out = 卖货 */
     direction: { type: String, value: 'in' },
+    /** 是否展示方向切换（由宿主页面自绘时可关闭） */
+    showDirection: { type: Boolean, value: true },
+    /** 是否展示常用商品 chips（由宿主页面统一选货区接管时可关闭） */
+    showProducts: { type: Boolean, value: true },
   },
 
   data: {

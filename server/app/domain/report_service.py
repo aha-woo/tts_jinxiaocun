@@ -138,6 +138,7 @@ class DebtSummary:
     direction: str
     amount_fen: int
     outstanding_fen: int
+    last_date: str | None = None
 
     def as_dict(self) -> dict[str, Any]:
         """JSON 形态。"""
@@ -148,6 +149,7 @@ class DebtSummary:
             "amount_fen": self.amount_fen,
             "outstanding_fen": self.outstanding_fen,
             "outstanding_display": format_fen(self.outstanding_fen),
+            "last_date": self.last_date,
         }
 
 
@@ -378,10 +380,14 @@ class ReportService:
     ) -> list[DebtSummary]:
         """欠款汇总（**未结**才计入；按往来单位聚合）。"""
         statement = (
-            select(ArAp, Partner)
+            select(ArAp, Partner, DocHeader)
             .outerjoin(
                 Partner,
                 (Partner.partner_id == ArAp.partner_id) & (Partner.tenant_id == ArAp.tenant_id),
+            )
+            .outerjoin(
+                DocHeader,
+                (DocHeader.doc_id == ArAp.doc_id) & (DocHeader.tenant_id == ArAp.tenant_id),
             )
             .where(ArAp.tenant_id == tenant_id, ArAp.status != "settled")
         )
@@ -392,7 +398,12 @@ class ReportService:
         rows: list[DebtSummary] = []
         # ``.limit()`` 必须打在 **Select** 上（返回 Result 之后再 .limit 会 AttributeError，
         # 「老张欠我多少」「今天卖了多少」这两个每天都问的意图会直接 500）
-        for ar_ap, partner in self._session.execute(statement.limit(max(1, limit))).all():
+        for ar_ap, partner, doc in self._session.execute(statement.limit(max(1, limit))).all():
+            last_date = (
+                str(doc.biz_date)
+                if doc is not None
+                else (ar_ap.created_at.strftime("%Y-%m-%d") if ar_ap.created_at is not None else None)
+            )
             rows.append(
                 DebtSummary(
                     partner_id=str(ar_ap.partner_id),
@@ -400,6 +411,7 @@ class ReportService:
                     direction=str(ar_ap.direction),
                     amount_fen=int(ar_ap.amount_fen),
                     outstanding_fen=int(ar_ap.amount_fen) - int(ar_ap.settled_amount_fen),
+                    last_date=last_date,
                 )
             )
         return rows

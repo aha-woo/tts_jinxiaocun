@@ -113,4 +113,13 @@
 
   <!-- 隐藏画布：生成可转发的微信对账单图片 -->
   <canvas type="2d" id="stmtCanvas" style="position:fixed;left:-9999px;top:-9999px;width:640px;height:760px" />
+
+  <action-sheet
+    visible="{{sheet.visible}}"
+    title="{{sheet.title}}"
+    subtitle="{{sheet.subtitle}}"
+    actions="{{sheet.actions}}"
+    bind:select="onSheetSelect"
+    bind:close="onSheetClose"
+  />
 </view>

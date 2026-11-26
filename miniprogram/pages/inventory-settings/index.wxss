@@ -1,6 +1,44 @@
 /* 库存设置 */
+.settings-page {
+  padding-bottom: calc(180rpx + env(safe-area-inset-bottom));
+}
+
 .pad {
   padding: 24rpx;
+}
+
+.sec-label {
+  display: block;
+  font-size: 24rpx;
+  color: var(--mu);
+  padding: 8rpx 6rpx 0;
+}
+
+.settings-foot {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 40;
+  background: rgba(245, 241, 232, 0.94);
+  border-top: 2rpx solid var(--ln);
+  padding: 20rpx 28rpx calc(20rpx + env(safe-area-inset-bottom));
+}
+
+.settings-foot__in {
+  max-width: 760px;
+  margin: 0 auto;
+}
+
+@media (min-width: 768px) {
+  .settings-page {
+    padding-bottom: 108px;
+  }
+
+  .settings-foot {
+    padding: 14px 28px;
+    border-top-width: 1px;
+  }
 }
 
 .c-title {

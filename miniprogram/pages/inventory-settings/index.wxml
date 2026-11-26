@@ -1,5 +1,5 @@
 <!-- 库存设置：移动平均 vs 批次成本 + 负库存 + 店员成本可见 -->
-<view class="page">
+<view class="page settings-page">
   <view class="page__gap">
     <text class="hint">标品默认用移动平均（省事）；生鲜/水产/食品可在货品页按商品开启「分批管理」。</text>
 
@@ -33,7 +33,6 @@
       </view>
     </view>
 
-    <button class="cta" bindtap="onSave" loading="{{saving}}">保存设置</button>
     <view wx:if="{{notice}}" class="bar" style="background:var(--okb);border-color:#c7dcc7;color:var(--ok)">
       <text>{{notice}}</text>
     </view>
@@ -41,6 +40,7 @@
       <text>{{errorText}}</text>
     </view>
 
+    <text class="sec-label">关联明细</text>
     <view class="card">
       <view class="row row--link" bindtap="onBatches">
         <view>
@@ -49,6 +49,12 @@
         </view>
         <text class="row__go">›</text>
       </view>
+    </view>
+  </view>
+
+  <view class="settings-foot">
+    <view class="settings-foot__in">
+      <button class="cta" bindtap="onSave" loading="{{saving}}">保存设置</button>
     </view>
   </view>
 </view>

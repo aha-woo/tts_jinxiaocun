@@ -1,7 +1,7 @@
-<!-- 数字键盘 + 常用商品点选：全程可脱离语音完成一次记账（方案 A：大字号/大热区） -->
+<!-- 数字键盘 + 常用商品点选：全程可脱离语音完成一次记账 -->
 <view class="kb">
   <!-- ① 方向：一句话没说也要能选，方向错了账就错了 -->
-  <view class="kb__section">
+  <view class="kb__section" wx:if="{{showDirection}}">
     <view class="kb__label">这是</view>
     <view class="seg">
       <view
@@ -18,7 +18,7 @@
   </view>
 
   <!-- ② 常用商品点选 -->
-  <view class="kb__section">
+  <view class="kb__section" wx:if="{{showProducts}}">
     <view class="kb__label">商品</view>
     <view class="chips">
       <view
@@ -63,6 +63,6 @@
     >{{item}}</view>
   </view>
 
-  <button class="ui-btn ui-btn--primary ui-btn--block kb__submit" bindtap="onSubmit">生成确认卡片</button>
+  <button class="kb__submit" bindtap="onSubmit">生成确认卡片</button>
   <view class="kb__tip">提交后还要在卡片上点一次确认，才会真正记账。</view>
 </view>

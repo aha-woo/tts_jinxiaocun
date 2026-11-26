@@ -1,4 +1,6 @@
 {
   "navigationBarTitleText": "货品",
-  "usingComponents": {}
+  "usingComponents": {
+    "action-sheet": "/components/action-sheet/action-sheet"
+  }
 }

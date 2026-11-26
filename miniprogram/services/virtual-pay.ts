@@ -89,7 +89,8 @@ export async function pollEntitlement(
 ): Promise<EntitlementPayload> {
   let latest = (await entitlement()).entitlement;
   for (let index = 0; index < attempts; index += 1) {
-    if (latest.remaining_quota > beforeRemaining) {
+    const remaining = Number(latest.remaining_quota ?? latest.remaining ?? 0);
+    if (remaining > beforeRemaining) {
       return latest;
     }
     await new Promise<void>((resolve) => setTimeout(resolve, 1500));

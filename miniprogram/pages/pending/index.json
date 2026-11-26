@@ -1,4 +1,6 @@
 {
   "navigationBarTitleText": "待处理",
-  "usingComponents": {}
+  "usingComponents": {
+    "action-sheet": "/components/action-sheet/action-sheet"
+  }
 }

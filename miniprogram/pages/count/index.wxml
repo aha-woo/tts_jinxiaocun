@@ -8,7 +8,10 @@
       </view>
 
       <view class="c-actions">
-        <view class="c-act-btn" bindtap="onVoiceBatch">🎙 {{recordingVoice ? '说完点此识别' : '语音连说盘点'}}</view>
+        <view class="c-act-btn" bindtap="onVoiceBatch">
+          <view class="ico ico--sm ico--mic-ac"></view>
+          <text>{{recordingVoice ? '说完点此识别' : '语音连说盘点'}}</text>
+        </view>
         <view class="c-act-btn" bindtap="onRestartCount">↻ 重开新盘点</view>
         <button class="cta cta--ink count-top__apply" bindtap="onApply" loading="{{applying}}" disabled="{{counted === 0 || applying}}">
           {{counted === 0 ? '先数几样再应用' : '应用盘点（写差异流水）'}}

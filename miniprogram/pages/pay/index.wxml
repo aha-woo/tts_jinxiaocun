@@ -12,14 +12,14 @@
 
     <view class="card pad">
       <text class="c-title">我的套餐</text>
-      <text class="plan">{{entitlement.plan_name}}</text>
+      <text class="plan">{{entitlement.plan_name || '免费体验版'}}</text>
       <view class="num">
         <text class="num__v serif-num">{{entitlement.remaining_quota}}</text>
         <text class="num__u">次剩余</text>
         <text class="num__v serif-num num__v--gap">{{entitlement.days_left}}</text>
         <text class="num__u">天剩余</text>
       </view>
-      <text class="hint">到期：{{entitlement.valid_until}}</text>
+      <text class="hint">到期：{{entitlement.valid_until || '长期有效'}}</text>
       <text class="hint">到期不会自动扣费，续费靠你自己决定。</text>
     </view>
 
@@ -29,17 +29,20 @@
       </view>
       <view wx:for="{{goods}}" wx:key="goodsId" class="goods">
         <view class="goods__top">
-          <text class="goods__name">{{item.name}}</text>
+          <view class="goods__title-wrap">
+            <text class="goods__name">{{item.name}}</text>
+            <text wx:if="{{item.badgeText}}" class="tg tg--in">{{item.badgeText}}</text>
+          </view>
           <text class="goods__price serif-num">{{item.priceText}}</text>
         </view>
-        <text class="goods__desc">{{item.desc}}</text>
+        <text wx:if="{{item.desc}}" class="goods__desc">{{item.desc}}</text>
         <button
-          class="cta"
+          class="cta goods__buy"
           data-goods="{{item.goodsId}}"
           bindtap="onBuy"
           loading="{{paying === item.goodsId}}"
           disabled="{{paying !== '' || !canBuyHere}}"
-        >购买</button>
+        >立即购买 · {{item.priceText}}</button>
       </view>
       <view wx:if="{{!canBuyHere}}" class="bar" style="margin:24rpx">
         <text>当前环境不支持小程序内购买，请在手机端微信里完成。</text>

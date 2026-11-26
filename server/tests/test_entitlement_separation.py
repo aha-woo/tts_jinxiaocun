@@ -298,3 +298,52 @@ def test_fake_verifier_refuses_production_flag() -> None:
     """``FakePlatformCertVerifier(is_production=True)`` 直接抛（防止被误配到生产）。"""
     with pytest.raises(RuntimeError):
         FakePlatformCertVerifier(is_production=True)
+
+
+def test_entitlement_usage_and_goods_include_display_fields(shop) -> None:
+    """/entitlement、/usage 与 /entitlement/goods 返回完整展示字段，兼容端上渲染。"""
+    items = [view.as_dict() for view in GoodsCatalog().all(on_shelf_only=True)]
+    assert len(items) == 3
+    for item in items:
+        assert item["name"] == item["name_zh"] and item["name"]
+        assert str(item["price_text"]).startswith("¥")
+        assert item["desc"]
+
+    with shop.session(bypass_scope=True) as session:
+        service = EntitlementService(session)
+        usage = service.usage(tenant_id=TENANT_ID).as_dict()
+        ent = service.current(tenant_id=TENANT_ID).as_dict()
+
+    expected_free_quota = int(get_contracts().goods["free_plan"]["quota_amount"])
+    assert usage["used"] == usage["used_count"] == 0
+    assert usage["quota"] == usage["free_quota"] == expected_free_quota
+    assert ent["plan_name"] == "免费体验版"
+    assert ent["remaining_quota"] == ent["remaining"] == 0
+    assert ent["valid_until_display"] == "长期有效"
+
+    # 发放 30 天基础权益后，plan_name 与 valid_until_display 正确格式化
+    verifier = _verifier()
+    with shop.session(bypass_scope=True) as session:
+        payment = VirtualPaymentService(session, verifier=verifier, env=ENV_SANDBOX)
+        order = payment.create_order(
+            tenant_id=TENANT_ID, member_id=None, goods_id="entitlement_30d_basic"
+        )
+        payment.handle_deliver_push(
+            {
+                "OutTradeNo": order.out_trade_no,
+                "GoodsId": "entitlement_30d_basic",
+                "Sign": _signed_payload(
+                    out_trade_no=order.out_trade_no,
+                    goods_id="entitlement_30d_basic",
+                    verifier=verifier,
+                ).signature,
+                "timestamp": "1731628800",
+                "nonce": "n-2",
+            },
+            tenant_id=str(TENANT_ID),
+        )
+        active_ent = EntitlementService(session).current(tenant_id=TENANT_ID).as_dict()
+    assert active_ent["plan_name"] == "30 天权益 · 基础"
+    assert active_ent["remaining_quota"] == 800
+    assert len(active_ent["valid_until_display"]) == 10
+    assert "T" not in active_ent["valid_until_display"]

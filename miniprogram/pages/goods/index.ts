@@ -5,6 +5,7 @@
 import { ApiError, listProductGaps, mergeProduct, patchProductPrice, queryStock } from '../../services/api';
 import { ensureLogin } from '../../services/auth';
 import { isWideScreen } from '../../utils/screen';
+import type { SheetActionItem } from '../../components/action-sheet/action-sheet';
 
 type Filter = 'all' | 'negative' | 'low' | 'nocost';
 
@@ -34,6 +35,12 @@ interface GoodsData {
   negativeCount: number;
   gapsCount: number;
   costHidden: boolean;
+  sheet: {
+    visible: boolean;
+    title: string;
+    subtitle: string;
+    actions: SheetActionItem[];
+  };
 }
 
 function num(value: unknown): number | null {
@@ -124,7 +131,13 @@ Page<GoodsData, WechatMiniprogram.Page.CustomOption>({
     negativeCount: 0,
     gapsCount: 0,
     costHidden: false,
+    sheet: { visible: false, title: '', subtitle: '', actions: [] },
   },
+
+  sheetCtx: null as
+    | { mode: 'row'; row: Row; others: Row[] }
+    | { mode: 'merge'; row: Row; candidates: Row[] }
+    | null,
 
   onShow() {
     const bar = (this as unknown as { getTabBar?: () => { setData: (d: object) => void } }).getTabBar?.();
@@ -208,58 +221,96 @@ Page<GoodsData, WechatMiniprogram.Page.CustomOption>({
     }
     const batchLabel = row.trackBatch ? '关闭按批次管理' : '开启按批次管理（水产/生鲜）';
     const others = this.data.rows.filter((r) => r.id !== row.id && !r.id.startsWith('r'));
-    const items = others.length > 0 ? ['查看货品详情', batchLabel, '合并到另一件重复货'] : ['查看货品详情', batchLabel];
-    wx.showActionSheet({
-      itemList: items,
-      success: async (res) => {
-        if (res.tapIndex === 0) {
-          wx.showModal({ title: row.name, content: row.raw.slice(0, 300), showCancel: false });
-          return;
-        }
-        if (res.tapIndex === 1) {
-          try {
-            await patchProductPrice(row.id, { track_batch: !row.trackBatch });
-            wx.showToast({ title: !row.trackBatch ? '已开启分批管理' : '已切回移动平均', icon: 'none' });
-            void this.load();
-          } catch (error) {
-            const msg = error instanceof ApiError ? `${error.message}（${error.errorCode}）` : String(error);
-            wx.showToast({ title: msg, icon: 'none' });
-          }
-          return;
-        }
-        if (res.tapIndex === 2 && others.length > 0) {
-          const candidates = others.slice(0, 6);
-          wx.showActionSheet({
-            itemList: candidates.map((c) => `合并入：${c.name}（${c.stock}${c.unit}）`),
-            success: (pick) => {
-              const target = candidates[pick.tapIndex];
-              if (!target) {
-                return;
-              }
-              wx.showModal({
-                title: '确认合并重复商品',
-                content: `要把「${row.name}」的库存、流水和别名全部并入「${target.name}」吗？合并后原名会自动作为别名保留。`,
-                confirmText: '确认合并',
-                success: (cf) => {
-                  if (!cf.confirm) {
-                    return;
-                  }
-                  void mergeProduct(row.id, target.id).then(
-                    () => {
-                      wx.showToast({ title: `已合并入 ${target.name}`, icon: 'success' });
-                      void this.load();
-                    },
-                    (err: unknown) => {
-                      const msg = err instanceof ApiError ? err.message : String(err);
-                      wx.showModal({ title: '暂不能合并', content: msg, showCancel: false });
-                    }
-                  );
-                },
-              });
-            },
-          });
-        }
+    const actions: SheetActionItem[] = [
+      { key: 'detail', label: '查看货品详情', tone: 'primary' },
+      { key: 'batch', label: batchLabel, desc: row.trackBatch ? '切回移动平均成本' : '按批扣库存并记录效期' },
+    ];
+    if (others.length > 0) {
+      actions.push({ key: 'merge', label: '合并到另一件重复货', desc: '合并后原名自动作为别名保留', tone: 'danger' });
+    }
+    this.sheetCtx = { mode: 'row', row, others };
+    this.setData({
+      sheet: {
+        visible: true,
+        title: row.name,
+        subtitle: `当前库存 ${row.stock}${row.unit} · ${row.costText}`,
+        actions,
       },
     });
+  },
+
+  onSheetClose(): void {
+    this.sheetCtx = null;
+    this.setData({ 'sheet.visible': false });
+  },
+
+  async onSheetSelect(event: WechatMiniprogram.CustomEvent<{ index: number; key: string }>): Promise<void> {
+    const ctx = this.sheetCtx;
+    const { key } = event.detail;
+    this.onSheetClose();
+    if (!ctx) {
+      return;
+    }
+    if (ctx.mode === 'row') {
+      const { row, others } = ctx;
+      if (key === 'detail') {
+        wx.showModal({ title: row.name, content: row.raw.slice(0, 300), showCancel: false });
+        return;
+      }
+      if (key === 'batch') {
+        try {
+          await patchProductPrice(row.id, { track_batch: !row.trackBatch });
+          wx.showToast({ title: !row.trackBatch ? '已开启分批管理' : '已切回移动平均', icon: 'none' });
+          void this.load();
+        } catch (error) {
+          const msg = error instanceof ApiError ? `${error.message}（${error.errorCode}）` : String(error);
+          wx.showToast({ title: msg, icon: 'none' });
+        }
+        return;
+      }
+      if (key === 'merge' && others.length > 0) {
+        const candidates = others.slice(0, 12);
+        this.sheetCtx = { mode: 'merge', row, candidates };
+        this.setData({
+          sheet: {
+            visible: true,
+            title: `把「${row.name}」合并到哪件货？`,
+            subtitle: '合并后原名会自动作为别名保留',
+            actions: candidates.map((c: Row) => ({
+              key: c.id,
+              label: c.name,
+              desc: `当前库存 ${c.stock}${c.unit}`,
+            })),
+          },
+        });
+      }
+      return;
+    }
+    if (ctx.mode === 'merge') {
+      const target = ctx.candidates.find((c: Row) => c.id === key);
+      if (!target) {
+        return;
+      }
+      wx.showModal({
+        title: '确认合并重复商品',
+        content: `要把「${ctx.row.name}」的库存、流水和别名全部并入「${target.name}」吗？合并后原名会自动作为别名保留。`,
+        confirmText: '确认合并',
+        success: (cf) => {
+          if (!cf.confirm) {
+            return;
+          }
+          void mergeProduct(ctx.row.id, target.id).then(
+            () => {
+              wx.showToast({ title: `已合并入 ${target.name}`, icon: 'success' });
+              void this.load();
+            },
+            (err: unknown) => {
+              const msg = err instanceof ApiError ? err.message : String(err);
+              wx.showModal({ title: '暂不能合并', content: msg, showCancel: false });
+            }
+          );
+        },
+      });
+    }
   },
 });

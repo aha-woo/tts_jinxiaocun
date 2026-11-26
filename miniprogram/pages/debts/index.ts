@@ -6,6 +6,7 @@
 import { ApiError, getPartnerStatement, queryDebt, settleDebt } from '../../services/api';
 import { ensureLogin } from '../../services/auth';
 import { isWideScreen } from '../../utils/screen';
+import type { SheetActionItem } from '../../components/action-sheet/action-sheet';
 
 type Dir = 'in' | 'out';
 
@@ -32,6 +33,12 @@ interface DebtsData {
   outSumText: string;
   netSumText: string;
   errorText: string;
+  sheet: {
+    visible: boolean;
+    title: string;
+    subtitle: string;
+    actions: SheetActionItem[];
+  };
 }
 
 function num(value: unknown): number | null {
@@ -91,7 +98,13 @@ Page<DebtsData, WechatMiniprogram.Page.CustomOption>({
     outSumText: '0.00',
     netSumText: '0.00',
     errorText: '',
+    sheet: { visible: false, title: '', subtitle: '', actions: [] },
   },
+
+  sheetCtx: null as
+    | { mode: 'row'; row: Row }
+    | { mode: 'method'; row: Row; amountFen: number }
+    | null,
 
   onShow() {
     const bar = (this as unknown as { getTabBar?: () => { setData: (d: object) => void } }).getTabBar?.();
@@ -165,18 +178,60 @@ Page<DebtsData, WechatMiniprogram.Page.CustomOption>({
       return;
     }
     const actionLabel = row.dir === 'in' ? '登记收款核销' : '登记付款核销';
-    wx.showActionSheet({
-      itemList: [actionLabel, '生成对账单图片发微信', '查看往来摘要'],
-      success: (res) => {
-        if (res.tapIndex === 0) {
-          this.promptSettle(row);
-        } else if (res.tapIndex === 1) {
-          void this.shareStatementImage(row);
-        } else if (res.tapIndex === 2) {
-          wx.showModal({ title: row.name, content: row.raw.slice(0, 300), showCancel: false });
-        }
+    this.sheetCtx = { mode: 'row', row };
+    this.setData({
+      sheet: {
+        visible: true,
+        title: row.name,
+        subtitle: `${row.dir === 'in' ? '别人欠我' : '我欠别人'} · ${row.amountText}${row.last ? ` · 最近往来 ${row.last}` : ''}`,
+        actions: [
+          { key: 'settle', label: actionLabel, desc: '录入本次结清或部分还款金额', tone: 'primary' },
+          { key: 'statement', label: '生成对账单图片发微信', desc: '生成明细图，可长按或转发核对' },
+          { key: 'detail', label: '查看往来摘要' },
+        ],
       },
     });
+  },
+
+  onSheetClose(): void {
+    this.sheetCtx = null;
+    this.setData({ 'sheet.visible': false });
+  },
+
+  onSheetSelect(event: WechatMiniprogram.CustomEvent<{ index: number; key: string }>): void {
+    const ctx = this.sheetCtx;
+    const { key } = event.detail;
+    this.onSheetClose();
+    if (!ctx) {
+      return;
+    }
+    if (ctx.mode === 'row') {
+      if (key === 'settle') {
+        this.promptSettle(ctx.row);
+      } else if (key === 'statement') {
+        void this.shareStatementImage(ctx.row);
+      } else if (key === 'detail') {
+        wx.showModal({ title: ctx.row.name, content: ctx.row.raw.slice(0, 300), showCancel: false });
+      }
+      return;
+    }
+    if (ctx.mode === 'method') {
+      void settleDebt({
+        partner_id: ctx.row.id,
+        direction: ctx.row.dir === 'in' ? 'receivable' : 'payable',
+        amount_fen: ctx.amountFen,
+        method: key || '微信',
+      }).then(
+        (done) => {
+          wx.showToast({ title: `已核销 ${done.doc_no}`, icon: 'success' });
+          void this.load();
+        },
+        (err: unknown) => {
+          const msg = err instanceof ApiError ? err.message : String(err);
+          wx.showModal({ title: '核销未成功', content: msg, showCancel: false });
+        }
+      );
+    }
   },
 
   promptSettle(row: Row): void {
@@ -197,26 +252,18 @@ Page<DebtsData, WechatMiniprogram.Page.CustomOption>({
           return;
         }
         const amountFen = Math.round(numVal * 100);
-        const methods = ['微信', '现金', '银行卡/支付宝'];
-        wx.showActionSheet({
-          itemList: methods,
-          success: (pick) => {
-            const method = methods[pick.tapIndex] || '微信';
-            void settleDebt({
-              partner_id: row.id,
-              direction: row.dir === 'in' ? 'receivable' : 'payable',
-              amount_fen: amountFen,
-              method,
-            }).then(
-              (done) => {
-                wx.showToast({ title: `已核销 ${done.doc_no}`, icon: 'success' });
-                void this.load();
-              },
-              (err: unknown) => {
-                const msg = err instanceof ApiError ? err.message : String(err);
-                wx.showModal({ title: '核销未成功', content: msg, showCancel: false });
-              }
-            );
+        const amountYuan = (amountFen / 100).toFixed(2).replace(/\.00$/, '');
+        this.sheetCtx = { mode: 'method', row, amountFen };
+        this.setData({
+          sheet: {
+            visible: true,
+            title: `选择${row.dir === 'in' ? '收款' : '付款'}方式`,
+            subtitle: `${row.name} · 本次 ¥${amountYuan}`,
+            actions: [
+              { key: '微信', label: '微信收付款', tone: 'primary' },
+              { key: '现金', label: '现金' },
+              { key: '银行卡/支付宝', label: '银行卡 / 支付宝' },
+            ],
           },
         });
       },

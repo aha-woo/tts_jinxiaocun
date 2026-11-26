@@ -1,15 +1,23 @@
 /**
- * 手动记账（**全程脱离语音**）：选商品 → 填数量 → 填单价 → 选方向 → 生成卡片。
+ * 手动记账（**全程脱离语音**）：选方向 → 搜/选商品 → 填数量 → 填单价 → 生成卡片。
  *
- * 实现说明
- * -------
- * 服务端只有一条建卡入口：`POST /voice/sessions/{id}/parse`，它接受**已转好的文本**
- * （`asr_text`）。所以手动模式把点选结果拼成一句规范话再送进去——
- * 这样「语音」和「键盘」走的是**同一条解析与落账链路**，不存在第二条写账路径
- * （否则手工会绕过影响预演和 CAS，那是最危险的分叉）。
+ * 常用货判定（诚实、可解释）：
+ * 1. 本机最近手动记过的货（`vi.manual.recent`，最多 6 样）；
+ * 2. 近 7 天真实动销排行（`GET /query/report?period=top`）；
+ * 3. 新店既无手记也无热销时，才按全店货品前 6 样兜底并标注「店内商品」；
+ * 4. 全店所有货品随时可通过关键词搜索联想或点「全部货品」抽屉挑选。
  */
 
-import { ApiError, createVoiceSession, parseSession, queryStock } from '../../services/api';
+import { ApiError, createVoiceSession, parseSession, queryReport, queryStock } from '../../services/api';
+
+const RECENT_STORAGE_KEY = 'vi.manual.recent';
+const MAX_QUICK_ITEMS = 6;
+
+export interface CatalogItem {
+  name: string;
+  stockText: string;
+  unit: string;
+}
 
 /** 把点选结果拼成一句规范话（与口语同构，便于规则层复用）。 */
 export function composeUtterance(input: {
@@ -29,13 +37,44 @@ export function composeUtterance(input: {
   return parts.join('，');
 }
 
+function readRecentProducts(): string[] {
+  try {
+    const raw = wx.getStorageSync(RECENT_STORAGE_KEY);
+    if (!Array.isArray(raw)) {
+      return [];
+    }
+    return raw.map((x) => String(x ?? '').trim()).filter((x) => x !== '').slice(0, MAX_QUICK_ITEMS);
+  } catch {
+    return [];
+  }
+}
+
+function rememberRecentProduct(name: string): void {
+  const clean = name.trim();
+  if (clean === '') {
+    return;
+  }
+  try {
+    const prev = readRecentProducts().filter((item) => item !== clean);
+    wx.setStorageSync(RECENT_STORAGE_KEY, [clean, ...prev].slice(0, MAX_QUICK_ITEMS));
+  } catch {
+    // 忽略本地存储异常
+  }
+}
+
 interface ManualData {
   product: string;
   customProduct: string;
   quantity: string;
   price: string;
   direction: 'in' | 'out';
-  products: string[];
+  catalog: CatalogItem[];
+  quickProducts: string[];
+  quickLabel: string;
+  suggestions: CatalogItem[];
+  pickerOpen: boolean;
+  pickerKeyword: string;
+  pickerFiltered: CatalogItem[];
   submitting: boolean;
   errorText: string;
   preview: string;
@@ -48,7 +87,13 @@ Page<ManualData, WechatMiniprogram.Page.CustomOption>({
     quantity: '',
     price: '',
     direction: 'in',
-    products: [],
+    catalog: [],
+    quickProducts: [],
+    quickLabel: '常用货',
+    suggestions: [],
+    pickerOpen: false,
+    pickerKeyword: '',
+    pickerFiltered: [],
     submitting: false,
     errorText: '',
     preview: '',
@@ -68,35 +113,148 @@ Page<ManualData, WechatMiniprogram.Page.CustomOption>({
   },
 
   async loadCatalog(): Promise<void> {
-    try {
-      const res = await queryStock('');
-      const names = Array.from(
-        new Set(
-          (res.items ?? [])
-            .map((item) => String((item as Record<string, unknown>).product_name ?? '').trim())
-            .filter((name) => name !== '')
-        )
-      ).slice(0, 12);
-      this.setData({ products: names });
-    } catch {
-      this.setData({ products: [] });
+    const recent = readRecentProducts();
+    const [stockItems, topProducts] = await Promise.all([
+      queryStock('', false, 100).then((res) => res.items ?? []).catch(() => [] as unknown[]),
+      queryReport('top')
+        .then((res) => ((res as { top_products?: unknown[] }).top_products ?? []))
+        .catch(() => [] as unknown[]),
+    ]);
+
+    const catalog: CatalogItem[] = [];
+    const seenCatalog = new Set<string>();
+    for (const raw of stockItems) {
+      const o = raw as Record<string, unknown>;
+      const name = String(o['product_name'] ?? o['name'] ?? '').trim();
+      if (name === '' || seenCatalog.has(name)) {
+        continue;
+      }
+      seenCatalog.add(name);
+      const unit = String(o['base_unit'] ?? o['unit'] ?? '');
+      const qty = o['qty_display'] ?? o['qty_base'] ?? '';
+      const stockText = qty !== '' ? `${qty}${unit}` : '';
+      catalog.push({ name, stockText, unit });
     }
+
+    const topNames: string[] = [];
+    for (const raw of topProducts) {
+      const name = String((raw as Record<string, unknown>)['product_name'] ?? '').trim();
+      if (name !== '') {
+        topNames.push(name);
+      }
+    }
+
+    const quick: string[] = [];
+    const seenQuick = new Set<string>();
+    for (const name of [...recent, ...topNames]) {
+      if (!seenQuick.has(name)) {
+        seenQuick.add(name);
+        quick.push(name);
+      }
+      if (quick.length >= MAX_QUICK_ITEMS) {
+        break;
+      }
+    }
+
+    let quickLabel = '近 7 天热销';
+    if (recent.length > 0 && topNames.length > 0) {
+      quickLabel = '最近常记 / 近 7 天热销';
+    } else if (recent.length > 0) {
+      quickLabel = '最近手记';
+    } else if (quick.length === 0 && catalog.length > 0) {
+      quickLabel = '店内商品';
+      for (const item of catalog.slice(0, MAX_QUICK_ITEMS)) {
+        quick.push(item.name);
+      }
+    }
+
+    this.setData({
+      catalog,
+      quickProducts: quick,
+      quickLabel,
+      pickerFiltered: catalog,
+    });
   },
 
-  onProduct(event: WechatMiniprogram.CustomEvent<{ product: string }>): void {
+  onPickDirectionTab(event: WechatMiniprogram.TouchEvent): void {
+    const dir = String(event.currentTarget.dataset['direction'] ?? 'in') === 'out' ? 'out' : 'in';
+    this.setData({ direction: dir }, () => this.refreshPreview());
+  },
+
+  onPickProductChip(event: WechatMiniprogram.TouchEvent): void {
+    const name = String(event.currentTarget.dataset['name'] ?? '').trim();
+    if (name === '') {
+      return;
+    }
+    this.selectProductName(name);
+  },
+
+  onPickSuggestion(event: WechatMiniprogram.TouchEvent): void {
+    const name = String(event.currentTarget.dataset['name'] ?? '').trim();
+    if (name === '') {
+      return;
+    }
+    this.selectProductName(name);
+  },
+
+  selectProductName(name: string): void {
     this.setData(
-      { product: event.detail.product, customProduct: event.detail.product },
+      {
+        product: name,
+        customProduct: name,
+        suggestions: [],
+        pickerOpen: false,
+      },
       () => this.refreshPreview()
     );
   },
 
   onCustomProductInput(event: WechatMiniprogram.Input): void {
     const val = String(event.detail.value ?? '').trim();
-    this.setData({ customProduct: val, product: val }, () => this.refreshPreview());
+    const lower = val.toLowerCase();
+    const suggestions =
+      val === ''
+        ? []
+        : this.data.catalog
+            .filter((item) => item.name.toLowerCase().includes(lower) && item.name !== val)
+            .slice(0, 5);
+    this.setData({ customProduct: val, product: val, suggestions }, () => this.refreshPreview());
   },
+
+  onClearProduct(): void {
+    this.setData({ customProduct: '', product: '', suggestions: [] }, () => this.refreshPreview());
+  },
+
+  onOpenPicker(): void {
+    this.setData({
+      pickerOpen: true,
+      pickerKeyword: '',
+      pickerFiltered: this.data.catalog,
+    });
+  },
+
+  onClosePicker(): void {
+    this.setData({ pickerOpen: false });
+  },
+
+  onPickerSearchInput(event: WechatMiniprogram.Input): void {
+    const kw = String(event.detail.value ?? '').trim();
+    const lower = kw.toLowerCase();
+    const filtered =
+      kw === ''
+        ? this.data.catalog
+        : this.data.catalog.filter((item) => item.name.toLowerCase().includes(lower));
+    this.setData({ pickerKeyword: kw, pickerFiltered: filtered });
+  },
+
+  noop(): void {},
 
   onGoPhoto(): void {
     wx.navigateTo({ url: '/pages/delivery-note/index' });
+  },
+
+  onProduct(event: WechatMiniprogram.CustomEvent<{ product: string }>): void {
+    this.selectProductName(event.detail.product);
   },
 
   onDirection(event: WechatMiniprogram.CustomEvent<{ direction: 'in' | 'out' }>): void {
@@ -139,10 +297,12 @@ Page<ManualData, WechatMiniprogram.Page.CustomOption>({
         duration_ms: 0,
       });
       if (parsed.card !== null && parsed.card !== undefined) {
+        rememberRecentProduct(this.data.product);
         wx.redirectTo({ url: `/pages/card/index?cardId=${parsed.card.meta.card_id}` });
         return;
       }
       if (parsed.clarify !== null && parsed.clarify !== undefined) {
+        rememberRecentProduct(this.data.product);
         wx.setStorageSync('dsh:pendingClarify', {
           sessionId: session.session_id,
           clarify: parsed.clarify,

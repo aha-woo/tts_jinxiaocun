@@ -1,4 +1,4 @@
-/* 手动记账 */
+/* 手动记账（方向 A 暖纸账本） */
 .hint {
   display: block;
   font-size: 24rpx;
@@ -7,7 +7,7 @@
 }
 
 .pad {
-  padding: 24rpx;
+  padding: 28rpx;
 }
 
 .c-title {
@@ -18,17 +18,36 @@
   margin-bottom: 12rpx;
 }
 
-.said {
-  background: var(--bg);
-  border-radius: 20rpx;
-  padding: 20rpx 22rpx;
-  font-size: 30rpx;
-  line-height: 1.55;
+.manual-photo-card {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20rpx;
+}
+
+.manual-photo-card__copy {
+  flex: 1;
+  min-width: 0;
+}
+
+.manual-photo-card__t {
+  display: block;
+  font-size: 28rpx;
+  font-weight: 700;
+  color: var(--ink);
+}
+
+.manual-photo-card__s {
+  display: block;
+  margin-top: 4rpx;
+  font-size: 22rpx;
+  color: var(--mu);
+  line-height: 1.5;
 }
 
 .manual-photo-btn {
   margin: 0;
-  padding: 12rpx 24rpx;
+  padding: 14rpx 24rpx;
   border-radius: var(--r-pill);
   background: var(--ac);
   color: #fff;
@@ -45,4 +64,231 @@
   display: inline-flex;
   align-items: center;
   gap: 8rpx;
+}
+
+.m-sec {
+  margin-bottom: 24rpx;
+}
+
+.m-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 10rpx;
+}
+
+.m-label {
+  display: block;
+  font-size: 24rpx;
+  color: var(--mu);
+  margin-bottom: 10rpx;
+}
+
+.m-head .m-label {
+  margin-bottom: 0;
+}
+
+.m-all {
+  font-size: 24rpx;
+  color: var(--ac);
+  font-weight: 600;
+}
+
+.m-search {
+  display: flex;
+  align-items: center;
+  gap: 12rpx;
+  padding: 14rpx 20rpx;
+  background: var(--bg);
+  border: 2rpx solid var(--ln);
+  border-radius: 18rpx;
+}
+
+.m-search__in {
+  flex: 1;
+  min-width: 0;
+  font-size: 28rpx;
+  color: var(--ink);
+}
+
+.m-search__clr {
+  font-size: 24rpx;
+  color: var(--mu);
+  padding: 4rpx 8rpx;
+}
+
+.m-suggest {
+  margin-top: 10rpx;
+  border: 2rpx solid var(--ln);
+  border-radius: 18rpx;
+  background: var(--sf);
+  overflow: hidden;
+}
+
+.m-suggest__row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 18rpx 20rpx;
+  border-top: 2rpx solid var(--ln);
+}
+
+.m-suggest__row:first-child {
+  border-top: 0;
+}
+
+.m-suggest__row:active {
+  background: var(--acs);
+}
+
+.m-suggest__name {
+  font-size: 28rpx;
+  font-weight: 600;
+  color: var(--ink);
+}
+
+.m-suggest__stock {
+  font-size: 22rpx;
+  color: var(--mu);
+}
+
+.m-quick {
+  margin-top: 16rpx;
+}
+
+.m-quick__k {
+  display: block;
+  font-size: 22rpx;
+  color: var(--mu);
+  margin-bottom: 10rpx;
+}
+
+.m-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12rpx;
+}
+
+.m-chip {
+  display: inline-flex;
+  align-items: center;
+  padding: 10rpx 22rpx;
+  border-radius: var(--r-pill);
+  background: var(--bg);
+  border: 2rpx solid var(--ln);
+  font-size: 24rpx;
+  color: var(--ink);
+}
+
+.m-chip--on {
+  background: var(--acs);
+  border-color: #eabaa0;
+  color: var(--act);
+  font-weight: 700;
+}
+
+.said {
+  background: var(--bg);
+  border-radius: 20rpx;
+  padding: 20rpx 22rpx;
+  font-size: 30rpx;
+  line-height: 1.55;
+}
+
+/* 全部货品抽屉 */
+.picker-mask {
+  position: fixed;
+  inset: 0;
+  z-index: 900;
+  background: rgba(31, 27, 22, 0.42);
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+}
+
+.picker-sheet {
+  width: 100%;
+  max-height: 78vh;
+  background: var(--sf);
+  border-top: 2rpx solid var(--ln);
+  border-radius: 36rpx 36rpx 0 0;
+  padding: 28rpx 28rpx calc(24rpx + env(safe-area-inset-bottom));
+  display: flex;
+  flex-direction: column;
+  gap: 18rpx;
+}
+
+.picker-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.picker-title {
+  font-family: 'Songti SC', 'Noto Serif SC', serif;
+  font-size: 34rpx;
+  font-weight: 700;
+}
+
+.picker-close {
+  font-size: 26rpx;
+  color: var(--mu);
+  padding: 6rpx 12rpx;
+}
+
+.picker-list {
+  max-height: 52vh;
+}
+
+.picker-empty {
+  padding: 40rpx 16rpx;
+  text-align: center;
+  font-size: 24rpx;
+  color: var(--mu);
+}
+
+.picker-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 22rpx 16rpx;
+  border-top: 2rpx solid var(--ln);
+  border-radius: 14rpx;
+}
+
+.picker-row:first-child {
+  border-top: 0;
+}
+
+.picker-row--on {
+  background: var(--acs);
+}
+
+.picker-row__name {
+  font-size: 28rpx;
+  font-weight: 600;
+  color: var(--ink);
+}
+
+.picker-row--on .picker-row__name {
+  color: var(--act);
+}
+
+.picker-row__stock {
+  font-size: 24rpx;
+  color: var(--mu);
+}
+
+@media (min-width: 768px) {
+  .picker-mask {
+    align-items: center;
+  }
+
+  .picker-sheet {
+    width: 520px;
+    max-width: 92vw;
+    border: 1px solid var(--ln);
+    border-radius: 18px;
+    padding: 22px;
+  }
 }

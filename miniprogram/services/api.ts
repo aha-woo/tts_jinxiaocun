@@ -334,8 +334,11 @@ export interface QueryPayload<T = unknown> {
 export interface UsagePayload {
   period: string;
   used: number;
+  used_count?: number;
   quota: number;
-  cost_fen: number;
+  free_quota?: number;
+  remaining?: number;
+  cost_fen?: number;
   degrade_level: string;
   caliber: string;
   [key: string]: unknown;
@@ -352,9 +355,11 @@ export interface UsageEnvelope {
 export interface EntitlementPayload {
   plan_code: string;
   plan_name: string;
-  valid_until: string;
+  valid_until: string | null;
+  valid_until_display?: string;
   days_left: number;
   remaining_quota: number;
+  remaining?: number;
   caliber: string;
   auto_renew: boolean;
   [key: string]: unknown;
@@ -370,10 +375,15 @@ export interface EntitlementEnvelope {
 /** 道具（价格来自 `goods.json`，端上不硬编码价格）。 */
 export interface GoodsItem {
   goods_id: string;
+  goods_type?: string;
   name: string;
+  name_zh?: string;
   price_fen: number;
   price_text: string;
   desc: string;
+  benefits_zh?: string;
+  quota_amount?: number;
+  validity_days?: number;
   [key: string]: unknown;
 }
 
@@ -878,13 +888,16 @@ export function listPending(): Promise<{ items: PendingCardRow[]; note: string }
 }
 
 /** 只读查询：库存（R0，不建卡、不扣次）。 */
-export function queryStock(name = '', lowOnly = false): Promise<QueryPayload> {
+export function queryStock(name = '', lowOnly = false, limit?: number): Promise<QueryPayload> {
   const params: string[] = [];
   if (name !== '') {
     params.push(`name=${encodeURIComponent(name)}`);
   }
   if (lowOnly) {
     params.push('low_only=true');
+  }
+  if (limit !== undefined && limit > 0) {
+    params.push(`limit=${Math.round(limit)}`);
   }
   const suffix = params.length > 0 ? `?${params.join('&')}` : '';
   return callApi(`/api/v1/query/stock${suffix}`, { method: 'GET' });

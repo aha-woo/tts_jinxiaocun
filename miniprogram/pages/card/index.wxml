@@ -178,4 +178,13 @@
       </view>
     </view>
   </view>
+
+  <action-sheet
+    visible="{{sheet.visible}}"
+    title="{{sheet.title}}"
+    subtitle="{{sheet.subtitle}}"
+    actions="{{sheet.actions}}"
+    bind:select="onSheetSelect"
+    bind:close="onSheetClose"
+  />
 </view>

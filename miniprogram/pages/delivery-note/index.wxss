@@ -1,13 +1,46 @@
+.pad {
+  padding: 32rpx 28rpx;
+}
+
+.c-title {
+  display: block;
+  font-family: 'Songti SC', 'Noto Serif SC', serif;
+  font-size: 32rpx;
+  font-weight: 700;
+  color: var(--ink);
+  line-height: 1.35;
+}
+
+.hint {
+  display: block;
+  margin-top: 10rpx;
+  font-size: 24rpx;
+  color: var(--mu);
+  line-height: 1.65;
+}
+
 .dn-hero {
   display: flex;
   flex-direction: column;
-  gap: 14rpx;
+  gap: 24rpx;
+}
+
+.dn-hero__head {
+  display: flex;
+  align-items: flex-start;
+  gap: 20rpx;
+}
+
+.dn-hero__copy {
+  flex: 1;
+  min-width: 0;
 }
 
 .dn-btn {
-  margin-top: 8rpx;
+  margin-top: 4rpx;
   width: 100%;
-  border-radius: 20rpx;
+  min-height: 92rpx;
+  border-radius: 22rpx;
   display: flex;
   align-items: center;
   justify-content: center;

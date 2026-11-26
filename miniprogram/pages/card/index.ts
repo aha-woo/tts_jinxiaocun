@@ -34,6 +34,7 @@ import {
 import { SpeechGate, type SpeechResult } from '../../services/speech';
 import { appendNumericKey } from '../../utils/format';
 import { isWideScreen } from '../../utils/screen';
+import type { SheetActionItem } from '../../components/action-sheet/action-sheet';
 
 /** 卡片 30 秒有效期（与服务端 `card_ttl_seconds` 一致；端上只倒计时提示）。 */
 export const CARD_TTL_SEC = 30;
@@ -154,6 +155,12 @@ interface CardData {
   /** 字段语音重试中 */
   voiceFieldSlot: string;
   voiceListening: boolean;
+  sheet: {
+    visible: boolean;
+    title: string;
+    subtitle: string;
+    actions: SheetActionItem[];
+  };
 }
 
 /** 只把这四个槽位展示给用户；其余是内部字段。 */
@@ -201,9 +208,11 @@ Page<CardData, WechatMiniprogram.Page.CustomOption>({
     similarDismissed: false,
     voiceFieldSlot: '',
     voiceListening: false,
+    sheet: { visible: false, title: '', subtitle: '', actions: [] },
   },
 
   fieldSpeechGate: null as SpeechGate | null,
+  sheetCtx: null as { mode: 'line' } | { mode: 'ps' } | null,
 
   onLoad(query: Record<string, string | undefined>) {
     const cardId = String(query['cardId'] ?? '');
@@ -374,38 +383,18 @@ Page<CardData, WechatMiniprogram.Page.CustomOption>({
       return;
     }
     const line = card.calc.lines[0];
-    wx.showActionSheet({
-      itemList: ['改数量', '改单价（元）', '改总价（元）', '改商品名'],
-      success: (res) => {
-        if (res.tapIndex === 0) {
-          this.openGapEditor({
-            code: 'Q',
-            label: '数量',
-            unit: line.unit || '',
-            must: false,
-            current: String(line.quantity ?? ''),
-          });
-        } else if (res.tapIndex === 1) {
-          const upYuan =
-            typeof line.unit_price_fen === 'number'
-              ? (line.unit_price_fen / 100).toFixed(2).replace(/\.00$/, '')
-              : '';
-          this.openGapEditor({ code: 'UP', label: '单价', unit: '元', must: false, current: upYuan });
-        } else if (res.tapIndex === 2) {
-          const taYuan =
-            typeof line.amount_fen === 'number'
-              ? (line.amount_fen / 100).toFixed(2).replace(/\.00$/, '')
-              : '';
-          this.openGapEditor({ code: 'TA', label: '总价', unit: '元', must: false, current: taYuan });
-        } else if (res.tapIndex === 3) {
-          this.openGapEditor({
-            code: 'P',
-            label: '商品名称',
-            unit: '',
-            must: false,
-            current: String(line.product_label ?? ''),
-          });
-        }
+    this.sheetCtx = { mode: 'line' };
+    this.setData({
+      sheet: {
+        visible: true,
+        title: '修改这笔明细',
+        subtitle: `${line.product_label} · ${line.quantity}${line.unit}（${line.amount_display}）`,
+        actions: [
+          { key: 'Q', label: '改数量', tone: 'primary' },
+          { key: 'UP', label: '改单价（元）' },
+          { key: 'TA', label: '改总价（元）' },
+          { key: 'P', label: '改商品名' },
+        ],
       },
     });
   },
@@ -419,19 +408,76 @@ Page<CardData, WechatMiniprogram.Page.CustomOption>({
       return;
     }
     if (code === 'PS') {
-      const options = ['已结', '未结', '部分'];
-      wx.showActionSheet({
-        itemList: ['已付清（现结）', '还欠着（赊账）', '付了一部分'],
-        success: (res) => {
-          const chosen = options[res.tapIndex];
-          if (chosen !== undefined) {
-            void this.submitGap('PS', chosen);
-          }
+      this.sheetCtx = { mode: 'ps' };
+      this.setData({
+        sheet: {
+          visible: true,
+          title: '修改结款方式',
+          subtitle: '选择这笔单的付款状态',
+          actions: [
+            { key: '已结', label: '已付清（现结）', tone: 'primary' },
+            { key: '未结', label: '还欠着（赊账）' },
+            { key: '部分', label: '付了一部分' },
+          ],
         },
       });
       return;
     }
     this.openGapEditor({ code, label, unit: '', must: false, current: value });
+  },
+
+  onSheetClose(): void {
+    this.sheetCtx = null;
+    this.setData({ 'sheet.visible': false });
+  },
+
+  onSheetSelect(event: WechatMiniprogram.CustomEvent<{ index: number; key: string }>): void {
+    const ctx = this.sheetCtx;
+    const { key } = event.detail;
+    this.onSheetClose();
+    if (!ctx) {
+      return;
+    }
+    if (ctx.mode === 'ps') {
+      if (key) {
+        void this.submitGap('PS', key);
+      }
+      return;
+    }
+    const card = this.data.card;
+    if (card === null || card.calc.lines.length === 0) {
+      return;
+    }
+    const line = card.calc.lines[0];
+    if (key === 'Q') {
+      this.openGapEditor({
+        code: 'Q',
+        label: '数量',
+        unit: line.unit || '',
+        must: false,
+        current: String(line.quantity ?? ''),
+      });
+    } else if (key === 'UP') {
+      const upYuan =
+        typeof line.unit_price_fen === 'number'
+          ? (line.unit_price_fen / 100).toFixed(2).replace(/\.00$/, '')
+          : '';
+      this.openGapEditor({ code: 'UP', label: '单价', unit: '元', must: false, current: upYuan });
+    } else if (key === 'TA') {
+      const taYuan =
+        typeof line.amount_fen === 'number'
+          ? (line.amount_fen / 100).toFixed(2).replace(/\.00$/, '')
+          : '';
+      this.openGapEditor({ code: 'TA', label: '总价', unit: '元', must: false, current: taYuan });
+    } else if (key === 'P') {
+      this.openGapEditor({
+        code: 'P',
+        label: '商品名称',
+        unit: '',
+        must: false,
+        current: String(line.product_label ?? ''),
+      });
+    }
   },
 
   onGapKey(event: WechatMiniprogram.TouchEvent): void {

@@ -2,8 +2,15 @@
   <view class="page__gap">
     <view class="card pad">
       <view class="dn-hero">
-        <text class="c-title">拍张进货单，整单认出来再入库</text>
-        <text class="hint">识别出明细和合计数后会先给你核对；档案里没有的新货会自动建档，原始照片随单存好。</text>
+        <view class="dn-hero__head">
+          <view class="ico-badge ico-badge--ac">
+            <view class="ico ico--photo"></view>
+          </view>
+          <view class="dn-hero__copy">
+            <text class="c-title">拍张进货单，整单认出来再入库</text>
+            <text class="hint">识别出明细和合计数后会先给你核对；档案里没有的新货会自动建档，原始照片随单存好。</text>
+          </view>
+        </view>
         <button class="cta dn-btn" loading="{{loading}}" bindtap="onChooseImage">
           <view class="btn-ico-row">
             <view class="ico ico--btn ico--photo-white"></view>

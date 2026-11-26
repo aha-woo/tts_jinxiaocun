@@ -26,6 +26,7 @@ import { ensureLogin } from '../../services/auth';
 interface GoodsView {
   goodsId: string;
   name: string;
+  badgeText: string;
   priceText: string;
   desc: string;
 }
@@ -39,6 +40,31 @@ interface PayData {
   paying: string;
   message: string;
   errorText: string;
+}
+
+function formatDateOnly(raw: unknown): string {
+  const s = typeof raw === 'string' ? raw.trim() : '';
+  if (s === '') {
+    return '长期有效';
+  }
+  return s.slice(0, 10);
+}
+
+function planNameOf(code: string): string {
+  const map: Record<string, string> = {
+    free: '免费体验版',
+    '30day': '30 天权益版',
+    quota_pack: '语音加油包',
+  };
+  return map[code] ?? (code || '免费体验版');
+}
+
+function formatFenLabel(fen: unknown): string {
+  const n = Number(fen ?? 0);
+  if (!Number.isFinite(n) || n <= 0) {
+    return '¥0';
+  }
+  return n % 100 === 0 ? `¥${Math.round(n / 100)}` : `¥${(n / 100).toFixed(2)}`;
 }
 
 Page<PayData, WechatMiniprogram.Page.CustomOption>({
@@ -66,23 +92,33 @@ Page<PayData, WechatMiniprogram.Page.CustomOption>({
         entitlement(),
         listGoods(),
       ]);
+      const rawUsage = usagePayload.usage;
+      const rawEnt = entitlementPayload.entitlement;
       this.setData({
         // 两个口径分别来自各自的包络体，端上**不合并、不互相推导**
         usage: {
-          ...usagePayload.usage,
-          used: Number(usagePayload.usage?.used ?? 0),
-          quota: Number(usagePayload.usage?.quota ?? 0),
+          ...rawUsage,
+          used: Number(rawUsage?.used ?? rawUsage?.used_count ?? 0),
+          quota: Number(rawUsage?.quota ?? rawUsage?.free_quota ?? 0),
         },
         entitlement: {
-          ...entitlementPayload.entitlement,
-          remaining_quota: Number(entitlementPayload.entitlement?.remaining_quota ?? 0),
-          days_left: Number(entitlementPayload.entitlement?.days_left ?? 0),
+          ...rawEnt,
+          plan_name: String(rawEnt?.plan_name || planNameOf(String(rawEnt?.plan_code ?? 'free'))),
+          remaining_quota: Number(rawEnt?.remaining_quota ?? rawEnt?.remaining ?? 0),
+          days_left: Number(rawEnt?.days_left ?? 0),
+          valid_until: String(rawEnt?.valid_until_display || formatDateOnly(rawEnt?.valid_until)),
         },
         goods: goodsPayload.items.map((item) => ({
           goodsId: item.goods_id,
-          name: item.name,
-          priceText: item.price_text,
-          desc: item.desc,
+          name: String(item.name || item.name_zh || '语音套餐'),
+          badgeText:
+            item.goods_type === 'quota_pack'
+              ? '次数包'
+              : Number(item.validity_days ?? 0) > 0
+                ? `${Number(item.validity_days)} 天权益`
+                : '',
+          priceText: String(item.price_text || formatFenLabel(item.price_fen)),
+          desc: String(item.desc || item.benefits_zh || ''),
         })),
         canBuyHere: canPurchaseHere(),
         loading: false,

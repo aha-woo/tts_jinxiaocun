@@ -21,6 +21,7 @@ import {
 } from '../../services/api';
 import { ensureLogin } from '../../services/auth';
 import { appendNumericKey } from '../../utils/format';
+import type { SheetActionItem } from '../../components/action-sheet/action-sheet';
 
 interface PendingItem {
   cardId: string;
@@ -61,6 +62,12 @@ interface PendingData {
   fillCount: number;
   editing: EditingGap | null;
   keypad: string;
+  sheet: {
+    visible: boolean;
+    title: string;
+    subtitle: string;
+    actions: SheetActionItem[];
+  };
 }
 
 /** 待确认列表项（服务端摘要）→ 展示项。 */
@@ -113,7 +120,10 @@ Page<PendingData, WechatMiniprogram.Page.CustomOption>({
     fillCount: 0,
     editing: null,
     keypad: '',
+    sheet: { visible: false, title: '', subtitle: '', actions: [] },
   },
+
+  sheetCardId: '',
 
   onShow() {
     void this.load();
@@ -295,14 +305,29 @@ Page<PendingData, WechatMiniprogram.Page.CustomOption>({
     if (cardId === '') {
       return;
     }
-    wx.showActionSheet({
-      itemList: ['丢弃这张卡（不记账）'],
-      success: (res) => {
-        if (res.tapIndex === 0) {
-          void this.discard(cardId);
-        }
+    this.sheetCardId = cardId;
+    this.setData({
+      sheet: {
+        visible: true,
+        title: '处理这张待确认卡',
+        subtitle: '丢弃后不会入账，也不会改变库存与账款',
+        actions: [{ key: 'discard', label: '丢弃这张卡（不记账）', tone: 'danger' }],
       },
     });
+  },
+
+  onSheetClose(): void {
+    this.sheetCardId = '';
+    this.setData({ 'sheet.visible': false });
+  },
+
+  onSheetSelect(event: WechatMiniprogram.CustomEvent<{ index: number; key: string }>): void {
+    const cardId = this.sheetCardId;
+    const { key } = event.detail;
+    this.onSheetClose();
+    if (key === 'discard' && cardId !== '') {
+      void this.discard(cardId);
+    }
   },
 
   async discard(cardId: string): Promise<void> {

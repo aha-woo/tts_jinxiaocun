@@ -37,6 +37,7 @@ import { ensureLogin } from '../../services/auth';
 import { rememberSpokenText, wasSaidRecently } from '../../utils/dedupe';
 import { formatDateTime } from '../../utils/format';
 import { isWideScreen } from '../../utils/screen';
+import type { SheetActionItem } from '../../components/action-sheet/action-sheet';
 
 /** 降级态（L0 正常 → L4 只读）：UI 上必须**看得出来差别**，不能只写进配置。 */
 export interface DegradeView {
@@ -148,6 +149,12 @@ interface IndexData {
   novice: NoviceStatus | null;
   undoBanner: { docId: string; summary: string } | null;
   fontSize: 'big' | 'std';
+  sheet: {
+    visible: boolean;
+    title: string;
+    subtitle: string;
+    actions: SheetActionItem[];
+  };
 }
 
 Page<IndexData, WechatMiniprogram.Page.CustomOption>({
@@ -189,7 +196,10 @@ Page<IndexData, WechatMiniprogram.Page.CustomOption>({
     novice: null,
     undoBanner: null,
     fontSize: 'big',
+    sheet: { visible: false, title: '', subtitle: '', actions: [] },
   },
+
+  sheetFlowRow: null as IndexData['flow'][number] | null,
 
   gate: null as SpeechGate | null,
   holding: false,
@@ -744,34 +754,55 @@ Page<IndexData, WechatMiniprogram.Page.CustomOption>({
       wx.showToast({ title: '这笔已经撤销过了', icon: 'none' });
       return;
     }
-    const docId = row.docId;
-    wx.showActionSheet({
-      itemList: ['改这笔账', '撤销这笔账'],
-      success: (res) => {
-        if (res.tapIndex === 0) {
-          wx.navigateTo({ url: `/pages/correct/index?docId=${docId}` });
-        } else if (res.tapIndex === 1) {
-          wx.showModal({
-            title: '确认撤销',
-            content: `要撤销「${row.title}」吗？原单会保留并标为已撤，库存与账款自动反做。`,
-            confirmText: '确认撤销',
-            success: (modalRes) => {
-              if (modalRes.confirm) {
-                void reverseDoc(docId, '首页撤销').then(
-                  () => {
-                    wx.showToast({ title: '已撤销', icon: 'success' });
-                    void this.loadDashboard();
-                  },
-                  (err: unknown) => {
-                    this.setData({ errorText: this.messageOf(err) });
-                  }
-                );
-              }
-            },
-          });
-        }
+    this.sheetFlowRow = row;
+    this.setData({
+      sheet: {
+        visible: true,
+        title: row.title,
+        subtitle: `${row.tag}${row.amount ? ` · ¥${row.amount}` : ''}${row.time ? ` · ${row.time}` : ''}`,
+        actions: [
+          { key: 'edit', label: '改这笔账', desc: '调整数量、单价后一步重记', tone: 'primary' },
+          { key: 'reverse', label: '撤销这笔账', desc: '保留原单并标为已撤，自动反做库存与账款', tone: 'danger' },
+        ],
       },
     });
+  },
+
+  onSheetClose(): void {
+    this.sheetFlowRow = null;
+    this.setData({ 'sheet.visible': false });
+  },
+
+  onSheetSelect(event: WechatMiniprogram.CustomEvent<{ index: number; key: string }>): void {
+    const row = this.sheetFlowRow;
+    const { key } = event.detail;
+    this.onSheetClose();
+    if (!row || !row.docId) {
+      return;
+    }
+    const docId = row.docId;
+    if (key === 'edit') {
+      wx.navigateTo({ url: `/pages/correct/index?docId=${docId}` });
+    } else if (key === 'reverse') {
+      wx.showModal({
+        title: '确认撤销',
+        content: `要撤销「${row.title}」吗？原单会保留并标为已撤，库存与账款自动反做。`,
+        confirmText: '确认撤销',
+        success: (modalRes) => {
+          if (modalRes.confirm) {
+            void reverseDoc(docId, '首页撤销').then(
+              () => {
+                wx.showToast({ title: '已撤销', icon: 'success' });
+                void this.loadDashboard();
+              },
+              (err: unknown) => {
+                this.setData({ errorText: this.messageOf(err) });
+              }
+            );
+          }
+        },
+      });
+    }
   },
 
   onOpenSelfCheck(): void {

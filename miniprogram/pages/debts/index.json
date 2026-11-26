@@ -1,4 +1,6 @@
 {
   "navigationBarTitleText": "欠款",
-  "usingComponents": {}
+  "usingComponents": {
+    "action-sheet": "/components/action-sheet/action-sheet"
+  }
 }

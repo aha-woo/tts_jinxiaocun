@@ -187,6 +187,14 @@ export function roleLabelOf(code: string): string {
   return table[code] ?? (code === '' ? '未登录' : code);
 }
 
+function formatDateTimeMinute(raw: unknown): string {
+  const s = typeof raw === 'string' ? raw.trim() : '';
+  if (s === '') {
+    return '—';
+  }
+  return s.replace('T', ' ').slice(0, 16);
+}
+
 function fenDisplay(value: unknown, fallback = '¥0.00'): string {
   if (value === null || value === undefined) {
     return fallback;
@@ -377,10 +385,24 @@ Page<AdminData, WechatMiniprogram.Page.CustomOption>({
         this.setData({ reportCards, topProducts });
       } else if (key === 'usage') {
         const [usagePayload, entitlementPayload] = await Promise.all([usage(), entitlement()]);
+        const rawUsage = usagePayload.usage;
+        const rawEnt = entitlementPayload.entitlement;
+        const planCode = String(rawEnt?.plan_code ?? 'free');
+        const planFallback =
+          planCode === 'free' ? '免费体验版' : planCode === '30day' ? '30 天权益版' : planCode;
         // 两个口径**分开存、分开显示**，绝不拼进同一个进度条
         this.setData({
-          usageView: usagePayload.usage,
-          entitlementView: entitlementPayload.entitlement,
+          usageView: {
+            ...rawUsage,
+            used: Number(rawUsage?.used ?? rawUsage?.used_count ?? 0),
+            quota: Number(rawUsage?.quota ?? rawUsage?.free_quota ?? 0),
+          },
+          entitlementView: {
+            ...rawEnt,
+            plan_name: String(rawEnt?.plan_name || planFallback),
+            remaining_quota: Number(rawEnt?.remaining_quota ?? rawEnt?.remaining ?? 0),
+            days_left: Number(rawEnt?.days_left ?? 0),
+          },
           usageNote: usagePayload.caliber_note,
         });
       } else if (key === 'permission') {
@@ -409,7 +431,7 @@ Page<AdminData, WechatMiniprogram.Page.CustomOption>({
             taskId: item.task_id,
             intentId: item.intent_id,
             status: item.status,
-            createdAt: item.created_at,
+            createdAt: formatDateTimeMinute(item.created_at),
             requiresPc: item.requires_pc,
             requiredRole: item.required_role,
             hint: item.hint_zh,
