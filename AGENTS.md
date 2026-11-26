@@ -4,7 +4,9 @@
 
 每次对仓库代码做出任何修改后，在最终回复的末尾必须单独附带一节 **「部署提示」**，明确说明以下各端是否需要重新部署（不要让用户自己猜）：
 
-- **微信云托管后端**（涉及 `server/`、`packages/shared/`、`server/Dockerfile` 的改动）：明确告知是否需要重新构建并部署云托管新版本；若涉及迁移或运维脚本（如 `server/scripts/seed_rich_demo.py`、`probe_env.py`），一并给出容器终端要执行的命令。
+- **微信云托管后端**（涉及 `server/`、`packages/shared/`、`server/Dockerfile` 的改动）：
+  - 本地测试与静态扫描全部通过后，**直接完成 `git commit` 与 `git push`**，在「部署提示」里明确给出已推送的 commit hash 与需要重新构建部署云托管新版本，不再额外询问是否推送；
+  - 若涉及迁移或运维脚本（如 `server/scripts/seed_rich_demo.py`、`probe_env.py`），一并给出容器终端要执行的命令。
 - **云开发云函数**（涉及 `cloudfunctions/` 的改动）：明确告知是否需要重新上传部署；未修改时简明标注「无需重新部署」。
 - **微信小程序前端**（涉及 `miniprogram/` 的改动）：明确告知是否只需在微信开发者工具重新编译预览，还是需要「上传」更新体验版，以及是否涉及 mp 后台配置变更（如 `app.json` 插件、隐私声明等）。
 

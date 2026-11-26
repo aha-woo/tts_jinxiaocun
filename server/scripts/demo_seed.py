@@ -38,7 +38,9 @@ from sqlalchemy import select  # noqa: E402
 
 from app.db.session import Database  # noqa: E402
 from app.models.catalog import Product, UnitConversion  # noqa: E402
+from app.models.org import Member  # noqa: E402
 from app.models.tenant import Tenant  # noqa: E402
+from app.tenant import rls  # noqa: E402
 
 #: 演示商品：(名称, 规格, 基本单位, 进货价分, 售价分, 换算[(从单位, 到单位, 系数)])
 DEMO_PRODUCTS: tuple[tuple[str, str, str, int, int, tuple[tuple[str, str, str], ...]], ...] = (
@@ -59,11 +61,23 @@ def _database_url() -> str:
 
 
 def _tenants(database: Database) -> list[Tenant]:
-    """库里的租户（按创建时间倒序，最近登录的在最前面）。"""
+    """库里的租户（按 PG FORCE RLS 引导策略读取，最近登录的在最前面）。"""
     with database.session(bypass_scope=True) as session:
-        return list(
-            session.execute(select(Tenant).order_by(Tenant.created_at.desc())).scalars()
+        rls.set_auth_bootstrap(session, True)
+        raw_tids = list(
+            session.execute(select(Member.tenant_id).order_by(Member.created_at.desc())).scalars()
         )
+        rls.set_auth_bootstrap(session, False)
+
+    tenants: list[Tenant] = []
+    for tid in dict.fromkeys(raw_tids):
+        with database.session(bypass_scope=True) as session:
+            rls.set_tenant_guc(session, tid)
+            tenant = session.get(Tenant, tid)
+            if tenant is not None:
+                tenants.append(tenant)
+    tenants.sort(key=lambda item: item.created_at, reverse=True)
+    return tenants
 
 
 def _upsert_product(
@@ -178,6 +192,7 @@ def main() -> int:
         tenant_id = chosen.tenant_id
         print(f"为租户 {tenant_id}（{chosen.name}）准备演示数据…")
         with database.session(bypass_scope=True) as session:
+            rls.set_tenant_guc(session, tenant_id)
             for name, spec, base_unit, purchase, sale, conversions in DEMO_PRODUCTS:
                 product, created = _upsert_product(
                     session,

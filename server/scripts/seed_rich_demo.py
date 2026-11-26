@@ -60,6 +60,7 @@ from app.models.org import Member, Role, Store  # noqa: E402
 from app.models.partner import Partner  # noqa: E402
 from app.models.tenant import Tenant  # noqa: E402
 from app.models.voice import VoiceSession  # noqa: E402
+from app.tenant import rls  # noqa: E402
 from app.tenant.context import TenantContext  # noqa: E402
 from app.utils.date_utils import from_iso_date, today_in_tz  # noqa: E402
 
@@ -125,10 +126,41 @@ def _database_url() -> str:
     return url
 
 
+def _load_tenant(database: Database, tenant_id: uuid.UUID) -> Tenant | None:
+    """在绑定 ``tenant_id`` GUC 的会话内读取单个租户（PG 上 ``tenant`` 表同样受 FORCE RLS 约束）。"""
+    ctx = TenantContext(
+        tenant_id=tenant_id,
+        store_id=NIL_UUID,
+        member_id=NIL_UUID,
+        role_code="boss",
+        tenant_version=1,
+    )
+    with database.session(ctx) as session:
+        return session.get(Tenant, tenant_id)
+
+
 def _list_tenants(database: Database) -> list[Tenant]:
-    """查询平台表 tenant（最近创建排前面）。"""
+    """按 PG FORCE RLS 引导策略列出已登录租户（最近创建排前面）。
+
+    ``tenant`` 表本身启用了 ``FORCE ROW LEVEL SECURITY``，无 ``app.tenant_id`` 时
+    直查返回 0 行；故先借 ``member_login_lookup`` 引导策略从 ``member`` 取出
+    ``tenant_id``，再逐个切入租户 GUC 读取 ``Tenant`` 记录。
+    """
     with database.session(bypass_scope=True) as session:
-        return list(session.execute(select(Tenant).order_by(Tenant.created_at.desc())).scalars())
+        rls.set_auth_bootstrap(session, True)
+        raw_tids = list(
+            session.execute(select(Member.tenant_id).order_by(Member.created_at.desc())).scalars()
+        )
+        rls.set_auth_bootstrap(session, False)
+
+    unique_tids = list(dict.fromkeys(raw_tids))
+    tenants: list[Tenant] = []
+    for tid in unique_tids:
+        tenant = _load_tenant(database, tid)
+        if tenant is not None:
+            tenants.append(tenant)
+    tenants.sort(key=lambda item: item.created_at, reverse=True)
+    return tenants
 
 
 def _resolve_store_and_member(
@@ -1393,23 +1425,30 @@ def main() -> int:
 
     database = Database.from_url(_database_url())
     try:
-        tenants = _list_tenants(database)
-        if not tenants:
-            print("库里还没有租户，请先用小程序打开并触发登录。")
-            return 1
-
-        if args.list:
-            print("库里的租户（最近创建的在最前）：")
-            for item in tenants:
-                print(f"  {item.tenant_id}  {item.name}  {item.status}")
-            return 0
-
-        if args.tenant:
-            chosen = next((t for t in tenants if str(t.tenant_id) == args.tenant), None)
+        if args.tenant and not args.list:
+            try:
+                target_tid = uuid.UUID(args.tenant)
+            except ValueError:
+                print(f"租户 UUID 格式无效：{args.tenant}")
+                return 1
+            chosen = _load_tenant(database, target_tid)
             if chosen is None:
                 print(f"未找到租户 {args.tenant}，请先运行 --list 查看可用租户。")
                 return 1
         else:
+            tenants = _list_tenants(database)
+            if not tenants:
+                print(
+                    "库里还没有已登录的租户。\n"
+                    "请确认小程序首页「系统自检」显示已登录（若仍为空，检查小程序是否连到了当前云托管环境）。"
+                )
+                return 1
+
+            if args.list:
+                print("库里的租户（最近创建的在最前）：")
+                for item in tenants:
+                    print(f"  {item.tenant_id}  {item.name}  {item.status}")
+                return 0
             chosen = tenants[0]
 
         if args.clean:

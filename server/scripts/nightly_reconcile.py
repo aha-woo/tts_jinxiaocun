@@ -11,16 +11,39 @@ from __future__ import annotations
 
 import argparse
 import sys
+from pathlib import Path
 
-from sqlalchemy import select
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from app.config import get_settings
-from app.db.session import Database
-from app.models.org import Member, Role, Store
-from app.models.tenant import Tenant
-from app.services.closing_summary import build_closing_summary, send_closing_summary
-from app.services.reconcile import reconcile_store
-from app.tenant import rls
+from sqlalchemy import select  # noqa: E402
+
+from app.config import get_settings  # noqa: E402
+from app.db.session import Database  # noqa: E402
+from app.models.org import Member, Role, Store  # noqa: E402
+from app.models.tenant import Tenant  # noqa: E402
+from app.services.closing_summary import build_closing_summary, send_closing_summary  # noqa: E402
+from app.services.reconcile import reconcile_store  # noqa: E402
+from app.tenant import rls  # noqa: E402
+
+
+def _list_active_tenants(database: Database) -> list[Tenant]:
+    """按 PG FORCE RLS 引导策略列出 active 租户。"""
+    with database.session(bypass_scope=True) as s:
+        rls.set_auth_bootstrap(s, True)
+        raw_tids = list(
+            s.execute(select(Member.tenant_id).order_by(Member.created_at.desc())).scalars()
+        )
+        rls.set_auth_bootstrap(s, False)
+
+    tenants: list[Tenant] = []
+    for tid in dict.fromkeys(raw_tids):
+        with database.session(bypass_scope=True) as s:
+            rls.set_tenant_guc(s, tid)
+            tenant = s.get(Tenant, tid)
+            if tenant is not None and str(tenant.status) == "active":
+                tenants.append(tenant)
+    tenants.sort(key=lambda item: item.created_at, reverse=True)
+    return tenants
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -32,8 +55,7 @@ def main(argv: list[str] | None = None) -> int:
     database = Database.from_url(settings.database_url)
     has_mismatch = False
 
-    with database.session(bypass_scope=True) as s:
-        tenants = list(s.execute(select(Tenant).where(Tenant.status == "active")).scalars())
+    tenants = _list_active_tenants(database)
 
     for tenant in tenants:
         with database.session(bypass_scope=True) as s:

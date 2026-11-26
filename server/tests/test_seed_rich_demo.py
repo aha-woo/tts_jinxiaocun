@@ -17,9 +17,12 @@ from app.models.ops import Gap, PendingTask
 from app.models.org import Member, Role, Store
 from app.models.partner import Partner
 from app.models.tenant import Tenant
+from app.tenant import rls
 from app.tenant.context import TenantContext
 from app.utils.date_utils import from_iso_date, today_in_tz
-from scripts.seed_rich_demo import clean_tenant, seed_tenant
+from scripts.demo_seed import _tenants as demo_seed_tenants
+from scripts.nightly_reconcile import _list_active_tenants as reconcile_active_tenants
+from scripts.seed_rich_demo import _list_tenants, _load_tenant, clean_tenant, seed_tenant
 
 
 def _setup_tenant_db() -> tuple[Database, Tenant, Store, Member]:
@@ -117,5 +120,51 @@ def test_seed_rich_demo_is_idempotent_and_clean_preserves_real_data() -> None:
             assert session.scalar(select(func.count()).select_from(ArAp).where(ArAp.tenant_id == tenant.tenant_id)) == 0
             assert session.scalar(select(func.count()).select_from(Gap).where(Gap.tenant_id == tenant.tenant_id)) == 0
             assert session.scalar(select(func.count()).select_from(PendingTask).where(PendingTask.tenant_id == tenant.tenant_id)) == 0
+    finally:
+        database.dispose()
+
+
+def test_list_tenants_and_load_tenant_follow_pg_rls_bootstrap(monkeypatch) -> None:
+    """验证租户列表与单租户读取遵循 PG FORCE RLS 引导顺序（先开 auth_bootstrap 查 member，再绑 tenant_id 查 tenant）。"""
+    database, tenant, _store, _member = _setup_tenant_db()
+    bootstrap_calls: list[bool] = []
+    tenant_guc_calls: list[str] = []
+
+    orig_bootstrap = rls.set_auth_bootstrap
+    orig_tenant_guc = rls.set_tenant_guc
+
+    def spy_bootstrap(session, enabled: bool = True) -> bool:
+        bootstrap_calls.append(enabled)
+        return orig_bootstrap(session, enabled)
+
+    def spy_tenant_guc(session, tid) -> bool:
+        tenant_guc_calls.append(str(tid))
+        return orig_tenant_guc(session, tid)
+
+    monkeypatch.setattr(rls, "set_auth_bootstrap", spy_bootstrap)
+    monkeypatch.setattr(rls, "set_tenant_guc", spy_tenant_guc)
+
+    try:
+        listed = _list_tenants(database)
+        assert [t.tenant_id for t in listed] == [tenant.tenant_id]
+        assert bootstrap_calls == [True, False]
+        assert tenant_guc_calls == [str(tenant.tenant_id)]
+
+        tenant_guc_calls.clear()
+        loaded = _load_tenant(database, tenant.tenant_id)
+        assert loaded is not None and loaded.tenant_id == tenant.tenant_id
+        assert tenant_guc_calls == [str(tenant.tenant_id)]
+
+        bootstrap_calls.clear()
+        tenant_guc_calls.clear()
+        assert [t.tenant_id for t in reconcile_active_tenants(database)] == [tenant.tenant_id]
+        assert bootstrap_calls == [True, False]
+        assert tenant_guc_calls == [str(tenant.tenant_id)]
+
+        bootstrap_calls.clear()
+        tenant_guc_calls.clear()
+        assert [t.tenant_id for t in demo_seed_tenants(database)] == [tenant.tenant_id]
+        assert bootstrap_calls == [True, False]
+        assert tenant_guc_calls == [str(tenant.tenant_id)]
     finally:
         database.dispose()

@@ -27,6 +27,7 @@ from app.models.voice import VoiceSession
 from app.services.audit import AuditService
 from app.services.ledger import LedgerService
 from app.services.unit_upgrade import set_unit_ratio_and_maybe_upgrade
+from app.tenant import rls
 from app.utils.date_utils import today_in_tz
 from app.voice.impact_preview import ImpactPreviewService, build_deltas
 from app.voice.output_schema import ParseResult
@@ -208,6 +209,8 @@ def parse_delivery_note(
         else database.session(bypass_scope=True)
     )
     with sess_ctx as session:
+        if tenant_context is None:
+            rls.set_tenant_guc(session, tenant_id)
         lines, computed_total_fen = _enrich_lines(session, tenant_id=tenant_id, extracted=extracted)
         stated = extracted.stated_total_fen
         total_diff_fen = (int(stated) - int(computed_total_fen)) if stated is not None else 0
