@@ -8,10 +8,13 @@ import {
   applyCount,
   fillCountLine,
   getCount,
+  getOpenCount,
   startCount,
+  voiceBatchCount,
   type CountLineRow,
 } from '../../services/api';
 import { ensureLogin } from '../../services/auth';
+import { SpeechGate, type SpeechResult } from '../../services/speech';
 import { appendNumericKey } from '../../utils/format';
 
 interface CountDisplayLine extends CountLineRow {
@@ -23,10 +26,14 @@ interface CountDisplayLine extends CountLineRow {
 interface CountData {
   loading: boolean;
   countId: string;
+  resumedOpen: boolean;
+  recordingVoice: boolean;
   lines: CountDisplayLine[];
   counted: number;
   editing: string;
   keypad: string;
+  reason: string;
+  reasons: string[];
   applying: boolean;
   errorText: string;
 }
@@ -35,28 +42,109 @@ Page<CountData, WechatMiniprogram.Page.CustomOption>({
   data: {
     loading: true,
     countId: '',
+    resumedOpen: false,
+    recordingVoice: false,
     lines: [],
     counted: 0,
     editing: '',
     keypad: '',
+    reason: '正常损耗',
+    reasons: ['正常损耗', '漏记卖货', '漏记进货', '拿错货', '赠品'],
     applying: false,
     errorText: '',
   },
 
+  speechGate: null as SpeechGate | null,
+
   onLoad() {
-    void this.init();
+    this.speechGate = new SpeechGate();
+    this.speechGate.onAutoStop((said: SpeechResult | null) => {
+      if (said !== null) {
+        void this.applyVoiceBatch(said);
+      }
+    });
+    void this.init(false);
   },
 
-  async init(): Promise<void> {
+  onUnload() {
+    this.speechGate?.dispose();
+  },
+
+  async init(forceNew = false): Promise<void> {
     this.setData({ loading: true, errorText: '' });
     try {
       await ensureLogin();
-      const started = await startCount();
-      this.setData({ countId: started.count_id });
+      let cid = '';
+      let resumed = false;
+      if (!forceNew) {
+        const existing = await getOpenCount();
+        if (existing.count?.count_id) {
+          cid = existing.count.count_id;
+          resumed = true;
+        }
+      }
+      if (!cid) {
+        const started = await startCount();
+        cid = started.count_id;
+      }
+      this.setData({ countId: cid, resumedOpen: resumed });
       await this.refresh();
     } catch (error) {
       const message = error instanceof ApiError ? `${error.message}（${error.errorCode}）` : String(error);
       this.setData({ loading: false, errorText: message });
+    }
+  },
+
+  onRestartCount(): void {
+    wx.showModal({
+      title: '重开新盘点',
+      content: '要重新拉一份当前库存快照从头数吗？',
+      success: (res) => {
+        if (res.confirm) {
+          void this.init(true);
+        }
+      },
+    });
+  },
+
+  async onVoiceBatch(): Promise<void> {
+    const gate = this.speechGate;
+    if (gate === null || !gate.available) {
+      wx.showToast({ title: '语音插件暂未就绪，可直接点下面商品行键盘填数', icon: 'none' });
+      return;
+    }
+    if (this.data.recordingVoice) {
+      this.setData({ recordingVoice: false });
+      const said = await gate.stop();
+      if (said !== null) {
+        await this.applyVoiceBatch(said);
+      }
+      return;
+    }
+    const outcome = await gate.start();
+    if (outcome.granted) {
+      this.setData({ recordingVoice: true });
+    }
+  },
+
+  async applyVoiceBatch(said: SpeechResult): Promise<void> {
+    this.setData({ recordingVoice: false });
+    if (!said.text || !this.data.countId) {
+      return;
+    }
+    try {
+      const res = await voiceBatchCount(this.data.countId, said.text);
+      await this.refresh();
+      const hitNames = res.matched.map((m) => `${m.name}:${m.qty_counted}${m.unit}`).join('、');
+      const missHint = res.unmatched.length > 0 ? `\n未识别：${res.unmatched.join('；')}` : '';
+      wx.showModal({
+        title: `语音录入了 ${res.matched.length} 样`,
+        content: `${hitNames || '未匹配到商品'}${missHint}`,
+        showCancel: false,
+      });
+    } catch (error) {
+      const message = error instanceof ApiError ? `${error.message}（${error.errorCode}）` : String(error);
+      this.setData({ errorText: message });
     }
   },
 
@@ -90,7 +178,12 @@ Page<CountData, WechatMiniprogram.Page.CustomOption>({
     if (line === undefined) {
       return;
     }
-    this.setData({ editing: productId, keypad: line.qty_counted ?? '' });
+    this.setData({ editing: productId, keypad: line.qty_counted ?? '', reason: line.reason || '正常损耗' });
+  },
+
+  onReason(event: WechatMiniprogram.TouchEvent): void {
+    const reason = String(event.currentTarget.dataset['reason'] ?? '正常损耗');
+    this.setData({ reason });
   },
 
   onKey(event: WechatMiniprogram.TouchEvent): void {
@@ -103,7 +196,7 @@ Page<CountData, WechatMiniprogram.Page.CustomOption>({
       return;
     }
     try {
-      await fillCountLine(this.data.countId, this.data.editing, this.data.keypad);
+      await fillCountLine(this.data.countId, this.data.editing, this.data.keypad, this.data.reason);
       this.setData({ editing: '', keypad: '' });
       await this.refresh();
     } catch (error) {
@@ -133,9 +226,13 @@ Page<CountData, WechatMiniprogram.Page.CustomOption>({
     try {
       const payload = await applyCount(this.data.countId);
       const result = payload.result;
+      const derivedTip =
+        result.derived_sales_doc_id && Number(result.derived_sales_amount_fen || 0) >= 0
+          ? `\n倒推销售已记账：¥${(Number(result.derived_sales_amount_fen || 0) / 100).toFixed(2)}`
+          : '';
       wx.showModal({
         title: '盘点已应用',
-        content: `调整 ${result.adjusted_lines} 件货，数量差异合计 ${result.total_qty_diff}`,
+        content: `调整 ${result.adjusted_lines} 件货，数量差异合计 ${result.total_qty_diff}${derivedTip}`,
         showCancel: false,
         success: () => wx.navigateBack({ delta: 1 }),
       });

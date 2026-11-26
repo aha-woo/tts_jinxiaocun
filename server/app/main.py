@@ -28,6 +28,7 @@ from app.api.v1 import (
     clarify,
     confirm,
     counts,
+    debts,
     delivery_note,
     dict as dict_api,
     entitlement,
@@ -321,6 +322,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     # ---- 只读查询与用量
     app.include_router(query.router, prefix="/api/v1")
     app.include_router(counts.router, prefix="/api/v1")
+    app.include_router(debts.router, prefix="/api/v1")
     app.include_router(inventory.router, prefix="/api/v1")
     app.include_router(products.router, prefix="/api/v1")
     app.include_router(me.router, prefix="/api/v1")

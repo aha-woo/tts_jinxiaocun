@@ -26,6 +26,7 @@ from app.deps import AuthContextDep, TenantSessionDep
 from app.models.catalog import Product
 from app.models.ops import Gap
 from app.services.gaps import resolve_gaps
+from app.services.product_merge import merge_products
 from app.services.unit_upgrade import set_unit_ratio_and_maybe_upgrade
 from app.utils.date_utils import now_utc
 
@@ -275,3 +276,33 @@ def set_unit_ratio(
         ratio=payload.ratio,
     )
     return JSONResponse(status_code=200, content=ok({"unit_ratio": outcome.as_dict()}))
+
+
+class MergeProductRequest(BaseModel):
+    """事后合并重复商品入参。"""
+
+    model_config = ConfigDict(extra="forbid")
+
+    target_product_id: uuid.UUID
+
+
+@router.post("/{product_id}/merge", summary="合并重复商品（迁移库存、流水、单据行与别名）")
+def api_merge_product(
+    product_id: uuid.UUID,
+    payload: MergeProductRequest,
+    context: AuthContextDep,
+    session: TenantSessionDep,
+) -> JSONResponse:
+    """将重复商品 ``product_id`` 合并入 ``target_product_id``，保留源商品别名为目标别名。"""
+    require_roles(context, WRITE_ROLES)
+    ids = ids_of(context)
+    assert_writable(session, ids.tenant_id)
+    outcome = merge_products(
+        session,
+        tenant_id=ids.tenant_id,
+        store_id=ids.store_id,
+        member_id=ids.member_id,
+        source_product_id=product_id,
+        target_product_id=payload.target_product_id,
+    )
+    return JSONResponse(status_code=200, content=ok({"merge": outcome.as_dict()}))

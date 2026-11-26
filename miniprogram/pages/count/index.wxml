@@ -6,6 +6,15 @@
       <text class="cstat__mu">共 {{lines.length}} 样 · 没填的不算 0</text>
     </view>
 
+    <view class="c-actions">
+      <view class="c-act-btn" bindtap="onVoiceBatch">🎙 {{recordingVoice ? '说完点此识别' : '语音连说盘点'}}</view>
+      <view class="c-act-btn" bindtap="onRestartCount">↻ 重开新盘点</view>
+    </view>
+
+    <view wx:if="{{resumedOpen}}" class="bar" style="background:var(--sf);border-color:var(--ln)">
+      <text>已为你接着上次没盘完的单继续数</text>
+    </view>
+
     <view wx:if="{{loading}}" class="empty">正在开盘点…</view>
     <view wx:elif="{{lines.length === 0}}" class="empty">还没有库存可以盘</view>
 
@@ -39,11 +48,20 @@
     </view>
   </view>
 
-  <!-- 数字键盘 -->
+  <!-- 数字键盘 + 差异原因快选 -->
   <view class="kpsheet" wx:if="{{editing}}">
     <view class="kpsheet__in">
       <text class="kpsheet__h">填实盘数</text>
       <text class="kpsheet__v">{{keypad || '0'}}</text>
+      <view class="c-reasons">
+        <text
+          wx:for="{{reasons}}"
+          wx:key="*this"
+          class="c-reason {{reason === item ? 'c-reason--on' : ''}}"
+          data-reason="{{item}}"
+          bindtap="onReason"
+        >{{item}}</text>
+      </view>
       <view class="kp">
         <view wx:for="{{['1','2','3','4','5','6','7','8','9','.','0','del']}}" wx:key="*this" class="kp__k" data-key="{{item}}" bindtap="onKey">{{item === 'del' ? '删' : item}}</view>
       </view>

@@ -95,6 +95,8 @@ class Settings:
     wx_provider: str = os.getenv("WX_PROVIDER", "fake")
     wx_appid: str = os.getenv("WX_APPID", "")
     wx_app_secret: str = os.getenv("WX_APP_SECRET", "")
+    wx_pay_app_key: str = os.getenv("WX_PAY_APP_KEY", "")
+    wx_subscribe_template_id: str = os.getenv("WX_SUBSCRIBE_TEMPLATE_ID", "")
     #: 服务间令牌（云函数 → 云托管内网调用发货推送）。**未配置即拒**：
     #: 发货回调是「付了钱发额度」的入口，不能靠「没配就放行」。
     service_token: str = os.getenv("SERVICE_TOKEN", "")
@@ -132,6 +134,7 @@ class Settings:
     # ---- ASR（T03）----
     # 同样默认 fake；签名只吃 audio_object_ref，**不接受任何音频字节**
     asr_provider: str = os.getenv("ASR_PROVIDER", "fake")
+    asr_vendor: str = os.getenv("ASR_VENDOR", "generic")
     asr_endpoint: str = os.getenv("ASR_ENDPOINT", "")
     asr_api_key: str = os.getenv("ASR_API_KEY", "")
     asr_timeout_seconds: float = float(os.getenv("ASR_TIMEOUT_SECONDS", "8"))

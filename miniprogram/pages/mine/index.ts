@@ -4,12 +4,17 @@
 
 import {
   ApiError,
+  createStaffInvite,
   deleteDict,
   getMe,
+  joinStaffByInvite,
   listDict,
   queryReport,
+  sendClosingSummary,
+  setToken,
   teachDict,
   updatePreferences,
+  updateStaffStatus,
   type DictRow,
   type MeMemberRow,
   type NoviceStatus,
@@ -36,6 +41,8 @@ interface MineData {
   monthlyProfit: string;
   dictOpen: boolean;
   dictItems: DictRow[];
+  membersOpen: boolean;
+  isBoss: boolean;
   members: MeMemberRow[];
   errorText: string;
 }
@@ -54,6 +61,8 @@ Page<MineData, WechatMiniprogram.Page.CustomOption>({
     monthlyProfit: '—',
     dictOpen: false,
     dictItems: [],
+    membersOpen: false,
+    isBoss: true,
     members: [],
     errorText: '',
   },
@@ -84,6 +93,7 @@ Page<MineData, WechatMiniprogram.Page.CustomOption>({
         displayName: me.display_name || '店主',
         storeName: me.store_name || '本店',
         roleLabel: ROLE_LABELS[me.role] ?? me.role,
+        isBoss: me.role === 'boss',
         mode: me.accounting_mode === 'count_derive' ? 'count' : 'each',
         confirmMode: me.auto_post_enabled ? 'auto' : 'always',
         novice: me.novice,
@@ -172,17 +182,112 @@ Page<MineData, WechatMiniprogram.Page.CustomOption>({
     });
   },
 
-  onShowMembers(): void {
-    const lines = this.data.members.map((m) => {
-      const role = ROLE_LABELS[m.role] ?? m.role;
-      const st = m.status === 'active' ? '正常' : '已停用';
-      return `${m.name}（${role} · ${st}${m.is_self ? ' · 当前账号' : ''}）`;
-    });
+  onToggleMembers(): void {
+    this.setData({ membersOpen: !this.data.membersOpen });
+  },
+
+  onCreateInvite(): void {
+    void createStaffInvite('clerk').then(
+      (res) => {
+        wx.showModal({
+          title: '店员邀请码（24 小时有效）',
+          content: `让店员在「我的 → 店里的人 → 输入邀请码入店」粘贴这串码：\n\n${res.invite_code}`,
+          confirmText: '复制邀请码',
+          cancelText: '关掉',
+          success: (m) => {
+            if (m.confirm) {
+              wx.setClipboardData({ data: res.invite_code });
+            }
+          },
+        });
+      },
+      (err: unknown) => {
+        wx.showToast({ title: err instanceof ApiError ? err.message : '生成失败', icon: 'none' });
+      }
+    );
+  },
+
+  onJoinByInvite(): void {
     wx.showModal({
-      title: '店里的人',
-      content: lines.length > 0 ? lines.join('\n') : '暂无其他成员记录',
-      showCancel: false,
+      title: '加入老板的店铺',
+      editable: true,
+      placeholderText: '粘贴 DSH1. 开头的邀请码',
+      success: (res) => {
+        const code = String(res.content ?? '').trim();
+        if (!res.confirm || !code) {
+          return;
+        }
+        void joinStaffByInvite(code).then(
+          (joined) => {
+            setToken(joined.jwt);
+            wx.showModal({
+              title: `已加入「${joined.store_name}」`,
+              content: `你的角色已切换为「${ROLE_LABELS[joined.role] ?? joined.role}」，下次说话即可协同记账。`,
+              showCancel: false,
+              success: () => {
+                void this.load();
+              },
+            });
+          },
+          (err: unknown) => {
+            wx.showModal({
+              title: '没加入成功',
+              content: err instanceof ApiError ? err.message : String(err),
+              showCancel: false,
+            });
+          }
+        );
+      },
     });
+  },
+
+  onToggleMemberStatus(event: WechatMiniprogram.TouchEvent): void {
+    const memberId = String(event.currentTarget.dataset['id'] ?? '');
+    const current = String(event.currentTarget.dataset['status'] ?? 'active');
+    const nextStatus = current === 'active' ? 'disabled' : 'active';
+    if (!memberId) {
+      return;
+    }
+    wx.showModal({
+      title: nextStatus === 'disabled' ? '确认停用店员' : '确认恢复店员',
+      content:
+        nextStatus === 'disabled'
+          ? '停用后对方下次操作立即失效（已记的单据仍保留审计痕迹）。'
+          : '恢复后对方可正常继续记账。',
+      success: (res) => {
+        if (!res.confirm) {
+          return;
+        }
+        void updateStaffStatus(memberId, { status: nextStatus }).then(
+          () => {
+            wx.showToast({ title: nextStatus === 'disabled' ? '已停用' : '已启用', icon: 'success' });
+            void this.load();
+          },
+          (err: unknown) => {
+            wx.showToast({ title: err instanceof ApiError ? err.message : '操作失败', icon: 'none' });
+          }
+        );
+      },
+    });
+  },
+
+  onSendClosingSummary(): void {
+    void sendClosingSummary().then(
+      (res) => {
+        const s = res.summary;
+        const extra = res.sent
+          ? '（已推送到微信订阅消息）'
+          : '（订阅消息模板未配置或未授权，展示今日收摊简报）';
+        wx.showModal({
+          title: `今日收摊总结${extra}`,
+          content: `${s.summary_text}\n三账核对：${s.reconcile_ok ? '账实相符' : '发现差异'}\n负库存商品数：${s.negative_count}`,
+          showCancel: false,
+        });
+      },
+      (err: unknown) => {
+        wx.showToast({ title: err instanceof ApiError ? err.message : '生成失败', icon: 'none' });
+      }
+    );
   },
 
   onGoPay(): void {

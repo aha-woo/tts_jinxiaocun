@@ -3,7 +3,7 @@
  * 数据来自只读 `/query/debt`；方向字段做尽力解析，缺失时归到「别人欠我」。
  */
 
-import { ApiError, queryDebt } from '../../services/api';
+import { ApiError, getPartnerStatement, queryDebt, settleDebt } from '../../services/api';
 import { ensureLogin } from '../../services/auth';
 
 type Dir = 'in' | 'out';
@@ -111,6 +111,163 @@ Page<DebtsData, WechatMiniprogram.Page.CustomOption>({
     if (row === undefined) {
       return;
     }
-    wx.showModal({ title: row.name, content: row.raw.slice(0, 300), showCancel: false });
+    const actionLabel = row.dir === 'in' ? '登记收款核销' : '登记付款核销';
+    wx.showActionSheet({
+      itemList: [actionLabel, '生成对账单图片发微信', '查看往来摘要'],
+      success: (res) => {
+        if (res.tapIndex === 0) {
+          this.promptSettle(row);
+        } else if (res.tapIndex === 1) {
+          void this.shareStatementImage(row);
+        } else if (res.tapIndex === 2) {
+          wx.showModal({ title: row.name, content: row.raw.slice(0, 300), showCancel: false });
+        }
+      },
+    });
+  },
+
+  promptSettle(row: Row): void {
+    const defaultYuan = row.amount.toFixed(2).replace(/\.00$/, '');
+    wx.showModal({
+      title: `${row.dir === 'in' ? '向' : '给'}「${row.name}」${row.dir === 'in' ? '收款' : '付款'}`,
+      editable: true,
+      placeholderText: `本次金额（元），未结 ${defaultYuan}`,
+      confirmText: '选方式并入账',
+      success: (res) => {
+        if (!res.confirm) {
+          return;
+        }
+        const raw = String(res.content ?? '').trim() || defaultYuan;
+        const numVal = Number(raw);
+        if (!Number.isFinite(numVal) || numVal <= 0) {
+          wx.showToast({ title: '金额必须是大于 0 的数字', icon: 'none' });
+          return;
+        }
+        const amountFen = Math.round(numVal * 100);
+        const methods = ['微信', '现金', '银行卡/支付宝'];
+        wx.showActionSheet({
+          itemList: methods,
+          success: (pick) => {
+            const method = methods[pick.tapIndex] || '微信';
+            void settleDebt({
+              partner_id: row.id,
+              direction: row.dir === 'in' ? 'receivable' : 'payable',
+              amount_fen: amountFen,
+              method,
+            }).then(
+              (done) => {
+                wx.showToast({ title: `已核销 ${done.doc_no}`, icon: 'success' });
+                void this.load();
+              },
+              (err: unknown) => {
+                const msg = err instanceof ApiError ? err.message : String(err);
+                wx.showModal({ title: '核销未成功', content: msg, showCancel: false });
+              }
+            );
+          },
+        });
+      },
+    });
+  },
+
+  async shareStatementImage(row: Row): Promise<void> {
+    wx.showLoading({ title: '生成对账单中…' });
+    try {
+      const dir = row.dir === 'in' ? 'receivable' : 'payable';
+      const stmt = await getPartnerStatement(row.id, dir);
+      const imgPath = await this.drawStatementCanvas(stmt);
+      wx.hideLoading();
+      wx.previewImage({
+        urls: [imgPath],
+        current: imgPath,
+      });
+    } catch (error) {
+      wx.hideLoading();
+      const msg = error instanceof ApiError ? error.message : error instanceof Error ? error.message : String(error);
+      wx.showModal({ title: '生成对账单失败', content: msg, showCancel: false });
+    }
+  },
+
+  drawStatementCanvas(stmt: {
+    store_name: string;
+    partner_name: string;
+    direction: string;
+    generated_at: string;
+    total_outstanding_fen: number;
+    items: Array<{ doc_no: string; biz_date: string; outstanding_fen: number }>;
+  }): Promise<string> {
+    return new Promise<string>((resolve, reject) => {
+      const query = wx.createSelectorQuery();
+      query
+        .select('#stmtCanvas')
+        .fields({ node: true, size: true })
+        .exec((res) => {
+          const entry = Array.isArray(res) ? (res[0] as { node?: unknown } | undefined) : undefined;
+          const canvas = entry?.node as
+            | {
+                width: number;
+                height: number;
+                getContext: (t: '2d') => {
+                  fillStyle: string;
+                  strokeStyle: string;
+                  font: string;
+                  fillRect: (x: number, y: number, w: number, h: number) => void;
+                  fillText: (text: string, x: number, y: number) => void;
+                  beginPath: () => void;
+                  moveTo: (x: number, y: number) => void;
+                  lineTo: (x: number, y: number) => void;
+                  stroke: () => void;
+                } | null;
+              }
+            | undefined;
+          if (!canvas) {
+            reject(new Error('当前环境不支持绘制对账单图片'));
+            return;
+          }
+          const w = 640;
+          const h = Math.max(520, 260 + stmt.items.slice(0, 10).length * 46);
+          canvas.width = w;
+          canvas.height = h;
+          const ctx = canvas.getContext('2d');
+          if (!ctx) {
+            reject(new Error('Canvas 上下文初始化失败'));
+            return;
+          }
+          ctx.fillStyle = '#f5f1e8';
+          ctx.fillRect(0, 0, w, h);
+          ctx.fillStyle = '#1f1b16';
+          ctx.font = 'bold 28px sans-serif';
+          ctx.fillText(`${stmt.store_name} · 往来对账单`, 36, 56);
+          ctx.font = '20px sans-serif';
+          ctx.fillStyle = '#5c5347';
+          ctx.fillText(`对象：${stmt.partner_name}（${stmt.direction === 'receivable' ? '应收货款' : '应付货款'}）`, 36, 98);
+          ctx.fillText(`日期：${stmt.generated_at}`, 36, 130);
+
+          ctx.strokeStyle = '#d8d0c2';
+          ctx.beginPath();
+          ctx.moveTo(36, 152);
+          ctx.lineTo(w - 36, 152);
+          ctx.stroke();
+
+          ctx.fillStyle = '#b45309';
+          ctx.font = 'bold 30px sans-serif';
+          ctx.fillText(`未结合计：¥${(stmt.total_outstanding_fen / 100).toFixed(2)}`, 36, 196);
+
+          ctx.fillStyle = '#1f1b16';
+          ctx.font = '20px sans-serif';
+          let y = 242;
+          for (const item of stmt.items.slice(0, 10)) {
+            ctx.fillText(`${item.biz_date}  ${item.doc_no}`, 36, y);
+            ctx.fillText(`¥${(item.outstanding_fen / 100).toFixed(2)}`, w - 180, y);
+            y += 42;
+          }
+
+          wx.canvasToTempFilePath({
+            canvas: canvas as unknown as WechatMiniprogram.Canvas,
+            success: (out) => resolve(out.tempFilePath),
+            fail: (err) => reject(new Error(err.errMsg || '导出图片失败')),
+          });
+        });
+    });
   },
 });

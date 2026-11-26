@@ -38,14 +38,17 @@
  */
 
 import { GATE, judgeRecording, type GateState } from './audio-gate';
+import { issueUploadTicket } from './api';
 import { ensurePrivacyAuthorized, type PrivacyOutcome } from './privacy';
 
-/** 一次语音转写的结果（**只有文字**，没有音频路径）。 */
+/** 一次语音转写的结果（文字，或云 ASR 上传后得到的 `audioObjectRef`）。 */
 export interface SpeechResult {
-  /** 转写出来的文字（已 trim；不会是空串——空串在门禁里就被丢弃了） */
+  /** 转写出来的文字（已 trim；云 ASR 模式下可为空串，此时必有 `audioObjectRef`） */
   text: string;
   /** 本次说话时长（毫秒；页面建会话时要用） */
   durationMs: number;
+  /** 云端对象存储音频引用（只传引用，音频字节绝不进业务接口） */
+  audioObjectRef?: string;
 }
 
 /**
@@ -485,6 +488,182 @@ export class SpeechGate implements SpeechAdapter {
       bars: this.recording ? pseudoBars(durationMs, this.gotSpeech) : [],
       softLimitReached: durationMs >= GATE.softMaxMs,
       partialText: this.partialText,
+    });
+  }
+}
+
+/**
+ * 云 ASR 录音适配器（wx.getRecorderManager → upload/ticket → wx.cloud.uploadFile → 传 audioObjectRef）。
+ * 适用于日调用量超出同声传译插件限额或需要门店热词增强的阶段；音频字节绝不经业务 API。
+ */
+export class CloudRecorderSpeechAdapter implements SpeechAdapter {
+  readonly available: boolean;
+
+  unavailableReason: SpeechUnavailableReason | '' = '';
+
+  private recorder: WechatMiniprogram.RecorderManager | null = null;
+
+  private listener: SpeechListener | null = null;
+
+  private autoStopListener: ((result: SpeechResult | null) => void) | null = null;
+
+  private startedAt = 0;
+
+  private timer: number | null = null;
+
+  private recording = false;
+
+  private autoStopping = false;
+
+  private resolver: ((result: SpeechResult | null) => void) | null = null;
+
+  constructor() {
+    if (typeof wx !== 'undefined' && typeof wx.getRecorderManager === 'function') {
+      this.recorder = wx.getRecorderManager();
+      this.available = true;
+      this.bind(this.recorder);
+    } else {
+      this.available = false;
+      this.unavailableReason = 'not_supported';
+    }
+  }
+
+  onState(listener: SpeechListener): void {
+    this.listener = listener;
+  }
+
+  onAutoStop(listener: (result: SpeechResult | null) => void): void {
+    this.autoStopListener = listener;
+  }
+
+  dispose(): void {
+    if (this.timer !== null) {
+      clearInterval(this.timer);
+      this.timer = null;
+    }
+    this.listener = null;
+    this.autoStopListener = null;
+    if (this.recording && this.recorder !== null) {
+      this.recording = false;
+      try {
+        this.recorder.stop();
+      } catch {
+        // ignore
+      }
+    }
+  }
+
+  async start(): Promise<PrivacyOutcome> {
+    if (this.recording) {
+      return { granted: true };
+    }
+    if (this.recorder === null) {
+      return { granted: false, reason: 'not_supported', hint: SPEECH_UNAVAILABLE_HINT };
+    }
+    const privacy = await ensurePrivacyAuthorized();
+    if (!privacy.granted) {
+      wx.showToast({ title: privacy.hint, icon: 'none' });
+      return privacy;
+    }
+    this.startedAt = Date.now();
+    this.recording = true;
+    this.recorder.start({ duration: GATE.hardMaxMs, format: 'mp3', sampleRate: 16000, numberOfChannels: 1 });
+    this.timer = setInterval(() => {
+      if (Date.now() - this.startedAt >= GATE.hardMaxMs) {
+        this.autoStopping = true;
+        if (this.timer !== null) {
+          clearInterval(this.timer);
+          this.timer = null;
+        }
+        this.recorder?.stop();
+        return;
+      }
+      this.emit();
+    }, 100) as unknown as number;
+    this.emit();
+    return { granted: true };
+  }
+
+  stop(): Promise<SpeechResult | null> {
+    if (!this.recording || this.recorder === null) {
+      return Promise.resolve(null);
+    }
+    return new Promise<SpeechResult | null>((resolve) => {
+      this.resolver = resolve;
+      this.recorder?.stop();
+    });
+  }
+
+  private bind(recorder: WechatMiniprogram.RecorderManager): void {
+    recorder.onStop((res) => {
+      this.recording = false;
+      if (this.timer !== null) {
+        clearInterval(this.timer);
+        this.timer = null;
+      }
+      const durationMs = Math.max(0, Number(res.duration || Date.now() - this.startedAt));
+      const wasAuto = this.autoStopping;
+      this.autoStopping = false;
+      this.emit();
+
+      const resolve = this.resolver;
+      this.resolver = null;
+      const deliver = (out: SpeechResult | null): void => {
+        if (resolve !== null) {
+          resolve(out);
+        } else if (wasAuto && this.autoStopListener !== null) {
+          this.autoStopListener(out);
+        }
+      };
+
+      const verdict = judgeRecording(durationMs, [1]);
+      if (!verdict.ok || !res.tempFilePath) {
+        wx.showToast({ title: verdict.ok ? '未录到有效声音' : verdict.message, icon: 'none' });
+        deliver(null);
+        return;
+      }
+      void this.uploadToCloud(res.tempFilePath, durationMs).then(deliver, () => {
+        wx.showToast({ title: '音频上传失败，请重试', icon: 'none' });
+        deliver(null);
+      });
+    });
+
+    recorder.onError(() => {
+      this.recording = false;
+      if (this.timer !== null) {
+        clearInterval(this.timer);
+        this.timer = null;
+      }
+      this.emit();
+      const resolve = this.resolver;
+      this.resolver = null;
+      resolve?.(null);
+    });
+  }
+
+  private async uploadToCloud(filePath: string, durationMs: number): Promise<SpeechResult | null> {
+    const ticket = await issueUploadTicket({ duration_ms: durationMs, codec: 'mp3' });
+    if (typeof wx.cloud?.uploadFile === 'function') {
+      const uploaded = await wx.cloud.uploadFile({
+        cloudPath: `${ticket.upload_prefix}/${ticket.ticket_id}.mp3`,
+        filePath,
+      });
+      return { text: '', durationMs, audioObjectRef: uploaded.fileID || ticket.audio_object_ref };
+    }
+    return { text: '', durationMs, audioObjectRef: ticket.audio_object_ref };
+  }
+
+  private emit(): void {
+    if (this.listener === null) {
+      return;
+    }
+    const durationMs = this.recording ? Date.now() - this.startedAt : 0;
+    this.listener({
+      recording: this.recording,
+      durationMs,
+      bars: this.recording ? pseudoBars(durationMs, true) : [],
+      softLimitReached: durationMs >= GATE.softMaxMs,
+      partialText: '云端录音中…',
     });
   }
 }

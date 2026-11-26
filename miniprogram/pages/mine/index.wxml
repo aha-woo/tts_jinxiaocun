@@ -54,10 +54,27 @@
         </view>
         <button class="sub" style="margin-top:12rpx;height:72rpx;font-size:26rpx" bindtap="onAddDict">+ 教一个说法</button>
       </view>
-      <view class="mi" bindtap="onShowMembers">
+      <view class="mi" bindtap="onToggleMembers">
         <view>
           <text class="mi__t">店里的人</text>
-          <text class="mi__s">共 {{members.length}} 人 · 查看权限</text>
+          <text class="mi__s">共 {{members.length}} 人 · 邀请或停用店员</text>
+        </view>
+        <text class="mi__ar">{{membersOpen ? '⌄' : '›'}}</text>
+      </view>
+      <view wx:if="{{membersOpen}}" style="padding:0 24rpx 20rpx;border-top:2rpx solid var(--ln)">
+        <view wx:for="{{members}}" wx:key="member_id" style="display:flex;justify-content:space-between;align-items:center;padding:12rpx 0;font-size:26rpx">
+          <text>{{item.name}}（{{item.role}} · {{item.status === 'active' ? '正常' : '已停用'}}）</text>
+          <text wx:if="{{isBoss && !item.is_self}}" style="color:{{item.status === 'active' ? 'var(--dgr)' : 'var(--ac)'}}" data-id="{{item.member_id}}" data-status="{{item.status}}" bindtap="onToggleMemberStatus">{{item.status === 'active' ? '停用' : '启用'}}</text>
+        </view>
+        <view style="display:flex;gap:12rpx;margin-top:12rpx">
+          <button wx:if="{{isBoss}}" class="sub" style="flex:1;height:72rpx;font-size:24rpx" bindtap="onCreateInvite">+ 生成店员邀请码</button>
+          <button class="sub" style="flex:1;height:72rpx;font-size:24rpx" bindtap="onJoinByInvite">输入邀请码入店</button>
+        </view>
+      </view>
+      <view wx:if="{{isBoss}}" class="mi" bindtap="onSendClosingSummary">
+        <view>
+          <text class="mi__t">今日收摊总结</text>
+          <text class="mi__s">三账核对体检 + 一键看收摊简报</text>
         </view>
         <text class="mi__ar">›</text>
       </view>

@@ -1,0 +1,113 @@
+name: CI
+
+on:
+  push:
+    branches: [main, develop, "feat/*"]
+  pull_request:
+
+jobs:
+  server-pytest:
+    name: server · pytest + tenant scan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: Install dependencies
+        working-directory: server
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+      - name: Run pytest
+        working-directory: server
+        env:
+          APP_ENV: test
+        run: pytest -q --tb=short
+      - name: Run tenant guard static scan
+        run: python infra/ci/tenant-guard-scan.py
+
+  server-postgres-rls:
+    name: server · PostgreSQL Alembic + RLS
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres_ci_password
+          POSTGRES_DB: vil_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: Install dependencies
+        working-directory: server
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+      - name: Create non-superuser role & run Alembic head
+        working-directory: server
+        env:
+          PGPASSWORD: postgres_ci_password
+          DATABASE_URL: postgresql+psycopg://postgres:postgres_ci_password@127.0.0.1:5432/vil_test
+        run: |
+          python - <<'PY'
+          import psycopg
+          with psycopg.connect("postgresql://postgres:postgres_ci_password@127.0.0.1:5432/vil_test", autocommit=True) as conn:
+              conn.execute("CREATE ROLE vil_app WITH LOGIN PASSWORD 'vil_app_pwd' NOSUPERUSER NOBYPASSRLS;")
+              conn.execute("GRANT ALL PRIVILEGES ON DATABASE vil_test TO vil_app;")
+              conn.execute("GRANT ALL ON SCHEMA public TO vil_app;")
+          PY
+          alembic upgrade head
+          python - <<'PY'
+          import psycopg
+          with psycopg.connect("postgresql://postgres:postgres_ci_password@127.0.0.1:5432/vil_test", autocommit=True) as conn:
+              conn.execute("GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO vil_app;")
+              conn.execute("GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO vil_app;")
+          PY
+      - name: Run probe_env & PG RLS tests as non-superuser
+        working-directory: server
+        env:
+          DATABASE_URL: postgresql+psycopg://vil_app:vil_app_pwd@127.0.0.1:5432/vil_test
+          PG_TEST_URL: postgresql+psycopg://vil_app:vil_app_pwd@127.0.0.1:5432/vil_test
+        run: |
+          python scripts/probe_env.py
+          pytest tests/test_provisioning_pg.py tests/test_rls_cross_tenant.py -q --tb=short
+
+  miniprogram-typecheck:
+    name: miniprogram · tsc
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: miniprogram/package-lock.json
+      - name: Typecheck
+        working-directory: miniprogram
+        run: |
+          npm ci
+          npx tsc --noEmit
+
+  cloudfunction-syntax:
+    name: cloudfunction · node check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - name: Check index.js syntax
+        run: node --check cloudfunctions/xpay_deliver_notify/index.js

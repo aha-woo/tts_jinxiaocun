@@ -24,10 +24,13 @@
       <view wx:for="{{shown}}" wx:key="id" class="al" data-id="{{item.id}}" bindtap="onOpen">
         <view class="al__l">
           <text class="al__name">{{item.name}}</text>
-          <text class="al__sub">最后往来 {{item.last || '—'}}</text>
+          <text class="al__sub">最后往来 {{item.last || '—'}} · 点一下核销或发对账单</text>
         </view>
         <text class="al__amt serif-num">{{item.amountText}}</text>
       </view>
     </view>
   </view>
+
+  <!-- 隐藏画布：生成可转发的微信对账单图片 -->
+  <canvas type="2d" id="stmtCanvas" style="position:fixed;left:-9999px;top:-9999px;width:640px;height:760px" />
 </view>

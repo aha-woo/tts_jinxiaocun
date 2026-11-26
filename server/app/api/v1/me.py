@@ -7,7 +7,7 @@ from typing import Any, Literal
 
 from fastapi import APIRouter
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import func, select
 
 from app.api.v1._shared import (
@@ -19,13 +19,17 @@ from app.api.v1._shared import (
     resolve_store_name,
 )
 from app.common.envelope import ok
-from app.deps import AuthContextDep, TenantSessionDep
+from app.common.errors import AppError
+from app.deps import AuthContextDep, DatabaseDep, SettingsDep, TenantSessionDep
 from app.models.catalog import ProductAlias
 from app.models.dict import PersonalDict
 from app.models.org import Member, Role
 from app.models.tenant import Tenant
 from app.services.audit import AuditService
+from app.services.closing_summary import build_closing_summary, send_closing_summary
 from app.services.novice import novice_status_of
+from app.services.reconcile import reconcile_store
+from app.services.staff import create_invite_code, join_by_invite, set_member_status
 
 router = APIRouter(prefix="/me", tags=["me"])
 
@@ -180,3 +184,134 @@ def patch_preferences(
             }
         ),
     )
+
+
+class StaffInviteRequest(BaseModel):
+    """生成店铺邀请码。"""
+
+    model_config = ConfigDict(extra="forbid")
+
+    role_code: Literal["clerk", "manager", "readonly"] = "clerk"
+    ttl_hours: int = Field(default=24, ge=1, le=168)
+
+
+class StaffJoinRequest(BaseModel):
+    """凭邀请码加入店铺。"""
+
+    model_config = ConfigDict(extra="forbid")
+
+    invite_code: str = Field(min_length=8, max_length=512)
+    display_name: str | None = Field(default=None, max_length=32)
+
+
+class StaffStatusPatch(BaseModel):
+    """启用/停用成员或调角色。"""
+
+    model_config = ConfigDict(extra="forbid")
+
+    status: Literal["active", "disabled"] | None = None
+    role_code: Literal["boss", "manager", "clerk", "readonly"] | None = None
+
+
+@router.post("/staff/invite", summary="老板生成店员邀请码")
+def api_create_staff_invite(
+    payload: StaffInviteRequest,
+    context: AuthContextDep,
+    session: TenantSessionDep,
+    settings: SettingsDep,
+) -> JSONResponse:
+    """仅老板可生成 24 小时有效的带签名邀请码，发给店员后输入即可加入本店。"""
+    require_roles(context, BOSS_ONLY)
+    ids = ids_of(context)
+    assert_writable(session, ids.tenant_id)
+    data = create_invite_code(
+        settings,
+        tenant_id=ids.tenant_id,
+        store_id=ids.store_id,
+        inviter_member_id=ids.member_id,
+        role_code=payload.role_code,
+        ttl_hours=payload.ttl_hours,
+    )
+    AuditService(session).record(
+        tenant_id=ids.tenant_id,
+        action="member.invite",
+        entity="store",
+        entity_id=str(ids.store_id),
+        member_id=ids.member_id,
+        detail={"role_code": payload.role_code, "ttl_hours": payload.ttl_hours},
+    )
+    return JSONResponse(status_code=200, content=ok(data))
+
+
+@router.post("/staff/join", summary="凭邀请码加入店铺")
+def api_join_staff(
+    payload: StaffJoinRequest,
+    context: AuthContextDep,
+    database: DatabaseDep,
+    settings: SettingsDep,
+) -> JSONResponse:
+    """用老板生成的邀请码加入对方店铺，并返回目标店铺的新登录态 JWT。"""
+    ids = ids_of(context)
+    data = join_by_invite(
+        database,
+        settings,
+        current_context=context,
+        current_member_id=ids.member_id,
+        invite_code=payload.invite_code,
+        display_name=payload.display_name,
+    )
+    return JSONResponse(status_code=200, content=ok(data))
+
+
+@router.patch("/staff/{member_id}", summary="老板启用/停用店员或改角色")
+def api_patch_staff(
+    member_id: str,
+    payload: StaffStatusPatch,
+    context: AuthContextDep,
+    session: TenantSessionDep,
+) -> JSONResponse:
+    """停用后旧 JWT 下一次请求立即失效（require_auth 校验 member.status）。"""
+    require_roles(context, BOSS_ONLY)
+    ids = ids_of(context)
+    assert_writable(session, ids.tenant_id)
+    try:
+        target_uuid = uuid.UUID(member_id)
+    except ValueError as exc:
+        raise AppError("E_VALIDATION", message="member_id 格式不合法") from exc
+    data = set_member_status(
+        session,
+        tenant_id=ids.tenant_id,
+        actor_member_id=ids.member_id,
+        target_member_id=target_uuid,
+        status=payload.status,
+        role_code=payload.role_code,
+    )
+    return JSONResponse(status_code=200, content=ok(data))
+
+
+@router.get("/reconcile", summary="三账核对体检（只读）")
+def api_reconcile_store(
+    context: AuthContextDep,
+    session: TenantSessionDep,
+) -> JSONResponse:
+    """核对库存余额、出入库流水、批次余量与待结清暂估行（只读不自动改账）。"""
+    require_roles(context, BOSS_ONLY)
+    ids = ids_of(context)
+    data = reconcile_store(session, tenant_id=ids.tenant_id, store_id=ids.store_id)
+    return JSONResponse(status_code=200, content=ok(data))
+
+
+@router.post("/closing-summary/send", summary="生成并推送收摊总结（缺订阅模板走预览降级）")
+def api_send_closing_summary(
+    context: AuthContextDep,
+    session: TenantSessionDep,
+    settings: SettingsDep,
+) -> JSONResponse:
+    """汇总今日经营数 + 三账状态；若微信订阅模板未配置则返回 dry_run 本地总结。"""
+    require_roles(context, BOSS_ONLY)
+    ids = ids_of(context)
+    summary = build_closing_summary(session, tenant_id=ids.tenant_id, store_id=ids.store_id)
+    member = session.get(Member, ids.member_id)
+    openid = str(member.wx_openid) if member is not None else ""
+    res = send_closing_summary(settings, openid=openid, summary=summary)
+    return JSONResponse(status_code=200, content=ok(res))

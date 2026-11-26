@@ -29,6 +29,39 @@ class FillRequest(BaseModel):
     reason: str | None = Field(default=None, max_length=24)
 
 
+class VoiceBatchCountRequest(BaseModel):
+    """语音连说盘点入参。"""
+
+    model_config = ConfigDict(extra="forbid")
+
+    spoken_text: str = Field(min_length=1, max_length=1000)
+
+
+@router.get("/open", summary="获取当前未结束的盘点单（恢复续盘）")
+def get_open_count_endpoint(
+    context: AuthContextDep, session: TenantSessionDep
+) -> JSONResponse:
+    """若本店已有未应用的盘点单，返回它以便断点续盘，避免重开丢进度。"""
+    ids = ids_of(context)
+    opened = count_service.get_open_count(
+        session, tenant_id=ids.tenant_id, store_id=ids.store_id
+    )
+    if opened is None:
+        return JSONResponse(status_code=200, content=ok({"count": None}))
+    return JSONResponse(
+        status_code=200,
+        content=ok(
+            {
+                "count": {
+                    "count_id": str(opened.count_id),
+                    "status": str(opened.status),
+                    "started_at": opened.started_at.isoformat(),
+                }
+            }
+        ),
+    )
+
+
 @router.post("", summary="开盘点（快照当前库存）")
 def start_count(context: AuthContextDep, session: TenantSessionDep) -> JSONResponse:
     """打开一次盘点：把当前库存快照成账面数，之后填实盘、应用差异。"""
@@ -136,6 +169,27 @@ def fill_count_line(
             }
         ),
     )
+
+
+@router.post("/{count_id}/voice-batch", summary="语音连续报数批量填盘点")
+def voice_batch_count(
+    count_id: uuid.UUID,
+    payload: VoiceBatchCountRequest,
+    context: AuthContextDep,
+    session: TenantSessionDep,
+) -> JSONResponse:
+    """一次说多个商品与实盘数（0 LLM 确定性拆行回填）。"""
+    require_roles(context, WRITE_ROLES)
+    ids = ids_of(context)
+    assert_writable(session, ids.tenant_id)
+    data = count_service.voice_batch_fill(
+        session,
+        tenant_id=ids.tenant_id,
+        store_id=ids.store_id,
+        count_id=count_id,
+        spoken_text=payload.spoken_text,
+    )
+    return JSONResponse(status_code=200, content=ok(data))
 
 
 @router.post("/{count_id}/apply", summary="应用盘点（写 count_adjust 流水）")

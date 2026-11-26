@@ -27,6 +27,7 @@ from sqlalchemy.orm import Session
 
 from app.common.errors import AppError
 from app.config import Settings
+from app.models.org import Member
 from app.models.pay import VirtualOrder
 from app.pay.deliver_callback import (
     DeliverPayload,
@@ -37,6 +38,7 @@ from app.pay.deliver_callback import (
 )
 from app.pay.goods_item import GoodsCatalog, GoodsView, new_out_trade_no, out_trade_no_of
 from app.pay.sign import build_verifier
+from app.pay.wx_xpay_client import WxXpayClient
 
 __all__ = [
     "ENV_PROD",
@@ -123,20 +125,14 @@ class VirtualPaymentService:
         verifier: SignatureVerifier | None = None,
         settings: Settings | None = None,
         env: int = ENV_PROD,
+        xpay_client: Any = None,
     ) -> None:
-        """
-        Args:
-            session: 已绑定租户上下文的会话。
-            catalog: 道具目录（价格唯一真相源）。
-            verifier: 发货验签器（查单兜底时用；缺省按配置构造）。
-            settings: 运行期配置。
-            env: 支付环境（0 现网 / 1 沙箱）。
-        """
         self._session = session
         self._catalog = catalog or GoodsCatalog()
         self._settings = settings
         self._verifier = verifier if verifier is not None else _verifier_or_none(settings)
         self._env = int(env)
+        self._xpay_client = xpay_client
 
     # ------------------------------------------------------------------ 下单
     def create_order(
@@ -287,11 +283,49 @@ class VirtualPaymentService:
             )
         status = str(order.pay_status)
         if paid is None:
-            return QueryOrderResult(
-                out_trade_no=out_trade_no,
-                pay_status=status,
-                detail="未提供平台查单结论（真实实现需调 query_order 接口，需核实）",
-            )
+            client = self._xpay_client
+            if client is None and self._settings is not None:
+                client = WxXpayClient(
+                    appid=getattr(self._settings, "wx_appid", ""),
+                    app_secret=getattr(self._settings, "wx_app_secret", ""),
+                    pay_app_key=getattr(self._settings, "wx_pay_app_key", ""),
+                    base_url=getattr(self._settings, "wx_api_base_url", "https://api.weixin.qq.com"),
+                    timeout_seconds=getattr(self._settings, "wx_timeout_seconds", 5.0),
+                )
+            if client is not None and getattr(client, "configured", False):
+                openid = ""
+                member_id = getattr(order, "member_id", None)
+                if member_id is not None:
+                    member = self._session.get(Member, member_id)
+                    if member is not None:
+                        openid = str(member.wx_openid)
+                if not openid:
+                    fallback_member = self._session.execute(
+                        select(Member)
+                        .where(Member.tenant_id == order.tenant_id)
+                        .order_by(Member.created_at.asc())
+                        .limit(1)
+                    ).scalar_one_or_none()
+                    if fallback_member is not None:
+                        openid = str(fallback_member.wx_openid)
+                wx_res = client.query_order(
+                    openid=openid,
+                    out_trade_no=out_trade_no,
+                    env=0 if str(order.env) == "prod" else 1,
+                )
+                if wx_res.paid is None:
+                    return QueryOrderResult(
+                        out_trade_no=out_trade_no,
+                        pay_status=status,
+                        detail=wx_res.detail,
+                    )
+                paid = wx_res.paid
+            else:
+                return QueryOrderResult(
+                    out_trade_no=out_trade_no,
+                    pay_status=status,
+                    detail="未配置微信虚拟支付查单凭证（WX_APPID / WX_APP_SECRET / WX_PAY_APP_KEY），暂仅查本地订单状态",
+                )
         if not paid:
             return QueryOrderResult(
                 out_trade_no=out_trade_no, pay_status=status, detail="平台侧仍未支付"
@@ -307,7 +341,13 @@ class VirtualPaymentService:
             signature="__query_order__",
             raw={"trusted_source": "query_order"},
         )
-        service = DeliverService(self._session, verifier=_TrustedQueryOrderVerifier())
+        is_prod_runtime = bool(getattr(self._settings, "is_production", lambda: False)())
+        allow_envs = ("prod",) if (is_prod_runtime and self._env == ENV_PROD) else ("prod", "sandbox")
+        service = DeliverService(
+            self._session,
+            verifier=_TrustedQueryOrderVerifier(),
+            allow_envs=allow_envs,
+        )
         result = service.deliver_once(payload)
         return QueryOrderResult(
             out_trade_no=out_trade_no,

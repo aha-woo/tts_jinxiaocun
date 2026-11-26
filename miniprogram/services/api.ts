@@ -715,6 +715,25 @@ export async function login(code: string): Promise<LoginPayload> {
   return payload;
 }
 
+/** 申请音频上传票据（只收引用，音频字节不走业务接口）。 */
+export function issueUploadTicket(body: {
+  session_id?: string;
+  duration_ms: number;
+  client_bytes?: number;
+  codec?: string;
+}): Promise<{
+  ticket_id: string;
+  audio_object_ref: string;
+  upload_prefix: string;
+  expires_at: string;
+  max_bytes: number;
+}> {
+  return callApi('/api/v1/upload/ticket', {
+    method: 'POST',
+    data: body as unknown as Record<string, unknown>,
+  });
+}
+
 /** 创建语音会话（门禁 + 上传票据 + 令牌桶；**无音频字段**）。 */
 export function createVoiceSession(body: {
   duration_ms: number;
@@ -1145,7 +1164,17 @@ export function fillCountLine(
 
 export function applyCount(
   countId: string
-): Promise<{ result: { count_id: string; adjusted_lines: number; total_qty_diff: string } }> {
+): Promise<{
+  result: {
+    count_id: string;
+    adjusted_lines: number;
+    total_qty_diff: string;
+    doc_id?: string | null;
+    accounting_mode?: string;
+    derived_sales_doc_id?: string | null;
+    derived_sales_amount_fen?: number;
+  };
+}> {
   return callApi(`/api/v1/counts/${countId}/apply`, { method: 'POST' });
 }
 
@@ -1402,4 +1431,163 @@ export function getExportContent(jobId: string): Promise<{
   csv_content: string;
 }> {
   return callApi(`/api/v1/exports/${jobId}/content`, { method: 'GET' });
+}
+
+/** 合并重复商品。 */
+export function mergeProduct(
+  sourceProductId: string,
+  targetProductId: string
+): Promise<{
+  merge: {
+    source_product_id: string;
+    target_product_id: string;
+    target_name: string;
+    target_base_unit: string;
+    unit_factor: string;
+    moved_inventory_rows: number;
+    moved_doc_lines: number;
+    moved_movements: number;
+    moved_batches: number;
+    moved_aliases: number;
+  };
+}> {
+  return callApi(`/api/v1/products/${sourceProductId}/merge`, {
+    method: 'POST',
+    data: { target_product_id: targetProductId },
+    idempotencyScope: `merge:${sourceProductId}:${targetProductId}`,
+  });
+}
+
+/** 欠款页直接登记收款/付款核销。 */
+export function settleDebt(body: {
+  partner_id: string;
+  direction: 'receivable' | 'payable';
+  amount_fen: number;
+  method?: string;
+}): Promise<{
+  doc_id: string;
+  doc_no: string;
+  partner_id: string;
+  partner_name: string;
+  direction: string;
+  settled_fen: number;
+  remaining_outstanding_fen: number;
+  method: string;
+}> {
+  return callApi('/api/v1/debts/settle', {
+    method: 'POST',
+    data: body as unknown as Record<string, unknown>,
+    idempotencyScope: `debt-settle:${body.partner_id}:${Date.now()}`,
+  });
+}
+
+/** 获取客户/供应商对账单数据。 */
+export function getPartnerStatement(
+  partnerId: string,
+  direction?: 'receivable' | 'payable'
+): Promise<{
+  store_name: string;
+  partner_id: string;
+  partner_name: string;
+  direction: string;
+  generated_at: string;
+  total_outstanding_fen: number;
+  items: Array<{
+    ar_ap_id: string;
+    doc_id: string;
+    doc_no: string;
+    biz_date: string;
+    direction: string;
+    amount_fen: number;
+    settled_amount_fen: number;
+    outstanding_fen: number;
+    status: string;
+  }>;
+}> {
+  const q = direction ? `?direction=${direction}` : '';
+  return callApi(`/api/v1/debts/${partnerId}/statement${q}`, { method: 'GET' });
+}
+
+/** 查询当前门店未结束的盘点单。 */
+export function getOpenCount(): Promise<{
+  count: { count_id: string; status: string; started_at: string } | null;
+}> {
+  return callApi('/api/v1/counts/open', { method: 'GET' });
+}
+
+/** 语音连续报数批量填盘点。 */
+export function voiceBatchCount(
+  countId: string,
+  spokenText: string
+): Promise<{
+  matched: Array<{ product_id: string; name: string; qty_counted: string; unit: string }>;
+  unmatched: string[];
+}> {
+  return callApi(`/api/v1/counts/${countId}/voice-batch`, {
+    method: 'POST',
+    data: { spoken_text: spokenText },
+    idempotencyScope: `count-voice:${countId}:${Date.now()}`,
+  });
+}
+
+/** 老板生成店员邀请码。 */
+export function createStaffInvite(roleCode: 'clerk' | 'manager' | 'readonly' = 'clerk'): Promise<{
+  invite_code: string;
+  role_code: string;
+  expires_at: string;
+  ttl_hours: number;
+}> {
+  return callApi('/api/v1/me/staff/invite', {
+    method: 'POST',
+    data: { role_code: roleCode, ttl_hours: 24 },
+  });
+}
+
+/** 凭邀请码加入店铺。 */
+export function joinStaffByInvite(
+  inviteCode: string,
+  displayName?: string
+): Promise<{
+  jwt: string;
+  tenant_id: string;
+  store_id: string;
+  member_id: string;
+  role: string;
+  store_name: string;
+  member_name: string;
+}> {
+  return callApi('/api/v1/me/staff/join', {
+    method: 'POST',
+    data: { invite_code: inviteCode, display_name: displayName ?? null },
+  });
+}
+
+/** 老板启用/停用店员。 */
+export function updateStaffStatus(
+  memberId: string,
+  body: { status?: 'active' | 'disabled'; role_code?: 'boss' | 'manager' | 'clerk' | 'readonly' }
+): Promise<{ member_id: string; name: string; status: string; role: string }> {
+  return callApi(`/api/v1/me/staff/${memberId}`, {
+    method: 'PATCH',
+    data: body as unknown as Record<string, unknown>,
+  });
+}
+
+/** 生成或发送收摊总结（三账体检 + 订阅消息降级预览）。 */
+export function sendClosingSummary(): Promise<{
+  sent: boolean;
+  dry_run: boolean;
+  reason?: string;
+  summary: {
+    biz_date: string;
+    doc_count: number;
+    sales_fen: number;
+    purchase_fen: number;
+    gross_profit_fen: number | null;
+    reconcile_ok: boolean;
+    negative_count: number;
+    summary_text: string;
+  };
+}> {
+  return callApi('/api/v1/me/closing-summary/send', { method: 'POST', data: {} });
 }

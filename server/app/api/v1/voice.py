@@ -35,7 +35,10 @@ from app.config import Settings
 from app.deps import AuthContextDep, SettingsDep, TenantSessionDep, get_database
 from app.domain.doc_service import DocService
 from app.domain.report_service import ReportService
+from app.models.catalog import Product
+from app.models.doc import DocHeader, DocLine
 from app.models.org import Member
+from app.models.partner import Partner
 from app.models.voice import ConfirmCard, VoiceSession
 from app.services.degrade import DegradeController
 from app.services.entitlement import EntitlementService
@@ -47,12 +50,13 @@ from app.services.upload_ticket import UploadTicketRequest, UploadTicketService
 from app.services.voice_runtime import LedgerLine, lines_of_result, shared_voice_state
 from app.utils.date_utils import today_in_tz
 from app.utils.unit import CANONICAL_UNITS
+from app.voice.asr_provider import build_asr_provider
 from app.voice.card_builder import CardBuildError
 from app.voice.clarifier_templates import build_clarify, pick_slot_to_ask
 from app.voice.gate import Gate
 from app.voice.impact_preview import ImpactPreviewService, build_deltas
 from app.voice.number_normalizer import parse_money_yuan, parse_quantity
-from app.voice.output_schema import SOURCE_VALUES, ClarifyPrompt
+from app.voice.output_schema import SOURCE_VALUES, ClarifyPrompt, ParseResult
 from app.voice.pipeline import PipelineResult
 from app.voice.routing import (
     ROUTE_ANSWER,
@@ -552,6 +556,213 @@ def create_session(
     )
 
 
+_REPEAT_PURCHASE_RE = re.compile(
+    r"(?:跟|和|照|像)?上次(?:进货|一样|那单)|再来一单|按上次进|重复上次进货"
+)
+
+
+def _try_repeat_purchase_card(
+    *,
+    session: Any,
+    database: Any,
+    ids: Any,
+    voice_session: VoiceSession,
+    text: str,
+    asr_confidence: float,
+    novice_info: dict[str, Any],
+) -> JSONResponse | None:
+    """命中「跟上次一样」快捷复购时，查找最近一笔进货单生成确认卡（0 LLM，绝不静默直接记账）。"""
+    if not _REPEAT_PURCHASE_RE.search(text or ""):
+        return None
+    from sqlalchemy import select
+
+    recent_docs = list(
+        session.execute(
+            select(DocHeader)
+            .where(
+                DocHeader.tenant_id == ids.tenant_id,
+                DocHeader.store_id == ids.store_id,
+                DocHeader.doc_type == "purchase",
+                DocHeader.status == "confirmed",
+                DocHeader.reverses_doc_id.is_(None),
+            )
+            .order_by(DocHeader.biz_date.desc(), DocHeader.created_at.desc())
+            .limit(10)
+        ).scalars()
+    )
+    if not recent_docs:
+        return JSONResponse(
+            status_code=200,
+            content=ok(
+                {
+                    "session_id": str(voice_session.session_id),
+                    "stage": "G3",
+                    "reason": "repeat_purchase_not_found",
+                    "route": "clarify",
+                    "asr_text": text,
+                    "asr_confidence": asr_confidence,
+                    "corrections": 0,
+                    "rule_hit": True,
+                    "llm_calls": 0,
+                    "novice": novice_info,
+                    "clarify": {
+                        "slot": "P",
+                        "question": "店里还没有之前的进货单，请直接说进了什么货、多少数量。",
+                        "options": ["按今天新进货说", "点手动记账", "去拍进货单"],
+                    },
+                    "max_rounds": 2,
+                }
+            ),
+        )
+
+    chosen_doc = recent_docs[0]
+    chosen_lines: list[DocLine] = []
+    products_by_id: dict[uuid.UUID, Product] = {}
+
+    for doc in recent_docs:
+        d_lines = list(
+            session.execute(
+                select(DocLine).where(
+                    DocLine.tenant_id == ids.tenant_id, DocLine.doc_id == doc.doc_id
+                )
+            ).scalars()
+        )
+        if not d_lines:
+            continue
+        pids = [dl.product_id for dl in d_lines]
+        p_map = {
+            p.product_id: p
+            for p in session.execute(
+                select(Product).where(Product.tenant_id == ids.tenant_id, Product.product_id.in_(pids))
+            ).scalars()
+        }
+        if any(p.name in text for p in p_map.values()):
+            chosen_doc = doc
+            chosen_lines = d_lines
+            products_by_id = p_map
+            break
+        if not chosen_lines:
+            chosen_doc = doc
+            chosen_lines = d_lines
+            products_by_id = p_map
+
+    if not chosen_lines:
+        return None
+
+    supplier_name = "待补"
+    if chosen_doc.partner_id is not None:
+        partner = session.execute(
+            select(Partner)
+            .where(Partner.tenant_id == ids.tenant_id, Partner.partner_id == chosen_doc.partner_id)
+            .limit(1)
+        ).scalar_one_or_none()
+        if partner is not None:
+            supplier_name = str(partner.name)
+
+    today_iso = _today_iso()
+    card_lines: list[dict[str, Any]] = []
+    traces: list[str] = [f"复用上次进货单 {chosen_doc.doc_no}（{chosen_doc.biz_date.isoformat()}）"]
+    total_fen = 0
+    for dl in chosen_lines:
+        prod = products_by_id.get(dl.product_id)
+        pname = f"{prod.name} {prod.spec}".strip() if prod is not None else "未知货品"
+        amt = int(dl.amount_fen) if dl.amount_fen is not None else 0
+        total_fen += amt
+        qty_val = float(dl.qty) if Decimal(dl.qty) % 1 else int(Decimal(dl.qty))
+        card_lines.append(
+            {
+                "product_id": str(dl.product_id),
+                "product_name": prod.name if prod is not None else pname,
+                "product_label": pname,
+                "quantity": qty_val,
+                "unit": str(dl.unit),
+                "qty_base": str(dl.qty_base),
+                "unit_price_fen": dl.unit_price_fen,
+                "amount_fen": dl.amount_fen,
+                "partner_id": str(chosen_doc.partner_id) if chosen_doc.partner_id else None,
+                "payment_status": str(chosen_doc.payment_status or "已结"),
+                "calc_trace": f"{pname} {qty_val}{dl.unit}（沿用上次数量与单价）",
+                "pending": False,
+            }
+        )
+
+    intent_id = "purchase.create_multi" if len(card_lines) > 1 else "purchase.create"
+    first = card_lines[0]
+    slots: dict[str, Any] = {
+        "P": first["product_name"],
+        "Q": first["quantity"],
+        "U": first["unit"],
+        "D": today_iso,
+        "PS": str(chosen_doc.payment_status or "已结"),
+        "W": "主仓",
+        "S": supplier_name,
+    }
+    if first["unit_price_fen"] is not None:
+        slots["UP"] = first["unit_price_fen"]
+    if total_fen > 0:
+        slots["TA"] = total_fen
+    source: dict[str, Any] = {k: "default" for k in slots}
+    source["P"] = "asr"
+    if supplier_name == "待补":
+        source["S"] = "pending"
+
+    parse = ParseResult(
+        intent=intent_id,
+        slots=slots,
+        source=source,
+        confidence=0.92,
+        calc_traces=traces,
+        channel="template",
+        route="card",
+    )
+    deltas = build_deltas(
+        intent_id=intent_id,
+        side_effect={"inventory_delta": "increase", "ar_ap_delta": "payable_increase"},
+        lines=card_lines,
+    )
+    preview = ImpactPreviewService(database).preview(
+        tenant_id=ids.tenant_id,
+        store_id=ids.store_id,
+        deltas=deltas,
+        session=None if database.is_pg else session,
+    )
+    created = LedgerService(session).create_card(
+        tenant_id=ids.tenant_id,
+        store_id=ids.store_id,
+        member_id=ids.member_id,
+        session_id=voice_session.session_id,
+        parse=parse,
+        asr_text=text,
+        asr_confidence=asr_confidence,
+        lines=card_lines,
+        preview=preview,
+    )
+    voice_session.state = STATE_AWAIT_CONFIRM
+    session.flush()
+    return JSONResponse(
+        status_code=200,
+        content=ok(
+            {
+                "session_id": str(voice_session.session_id),
+                "stage": "G3",
+                "reason": "repeat_purchase",
+                "route": "card",
+                "auto_posted": False,
+                "repeat_from_doc_no": chosen_doc.doc_no,
+                "asr_text": text,
+                "asr_confidence": asr_confidence,
+                "corrections": 0,
+                "rule_hit": True,
+                "llm_calls": 0,
+                "parse_result": parse.model_dump(),
+                "novice": novice_info,
+                "card": created.as_dict(),
+                "credit_consumed": created.billed,
+            }
+        ),
+    )
+
+
 @router.post("/sessions/{session_id}/parse", summary="解析（G2→G3→G4→G5→G6）")
 def parse_session(
     session_id: uuid.UUID,
@@ -563,16 +774,38 @@ def parse_session(
     """跑完整漏斗并按 ``route`` 分流（PG 下解析前释放只读 DB 会话，避免持连接等模型 HTTP）。"""
     require_roles(context, WRITE_ROLES)
     ids = ids_of(context)
+    database = get_database(request)
 
     text = (payload.asr_text or "").strip()
+    asr_conf = float(payload.asr_confidence)
+    if not text and (payload.audio_object_ref or "").strip():
+        from sqlalchemy import select
+
+        with database.session(context=context) as ro_sess:
+            hotwords = [
+                str(name)
+                for name in ro_sess.execute(
+                    select(Product.name)
+                    .where(Product.tenant_id == ids.tenant_id, Product.status.in_(("active", "draft")))
+                    .limit(50)
+                ).scalars()
+            ]
+        asr_res = build_asr_provider(settings).transcribe(
+            str(payload.audio_object_ref),
+            duration_ms=payload.duration_ms,
+            hotwords=hotwords,
+        )
+        text = (asr_res.text or "").strip()
+        if asr_res.confidence > 0:
+            asr_conf = float(asr_res.confidence)
+
     if not text:
         raise AppError(
             "E_VALIDATION",
-            message="缺少 asr_text：真实链路会凭 audio_object_ref 取音频送 ASR（需核实 ASR 服务）",
+            message="缺少 asr_text 且云端语音识别未返回有效文字",
             data={"audio_object_ref": payload.audio_object_ref},
         )
 
-    database = get_database(request)
     today_iso = _today_iso()
 
     # ---- Phase A（短读事务）：校验会话与词表装载；出函数即释放 DB 连接 ----
@@ -582,6 +815,20 @@ def parse_session(
         if voice_session is None or voice_session.tenant_id != ids.tenant_id:
             raise AppError("E_NOT_FOUND", message="语音会话不存在或不属于当前租户")
         runtime = runtime_for(session, settings, context)
+
+        # 「跟上次一样」快捷复购（0 LLM，出确认卡核对数量单价）
+        member_row = session.get(Member, ids.member_id)
+        repeat_resp = _try_repeat_purchase_card(
+            session=session,
+            database=database,
+            ids=ids,
+            voice_session=voice_session,
+            text=text,
+            asr_confidence=asr_conf,
+            novice_info=novice_status_of(member_row),
+        )
+        if repeat_resp is not None:
+            return repeat_resp
 
         # 片段追述：若前端传了当前活跃卡片 ID 且本句是短补充，直接走本地结构化更新（0 LLM）
         if payload.active_card_id:

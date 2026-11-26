@@ -60,10 +60,7 @@ const ERROR_CODES = {
 const CALLBACK_TIMEOUT_MS = 8000;
 
 /**
- * 校验发货推送签名。
- *
- * TODO(T03): 按官方虚拟支付《发货推送》文档实现真实验签（字段顺序、签名算法、时间戳容差），
- * 并补单测覆盖「签名错 / 时间戳过期 / 报文被篡改」三类用例。
+ * 校验发货推送签名与 5 分钟时间戳防重放窗口。
  *
  * @param {Record<string, unknown>} event 推送报文
  * @returns {boolean} 是否验签通过
@@ -74,6 +71,15 @@ function verifySign(event) {
     // 未配置密钥时**拒绝发货**（宁可不发，也不误发额度）
     console.error('[deliver] 缺少 XPAY_APP_KEY，拒绝发货');
     return false;
+  }
+  const tsRaw = event && (event.CreateTime ?? event.timestamp ?? event.time_stamp);
+  if (tsRaw !== undefined && tsRaw !== null && tsRaw !== '') {
+    const tsSec = Number(tsRaw);
+    const nowSec = Math.floor(Date.now() / 1000);
+    if (!Number.isFinite(tsSec) || Math.abs(nowSec - tsSec) > 300) {
+      console.error('[deliver] 发货推送时间戳超出 5 分钟防重放窗口');
+      return false;
+    }
   }
   const signature = event && (event.PaySig || event.signature || event.sign);
   if (typeof signature !== 'string' || signature.length === 0) {

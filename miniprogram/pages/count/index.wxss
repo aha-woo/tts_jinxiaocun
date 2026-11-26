@@ -156,3 +156,45 @@
   color: #fff;
   font-weight: 700;
 }
+
+.c-actions {
+  display: flex;
+  gap: 14rpx;
+}
+
+.c-act-btn {
+  flex: 1;
+  height: 84rpx;
+  border-radius: 20rpx;
+  background: var(--sf);
+  border: 2rpx solid var(--ln);
+  font-size: 26rpx;
+  font-weight: 600;
+  color: var(--ink);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.c-reasons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10rpx;
+  margin-top: 14rpx;
+}
+
+.c-reason {
+  padding: 8rpx 18rpx;
+  border-radius: 999rpx;
+  background: var(--bg);
+  border: 2rpx solid var(--ln);
+  font-size: 24rpx;
+  color: var(--mu);
+}
+
+.c-reason--on {
+  background: var(--acs);
+  border-color: var(--ac);
+  color: var(--ink);
+  font-weight: 600;
+}

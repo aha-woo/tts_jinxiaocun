@@ -541,8 +541,10 @@ Page<IndexData, WechatMiniprogram.Page.CustomOption>({
         wx.showToast({ title: msg.slice(0, 20), icon: 'none' });
         return;
       }
+      const hasRef = typeof said.audioObjectRef === 'string' && said.audioObjectRef !== '';
       const parsed = await parseSession(session.session_id, {
-        asr_text: said.text,
+        asr_text: said.text !== '' ? said.text : undefined,
+        audio_object_ref: hasRef ? said.audioObjectRef : undefined,
         duration_ms: said.durationMs,
       });
       if (this.thinkingCancelled) {
