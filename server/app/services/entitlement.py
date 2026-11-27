@@ -28,6 +28,7 @@ from sqlalchemy.orm import Session
 from app.config import ContractBundle, get_contracts
 from app.models.pay import Entitlement
 from app.models.quota import UsageLedger, UsageQuota
+from app.utils.date_utils import today_in_tz
 
 __all__ = [
     "EntitlementService",
@@ -41,8 +42,8 @@ _PERIOD_FORMAT = "%Y-%m"
 
 
 def current_period(now: datetime | None = None) -> str:
-    """自然月 ``YYYY-MM``。"""
-    return (now or datetime.now(timezone.utc)).strftime(_PERIOD_FORMAT)
+    """自然月 ``YYYY-MM``（中国时区 ``Asia/Shanghai``）。"""
+    return today_in_tz("Asia/Shanghai", now=now)[:7]
 
 
 def _date_only(iso_str: str | None) -> str:

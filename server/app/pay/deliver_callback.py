@@ -36,6 +36,7 @@ from sqlalchemy.orm import Session
 
 from app.models.pay import DeliverEvent, Entitlement, GoodsItem, VirtualOrder
 from app.models.quota import UsageQuota
+from app.utils.date_utils import today_in_tz
 
 __all__ = [
     "DELIVER_CHANNEL_CLOUD_FUNCTION",
@@ -55,8 +56,8 @@ _UNSUPPORTED_CHANNELS: frozenset[str] = frozenset({"cloudrun", "container", "clo
 
 
 def current_period(now: datetime | None = None) -> str:
-    """自然月归集口径 ``YYYY-MM``。"""
-    return (now or datetime.now(timezone.utc)).strftime("%Y-%m")
+    """自然月归集口径 ``YYYY-MM``（中国时区 ``Asia/Shanghai``）。"""
+    return today_in_tz("Asia/Shanghai", now=now)[:7]
 
 
 @dataclass(frozen=True)

@@ -479,6 +479,141 @@ def apply_sale(session: object, allocations: list[BatchAllocation]) -> None:
     session.flush()  # type: ignore[attr-defined]
 
 
+def repay_virtual_batch(
+    session: object,
+    *,
+    tenant_id: uuid.UUID,
+    store_id: uuid.UUID,
+    product_id: uuid.UUID,
+    qty_in: Decimal,
+    new_batch: StockBatch | None = None,
+) -> Decimal:
+    """用入库数量抵扣「未到货」虚拟批负数缺口并同步扣减新批余量。"""
+    if qty_in <= 0:
+        return Decimal(0)
+    vbatch = session.execute(  # type: ignore[attr-defined]
+        select(StockBatch)
+        .where(
+            StockBatch.tenant_id == tenant_id,
+            StockBatch.store_id == store_id,
+            StockBatch.product_id == product_id,
+            StockBatch.is_virtual.is_(True),
+            StockBatch.status == "open",
+        )
+        .limit(1)
+    ).scalar_one_or_none()
+    if vbatch is None:
+        return Decimal(0)
+    deficit = max(Decimal(0), -Decimal(vbatch.qty_left))
+    repay = min(qty_in, deficit)
+    if repay <= 0:
+        return Decimal(0)
+    vbatch.qty_left = Decimal(vbatch.qty_left) + repay
+    if Decimal(vbatch.qty_left) >= 0:
+        vbatch.qty_left = Decimal(0)
+        vbatch.status = "exhausted"
+    if new_batch is not None:
+        new_left = max(Decimal(0), Decimal(new_batch.qty_left) - repay)
+        new_batch.qty_left = new_left
+        if new_left == 0:
+            new_batch.status = "exhausted"
+    return repay
+
+
+def consume_batches_for_adjustment(
+    session: object,
+    *,
+    tenant_id: uuid.UUID,
+    store_id: uuid.UUID,
+    product_id: uuid.UUID,
+    qty: Decimal,
+) -> None:
+    """盘亏：按先到期先出 / 先进先出从在库批次扣，不足部分记入虚拟「未到货」批。"""
+    if qty <= 0:
+        return
+    batches = list(
+        session.execute(  # type: ignore[attr-defined]
+            select(StockBatch)
+            .where(
+                StockBatch.tenant_id == tenant_id,
+                StockBatch.store_id == store_id,
+                StockBatch.product_id == product_id,
+                StockBatch.status == "open",
+                StockBatch.is_virtual.is_(False),
+                StockBatch.qty_left > 0,
+            )
+            .order_by(
+                StockBatch.expiry_date.is_(None),
+                StockBatch.expiry_date,
+                StockBatch.received_at,
+                StockBatch.batch_id,
+            )
+        ).scalars()
+    )
+    left = qty
+    for batch in batches:
+        if left <= 0:
+            break
+        take = min(Decimal(batch.qty_left), left)
+        batch.qty_left = Decimal(batch.qty_left) - take
+        if Decimal(batch.qty_left) <= 0:
+            batch.qty_left = Decimal(0)
+            batch.status = "exhausted"
+        left -= take
+    if left > 0:
+        vbatch = _get_or_create_virtual_batch(
+            session, tenant_id=tenant_id, store_id=store_id, product_id=product_id
+        )
+        vbatch.qty_left = Decimal(vbatch.qty_left) - left
+        vbatch.status = "open"
+
+
+def surplus_batches_for_adjustment(
+    session: object,
+    *,
+    tenant_id: uuid.UUID,
+    store_id: uuid.UUID,
+    product_id: uuid.UUID,
+    qty: Decimal,
+    label: str = "盘盈调整",
+) -> None:
+    """盘盈：先抵扣「未到货」虚拟批，余下新建一张「盘盈调整」批次（不改历史批次 qty_in）。"""
+    if qty <= 0:
+        return
+    repaid = repay_virtual_batch(
+        session,
+        tenant_id=tenant_id,
+        store_id=store_id,
+        product_id=product_id,
+        qty_in=qty,
+    )
+    rem = qty - repaid
+    if rem <= 0:
+        return
+    product = _get_product(session, tenant_id, product_id)
+    unit_cost = (
+        product.avg_cost_fen
+        if (product and product.avg_cost_fen is not None)
+        else (product.last_purchase_price_fen if product else None)
+    )
+    session.add(  # type: ignore[attr-defined]
+        StockBatch(
+            tenant_id=tenant_id,
+            store_id=store_id,
+            product_id=product_id,
+            doc_line_id=None,
+            partner_id=None,
+            label=label[:64],
+            is_virtual=False,
+            qty_in=rem,
+            qty_left=rem,
+            unit_cost_fen=unit_cost,
+            status="open",
+            received_at=datetime.now(timezone.utc),
+        )
+    )
+
+
 def settle_oversold_on_purchase(
     session: Session,
     *,
@@ -499,31 +634,16 @@ def settle_oversold_on_purchase(
 
     # 1) 抵扣「未到货」虚拟批次 + 对应新批余量
     if settled_qty > 0:
-        vbatch = session.execute(
-            select(StockBatch)
-            .where(
-                StockBatch.tenant_id == tenant_id,
-                StockBatch.store_id == store_id,
-                StockBatch.product_id == product_id,
-                StockBatch.is_virtual.is_(True),
-                StockBatch.status == "open",
-            )
-            .limit(1)
-        ).scalar_one_or_none()
-        if vbatch is not None:
-            deficit = abs(min(Decimal(0), Decimal(vbatch.qty_left)))
-            repay = min(settled_qty, deficit) if deficit > 0 else settled_qty
-            vbatch.qty_left = Decimal(vbatch.qty_left) + repay
-            if Decimal(vbatch.qty_left) >= 0:
-                vbatch.qty_left = Decimal(0)
-                vbatch.status = "exhausted"
-            if new_batch is not None and repay > 0:
-                new_left = max(Decimal(0), Decimal(new_batch.qty_left) - repay)
-                new_batch.qty_left = new_left
-                if new_left == 0:
-                    new_batch.status = "exhausted"
+        repay_virtual_batch(
+            session,
+            tenant_id=tenant_id,
+            store_id=store_id,
+            product_id=product_id,
+            qty_in=settled_qty,
+            new_batch=new_batch,
+        )
 
-    # 2) 若本次进价已知，结清过往暂估/未知的销售流水与行成本
+    # 2) 若本次进价已知，结清过往暂估/未知的销售流水与行成本（部分结清时拆分流水行）
     adjustments = 0
     if settled_qty > 0 and unit_cost_fen is not None:
         moves = list(
@@ -540,13 +660,17 @@ def settle_oversold_on_purchase(
             ).scalars()
         )
         left_to_settle = settled_qty
+        touched_lines: set[uuid.UUID] = set()
         touched_docs: set[uuid.UUID] = set()
         for move in moves:
             if left_to_settle <= 0:
                 break
             sold_qty = abs(Decimal(move.qty_base))
+            if sold_qty <= 0:
+                continue
             portion = min(sold_qty, left_to_settle)
             old_cost = move.unit_cost_fen
+            orig_status = str(move.cost_status or "provisional")
             delta_cogs = int(
                 (
                     (Decimal(unit_cost_fen) - Decimal(int(old_cost or 0))) * portion
@@ -567,21 +691,64 @@ def settle_oversold_on_purchase(
                     reason="oversold_settle",
                 )
             )
-            move.unit_cost_fen = int(unit_cost_fen)
-            move.cost_status = "final"
-            if move.doc_line_id is not None:
-                line = session.get(DocLine, move.doc_line_id)
-                if line is not None:
-                    line.cost_snapshot_fen = int(
-                        (Decimal(int(unit_cost_fen)) * Decimal(line.qty_base)).quantize(
-                            Decimal(1), rounding=ROUND_HALF_UP
-                        )
+            if portion < sold_qty:
+                remaining_qty = sold_qty - portion
+                move.qty_base = -portion
+                move.unit_cost_fen = int(unit_cost_fen)
+                move.cost_status = "final"
+                session.add(
+                    InventoryMovement(
+                        tenant_id=move.tenant_id,
+                        store_id=move.store_id,
+                        product_id=move.product_id,
+                        batch_id=move.batch_id,
+                        doc_id=move.doc_id,
+                        doc_line_id=move.doc_line_id,
+                        reason=move.reason,
+                        qty_base=-remaining_qty,
+                        unit_cost_fen=old_cost,
+                        cost_status=orig_status,
+                        partner_id=move.partner_id,
+                        created_by=move.created_by,
+                        occurred_at=move.occurred_at,
                     )
-                    line.cost_status = "final"
+                )
+            else:
+                move.unit_cost_fen = int(unit_cost_fen)
+                move.cost_status = "final"
+            if move.doc_line_id is not None:
+                touched_lines.add(move.doc_line_id)
             if move.doc_id is not None:
                 touched_docs.add(move.doc_id)
             left_to_settle -= portion
             adjustments += 1
+
+        session.flush()
+
+        # 按同明细行的全部出入库流水重算行成本快照（兼容混合在库+超卖及部分结清）
+        for line_id in touched_lines:
+            line = session.get(DocLine, line_id)
+            if line is None:
+                continue
+            line_moves = list(
+                session.execute(
+                    select(InventoryMovement).where(
+                        InventoryMovement.tenant_id == tenant_id,
+                        InventoryMovement.doc_line_id == line_id,
+                    )
+                ).scalars()
+            )
+            if not line_moves:
+                continue
+            all_priced = all(m.unit_cost_fen is not None for m in line_moves)
+            all_final = all(m.cost_status == "final" for m in line_moves)
+            if all_priced:
+                line_cost = sum(
+                    abs(Decimal(m.qty_base)) * Decimal(int(m.unit_cost_fen or 0))
+                    for m in line_moves
+                )
+                line.cost_snapshot_fen = int(line_cost.quantize(Decimal(1), rounding=ROUND_HALF_UP))
+            line.cost_status = "final" if all_final else ("provisional" if all_priced else "unknown")
 
         # 刷新受影响销售单的表头 COGS
         for sale_doc_id in touched_docs:
@@ -621,7 +788,7 @@ def settle_oversold_on_purchase(
 def restore_on_reversal(
     session: object, *, tenant_id: uuid.UUID, doc_id: uuid.UUID
 ) -> None:
-    """反做时恢复批次：进货批次标记 adjusted，卖货按流水把量还回去（含虚拟批）。"""
+    """反做时恢复批次：入库批次扣减并标记 adjusted，出库/报损/退货按流水还原或建回补批。"""
     moves = list(
         session.execute(  # type: ignore[attr-defined]
             select(InventoryMovement).where(
@@ -635,26 +802,73 @@ def restore_on_reversal(
         batch = session.get(StockBatch, move.batch_id)  # type: ignore[attr-defined]
         if batch is None:
             continue
-        if move.reason == "purchase":
-            consumed = Decimal(batch.qty_in) - Decimal(batch.qty_left)
+        if move.reason in ("purchase", "sales_return"):
+            remove_qty = Decimal(move.qty_base)
+            if remove_qty <= 0:
+                continue
+            take = min(max(Decimal(0), Decimal(batch.qty_left)), remove_qty)
+            batch.qty_left = Decimal(0)
             batch.status = "adjusted"
-            if consumed > 0:
+            shortfall = remove_qty - take
+            if shortfall > 0:
                 vbatch = _get_or_create_virtual_batch(
                     session,
                     tenant_id=tenant_id,
                     store_id=batch.store_id,
                     product_id=batch.product_id,
                 )
-                vbatch.qty_left = Decimal(vbatch.qty_left) - consumed
-        elif move.reason == "sale":
-            # move.qty_base 为负，减去负数 = 加回余量
-            batch.qty_left = Decimal(batch.qty_left) - Decimal(move.qty_base)
+                vbatch.qty_left = Decimal(vbatch.qty_left) - shortfall
+                vbatch.status = "open"
+        elif move.reason in ("sale", "purchase_return", "loss"):
+            restore_qty = -Decimal(move.qty_base)
+            if restore_qty <= 0:
+                continue
             if bool(batch.is_virtual):
+                deficit = max(Decimal(0), -Decimal(batch.qty_left))
+                to_virtual = min(restore_qty, deficit)
+                batch.qty_left = Decimal(batch.qty_left) + to_virtual
                 if Decimal(batch.qty_left) >= 0:
                     batch.qty_left = Decimal(0)
                     batch.status = "exhausted"
-            elif Decimal(batch.qty_left) > 0 and batch.status == "exhausted":
-                batch.status = "open"
+                surplus = restore_qty - to_virtual
+                if surplus > 0:
+                    session.add(  # type: ignore[attr-defined]
+                        StockBatch(
+                            tenant_id=tenant_id,
+                            store_id=batch.store_id,
+                            product_id=batch.product_id,
+                            doc_line_id=move.doc_line_id,
+                            partner_id=move.partner_id,
+                            label="撤单回补",
+                            is_virtual=False,
+                            qty_in=surplus,
+                            qty_left=surplus,
+                            unit_cost_fen=move.unit_cost_fen,
+                            status="open",
+                            received_at=datetime.now(timezone.utc),
+                        )
+                    )
+            elif batch.status == "adjusted":
+                session.add(  # type: ignore[attr-defined]
+                    StockBatch(
+                        tenant_id=tenant_id,
+                        store_id=batch.store_id,
+                        product_id=batch.product_id,
+                        doc_line_id=move.doc_line_id,
+                        partner_id=move.partner_id,
+                        label="撤单回补",
+                        is_virtual=False,
+                        qty_in=restore_qty,
+                        qty_left=restore_qty,
+                        unit_cost_fen=batch.unit_cost_fen,
+                        status="open",
+                        received_at=datetime.now(timezone.utc),
+                    )
+                )
+            else:
+                batch.qty_left = Decimal(batch.qty_left) + restore_qty
+                if Decimal(batch.qty_left) > 0:
+                    batch.status = "open"
     session.flush()  # type: ignore[attr-defined]
 
 
@@ -705,7 +919,18 @@ def reconcile_store(
 
     balance_mismatches: list[dict[str, Any]] = []
     batch_mismatches: list[dict[str, Any]] = []
-    seen_pids = {row.product_id for row in inv_rows} | set(move_sum_by_prod)
+    seen_pids = (
+        {row.product_id for row in inv_rows}
+        | set(move_sum_by_prod)
+        | {
+            pid
+            for (pid,) in session.execute(
+                select(StockBatch.product_id)
+                .where(StockBatch.tenant_id == tenant_id, StockBatch.store_id == store_id)
+                .distinct()
+            ).all()
+        }
+    )
 
     inv_by_pid = {row.product_id: Decimal(row.qty_base) for row in inv_rows}
     for pid in seen_pids:
@@ -727,7 +952,7 @@ def reconcile_store(
                         StockBatch.tenant_id == tenant_id,
                         StockBatch.store_id == store_id,
                         StockBatch.product_id == pid,
-                        StockBatch.status != "adjusted",
+                        StockBatch.status == "open",
                     )
                 ).scalar_one()
                 or 0

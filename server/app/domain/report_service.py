@@ -14,6 +14,7 @@ from __future__ import annotations
 import uuid
 from dataclasses import dataclass, field
 from datetime import date, timedelta
+from decimal import ROUND_HALF_UP, Decimal
 from typing import Any, Mapping, Sequence
 
 from sqlalchemy import func, select
@@ -496,9 +497,13 @@ class ReportService:
     def today(
         self, *, tenant_id: uuid.UUID, store_id: uuid.UUID, biz_date: date
     ) -> TodayReport:
-        """今日经营快报（排除反做单，全量汇总应收应付，毛利排除未知成本单据）。"""
-        sales = self._sum_docs(tenant_id, store_id, biz_date, SALES_TYPES)
-        purchase = self._sum_docs(tenant_id, store_id, biz_date, PURCHASE_TYPES)
+        """今日经营快报（排除反做单，扣减退货，全量汇总应收应付，毛利排除未知成本单据）。"""
+        sales = self._sum_docs(tenant_id, store_id, biz_date, SALES_TYPES) - self._sum_docs(
+            tenant_id, store_id, biz_date, ("sales_return",)
+        )
+        purchase = self._sum_docs(tenant_id, store_id, biz_date, PURCHASE_TYPES) - self._sum_docs(
+            tenant_id, store_id, biz_date, ("purchase_return",)
+        )
         doc_count = int(
             self._session.execute(
                 select(func.count())
@@ -515,25 +520,8 @@ class ReportService:
         )
         receivable = self._sum_open_debt(tenant_id, "receivable")
         payable = self._sum_open_debt(tenant_id, "payable")
-
-        sales_docs = list(
-            self._session.execute(
-                select(DocHeader).where(
-                    DocHeader.tenant_id == tenant_id,
-                    DocHeader.store_id == store_id,
-                    DocHeader.biz_date == biz_date,
-                    DocHeader.status == "confirmed",
-                    DocHeader.doc_type.in_(list(SALES_TYPES)),
-                    DocHeader.reverses_doc_id.is_(None),
-                )
-            ).scalars()
-        )
-        missing_cost_count = sum(1 for d in sales_docs if d.cogs_fen is None)
-        known_docs = [d for d in sales_docs if d.cogs_fen is not None]
-        gross_profit_fen = (
-            sum(int(d.total_amount_fen) - int(d.cogs_fen or 0) for d in known_docs)
-            if known_docs
-            else (0 if not sales_docs else None)
+        gross_profit_fen, missing_cost_count = self._gross_profit_between(
+            tenant_id=tenant_id, store_id=store_id, start=biz_date, end=biz_date
         )
         return TodayReport(
             biz_date=biz_date.isoformat(),
@@ -555,11 +543,17 @@ class ReportService:
         start: date,
         end: date,
     ) -> dict[str, Any]:
-        """区间汇总（周/月报：含毛利、缺成本单数、实收/实付单数与应收应付余额）。"""
+        """区间汇总（周/月报：含毛利、扣减退货、缺成本单数、应收应付余额）。"""
         days = max(1, (end - start).days + 1)
-        sales_fen = self._sum_docs(tenant_id, store_id, None, SALES_TYPES, start=start, end=end)
+        sales_fen = self._sum_docs(
+            tenant_id, store_id, None, SALES_TYPES, start=start, end=end
+        ) - self._sum_docs(
+            tenant_id, store_id, None, ("sales_return",), start=start, end=end
+        )
         purchase_fen = self._sum_docs(
             tenant_id, store_id, None, PURCHASE_TYPES, start=start, end=end
+        ) - self._sum_docs(
+            tenant_id, store_id, None, ("purchase_return",), start=start, end=end
         )
         doc_count = int(
             self._session.execute(
@@ -576,25 +570,8 @@ class ReportService:
             ).scalar_one()
             or 0
         )
-        sales_docs = list(
-            self._session.execute(
-                select(DocHeader).where(
-                    DocHeader.tenant_id == tenant_id,
-                    DocHeader.store_id == store_id,
-                    DocHeader.biz_date >= start,
-                    DocHeader.biz_date <= end,
-                    DocHeader.status == "confirmed",
-                    DocHeader.doc_type.in_(list(SALES_TYPES)),
-                    DocHeader.reverses_doc_id.is_(None),
-                )
-            ).scalars()
-        )
-        missing_cost_count = sum(1 for d in sales_docs if d.cogs_fen is None)
-        known_docs = [d for d in sales_docs if d.cogs_fen is not None]
-        gross_profit_fen = (
-            sum(int(d.total_amount_fen) - int(d.cogs_fen or 0) for d in known_docs)
-            if known_docs
-            else (0 if not sales_docs else None)
+        gross_profit_fen, missing_cost_count = self._gross_profit_between(
+            tenant_id=tenant_id, store_id=store_id, start=start, end=end
         )
         receivable_open_fen = self._sum_open_debt(tenant_id, "receivable")
         payable_open_fen = self._sum_open_debt(tenant_id, "payable")
@@ -664,6 +641,103 @@ class ReportService:
                 }
             )
         return rows
+
+    def _gross_profit_between(
+        self,
+        *,
+        tenant_id: uuid.UUID,
+        store_id: uuid.UUID,
+        start: date,
+        end: date,
+    ) -> tuple[int | None, int]:
+        """计算区间净毛利（销售收入 - 销售成本，扣减销售退货净影响；未知成本单据不混算）。"""
+        sales_docs = list(
+            self._session.execute(
+                select(DocHeader).where(
+                    DocHeader.tenant_id == tenant_id,
+                    DocHeader.store_id == store_id,
+                    DocHeader.biz_date >= start,
+                    DocHeader.biz_date <= end,
+                    DocHeader.status == "confirmed",
+                    DocHeader.doc_type.in_(list(SALES_TYPES)),
+                    DocHeader.reverses_doc_id.is_(None),
+                )
+            ).scalars()
+        )
+        missing_cost_count = sum(1 for d in sales_docs if d.cogs_fen is None)
+        known_docs = [d for d in sales_docs if d.cogs_fen is not None]
+        profit = sum(int(d.total_amount_fen) - int(d.cogs_fen or 0) for d in known_docs)
+
+        return_docs = list(
+            self._session.execute(
+                select(DocHeader).where(
+                    DocHeader.tenant_id == tenant_id,
+                    DocHeader.store_id == store_id,
+                    DocHeader.biz_date >= start,
+                    DocHeader.biz_date <= end,
+                    DocHeader.status == "confirmed",
+                    DocHeader.doc_type == "sales_return",
+                    DocHeader.reverses_doc_id.is_(None),
+                )
+            ).scalars()
+        )
+        known_returns = 0
+        if return_docs:
+            ret_ids = [d.doc_id for d in return_docs]
+            ret_lines = list(
+                self._session.execute(
+                    select(DocLine).where(
+                        DocLine.tenant_id == tenant_id,
+                        DocLine.doc_id.in_(ret_ids),
+                    )
+                ).scalars()
+            )
+            pids = list({ln.product_id for ln in ret_lines})
+            prod_map: dict[uuid.UUID, Product] = {}
+            if pids:
+                prod_map = {
+                    p.product_id: p
+                    for p in self._session.execute(
+                        select(Product).where(
+                            Product.tenant_id == tenant_id, Product.product_id.in_(pids)
+                        )
+                    ).scalars()
+                }
+            lines_by_doc: dict[uuid.UUID, list[DocLine]] = {}
+            for ln in ret_lines:
+                lines_by_doc.setdefault(ln.doc_id, []).append(ln)
+            for sr in return_docs:
+                if sr.cogs_fen is not None:
+                    ret_cost = int(sr.cogs_fen)
+                else:
+                    ret_cost = 0
+                    complete = True
+                    for ln in lines_by_doc.get(sr.doc_id, []):
+                        prod = prod_map.get(ln.product_id)
+                        uc = (
+                            prod.avg_cost_fen
+                            if (prod and prod.avg_cost_fen is not None)
+                            else (prod.last_purchase_price_fen if prod else None)
+                        )
+                        if uc is None:
+                            complete = False
+                            break
+                        ret_cost += int(
+                            (Decimal(ln.qty_base) * Decimal(int(uc))).quantize(
+                                Decimal(1), rounding=ROUND_HALF_UP
+                            )
+                        )
+                    if not complete:
+                        missing_cost_count += 1
+                        continue
+                known_returns += 1
+                profit -= int(sr.total_amount_fen) - ret_cost
+
+        if known_docs or known_returns:
+            return profit, missing_cost_count
+        if not sales_docs and not return_docs:
+            return 0, 0
+        return None, missing_cost_count
 
     # ------------------------------------------------------------------ 内部
     def _sum_docs(

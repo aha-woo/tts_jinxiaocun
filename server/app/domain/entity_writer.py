@@ -50,6 +50,7 @@ from app.config import ContractBundle, get_contracts
 from app.models.catalog import Product, ProductAlias, UnitConversion
 from app.models.dict import PersonalDict
 from app.models.partner import Partner
+from app.services.gaps import resolve_gaps
 from app.tenant.repository import tenant_repository
 from app.utils.money import parse_cny_text
 from app.voice.number_normalizer import parse_quantity
@@ -255,11 +256,12 @@ class EntityWriter:
         source: Mapping[str, str],
     ) -> EntityWriteResult:
         """``product.update``：只改一个字段（字段由 ``TF`` 指定）。"""
-        del store_id, member_id, source
+        del member_id, source
         product = self._require_product(tenant_id, _text(slots.get("P")), intent="product.update")
         field_name = _text(slots.get("TF"))
         return self._apply_product_field(
-            tenant_id=tenant_id, product=product, intent_id="product.update", field_name=field_name,
+            tenant_id=tenant_id, store_id=store_id, product=product,
+            intent_id="product.update", field_name=field_name,
             raw_value=slots.get("TV"),
         )
 
@@ -459,7 +461,7 @@ class EntityWriter:
         source: Mapping[str, str],
     ) -> EntityWriteResult:
         """``price.update``：改进价/售价（**历史单据不回溯**，只影响之后的默认价）。"""
-        del store_id, member_id, source
+        del member_id, source
         product = self._require_product(tenant_id, _text(slots.get("P")), intent="price.update")
         field_name = _text(slots.get("TF"))
         if field_name not in _PRICE_FIELDS:
@@ -469,7 +471,8 @@ class EntityWriter:
                 data={"intent_id": "price.update", "target_field": field_name},
             )
         result = self._apply_product_field(
-            tenant_id=tenant_id, product=product, intent_id="price.update", field_name=field_name,
+            tenant_id=tenant_id, store_id=store_id, product=product,
+            intent_id="price.update", field_name=field_name,
             raw_value=slots.get("TV"),
         )
         effective = _text(slots.get("EF"))
@@ -542,6 +545,7 @@ class EntityWriter:
         self,
         *,
         tenant_id: uuid.UUID,
+        store_id: uuid.UUID | None = None,
         product: Product,
         intent_id: str,
         field_name: str,
@@ -587,8 +591,21 @@ class EntityWriter:
                 data={"intent_id": intent_id, "target_field": field_name},
             )
         attribute = _PRICE_FIELDS[field_name]
-        old_fen = int(getattr(product, attribute))
+        old_raw = getattr(product, attribute)
+        old_fen = int(old_raw) if old_raw is not None else None
         setattr(product, attribute, fen)
+        if attribute == "last_purchase_price_fen":
+            if product.avg_cost_fen is None:
+                product.avg_cost_fen = fen
+            if store_id is not None:
+                resolve_gaps(
+                    self._session,
+                    tenant_id=tenant_id,
+                    store_id=store_id,
+                    kind="missing_cost",
+                    ref_entity="product",
+                    ref_id=product.product_id,
+                )
         self._session.flush()
         return EntityWriteResult(
             intent_id=intent_id,
@@ -906,8 +923,10 @@ def _number_text(value: Decimal) -> str:
     return text_value.rstrip("0").rstrip(".") if "." in text_value else text_value
 
 
-def _fen_text(fen: int) -> str:
-    """分 → ``¥x.xx``（回执展示用）。"""
+def _fen_text(fen: int | None) -> str:
+    """分 → ``¥x.xx``（空值返回「未设」，回执展示用）。"""
+    if fen is None:
+        return "未设"
     return f"¥{Decimal(int(fen)) / Decimal(100):.2f}"
 
 

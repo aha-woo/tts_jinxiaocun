@@ -59,7 +59,7 @@ def reconcile_store(
             .where(
                 StockBatch.tenant_id == tenant_id,
                 StockBatch.store_id == store_id,
-                StockBatch.status != "exhausted",
+                StockBatch.status == "open",
             )
             .group_by(StockBatch.product_id)
         ).all()
@@ -70,25 +70,44 @@ def reconcile_store(
     batch_mismatches: list[dict[str, Any]] = []
     negative_products: list[dict[str, Any]] = []
 
-    for inv, prod in inv_rows:
-        inv_qty = Decimal(inv.qty_base)
-        mov_qty = mov_sums.get(inv.product_id, Decimal("0"))
+    inv_map = {inv.product_id: (inv, prod) for inv, prod in inv_rows}
+    all_pids = set(inv_map.keys()) | set(mov_sums.keys()) | set(batch_sums.keys())
+    orphan_pids = [pid for pid in all_pids if pid not in inv_map]
+    orphan_prods: dict[uuid.UUID, Product] = {}
+    if orphan_pids:
+        orphan_prods = {
+            p.product_id: p
+            for p in session.execute(
+                select(Product).where(
+                    Product.tenant_id == tenant_id,
+                    Product.product_id.in_(orphan_pids),
+                )
+            ).scalars()
+        }
+
+    for pid in all_pids:
+        inv_pair = inv_map.get(pid)
+        inv_qty = Decimal(inv_pair[0].qty_base) if inv_pair is not None else Decimal("0")
+        prod = inv_pair[1] if inv_pair is not None else orphan_prods.get(pid)
+        prod_name = prod.name if prod is not None else str(pid)
+        prod_unit = prod.base_unit if prod is not None else ""
+        mov_qty = mov_sums.get(pid, Decimal("0"))
         if abs(inv_qty - mov_qty) > Decimal("0.0001"):
             movement_mismatches.append(
                 {
-                    "product_id": str(inv.product_id),
-                    "product_name": prod.name,
+                    "product_id": str(pid),
+                    "product_name": prod_name,
                     "inventory_qty": str(inv_qty),
                     "movement_sum_qty": str(mov_qty),
                 }
             )
-        if batch_service.product_tracks_batch(session, tenant_id, inv.product_id, policy):
-            b_qty = batch_sums.get(inv.product_id, Decimal("0"))
+        if batch_service.product_tracks_batch(session, tenant_id, pid, policy):
+            b_qty = batch_sums.get(pid, Decimal("0"))
             if abs(inv_qty - b_qty) > Decimal("0.0001"):
                 batch_mismatches.append(
                     {
-                        "product_id": str(inv.product_id),
-                        "product_name": prod.name,
+                        "product_id": str(pid),
+                        "product_name": prod_name,
                         "inventory_qty": str(inv_qty),
                         "batch_sum_qty": str(b_qty),
                     }
@@ -96,10 +115,10 @@ def reconcile_store(
         if inv_qty < 0:
             negative_products.append(
                 {
-                    "product_id": str(inv.product_id),
-                    "product_name": prod.name,
+                    "product_id": str(pid),
+                    "product_name": prod_name,
                     "qty_base": str(inv_qty),
-                    "unit": prod.base_unit,
+                    "unit": prod_unit,
                 }
             )
 
@@ -124,7 +143,7 @@ def reconcile_store(
     ok_flag = len(movement_mismatches) == 0 and len(batch_mismatches) == 0
     return {
         "ok": ok_flag,
-        "checked_products": len(inv_rows),
+        "checked_products": len(all_pids),
         "movement_mismatches": movement_mismatches,
         "batch_mismatches": batch_mismatches,
         "negative_count": len(negative_products),

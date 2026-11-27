@@ -88,6 +88,7 @@ class ArApRow:
     status: str
     version_before: int
     version_after: int
+    allocations: tuple[tuple[uuid.UUID, int], ...] = ()
 
 
 class ArApService:
@@ -206,6 +207,7 @@ class ArApService:
                 )
             remaining = int(delta.amount_fen)
             last_result: ArApRow | None = None
+            allocated: list[tuple[uuid.UUID, int]] = []
             for idx, r in enumerate(open_rows):
                 if remaining <= 0:
                     break
@@ -245,6 +247,7 @@ class ArApService:
                 self._session.flush()
                 self._session.expire(r)
                 remaining -= pay_here
+                allocated.append((r.ar_ap_id, pay_here))
                 last_result = ArApRow(
                     ar_ap_id=r.ar_ap_id,
                     key=key,
@@ -256,7 +259,17 @@ class ArApService:
                     version_after=expected + 1,
                 )
             assert last_result is not None
-            return last_result
+            return ArApRow(
+                ar_ap_id=last_result.ar_ap_id,
+                key=last_result.key,
+                amount_fen=last_result.amount_fen,
+                settled_amount_fen=last_result.settled_amount_fen,
+                outstanding_fen=last_result.outstanding_fen,
+                status=last_result.status,
+                version_before=last_result.version_before,
+                version_after=last_result.version_after,
+                allocations=tuple(allocated),
+            )
 
         row = self.get(tenant_id=tenant_id, partner_id=delta.partner_id, direction=delta.direction)
         if row is None:
@@ -322,6 +335,36 @@ class ArApService:
         if rows:
             self._session.flush()
         return len(rows)
+
+    def reverse_payment_doc(
+        self, *, tenant_id: uuid.UUID, payment_doc_id: uuid.UUID
+    ) -> int:
+        """撤销收/付款核销单时回退关联 ``ArAp.settled_amount_fen`` 并冲销对应付款流水。"""
+        prefix = f"doc:{payment_doc_id}"
+        payments = list(
+            self._session.execute(
+                select(Payment).where(
+                    Payment.tenant_id == tenant_id,
+                    (Payment.idempotency_key == prefix)
+                    | Payment.idempotency_key.like(f"{prefix}:%"),
+                )
+            ).scalars()
+        )
+        for pay in payments:
+            ar_ap = self._session.execute(
+                select(ArAp)
+                .where(ArAp.tenant_id == tenant_id, ArAp.ar_ap_id == pay.ar_ap_id)
+                .limit(1)
+            ).scalar_one_or_none()
+            if ar_ap is not None:
+                after_settled = max(0, int(ar_ap.settled_amount_fen) - int(pay.amount_fen))
+                ar_ap.settled_amount_fen = after_settled
+                ar_ap.status = _status_of(int(ar_ap.amount_fen), after_settled)
+                ar_ap.version = int(ar_ap.version) + 1
+            self._session.delete(pay)
+        if payments:
+            self._session.flush()
+        return len(payments)
 
     def record_payment(
         self,

@@ -467,22 +467,23 @@ class ImpactPreviewService:
                 select(ArAp)
                 .where(
                     ArAp.tenant_id == tenant_id,
-                    ArAp.store_id == store_id,
                     ArAp.partner_id == partner_uuid,
                     ArAp.direction == direction,
+                    ArAp.status != "settled",
                 )
-                .limit(1)
+                .order_by(ArAp.created_at.asc())
             )
-            row = session.execute(statement).scalar_one_or_none()
+            open_rows = list(session.execute(statement).scalars())
+            outstanding_fen = sum(
+                int(r.amount_fen) - int(r.settled_amount_fen) for r in open_rows
+            )
             rows.append(
                 CurrentState(
                     entity=ENTITY_AR_AP,
                     key=str(key),
                     label="",
-                    version=int(row.version) if row is not None else 0,
-                    amount_fen=int(row.amount_fen) - int(row.settled_amount_fen)
-                    if row is not None
-                    else 0,
+                    version=int(open_rows[0].version) if open_rows else 0,
+                    amount_fen=outstanding_fen,
                 )
             )
         return rows
@@ -601,8 +602,13 @@ def build_deltas(
         if ar_mode != AR_NONE and partner_id:
             sign = -1 if ar_mode.endswith("decrease") else 1
             direction = "receivable" if ar_mode.startswith("receivable") else "payable"
-            # 已结的单不产生欠款变动（这正是「已结」与「未结」的区别）
-            outstanding = 0 if payment_status == "已结" else amount_fen * sign
+            # 已结的普通进销/退货单不产生欠款变动；纯收付款核销（inventory_delta=none 且 *decrease）即使单据标记已结仍扣减往来余额
+            is_pure_settle = (inventory_mode == INVENTORY_NONE) and ar_mode.endswith("decrease")
+            outstanding = (
+                amount_fen * sign
+                if (is_pure_settle or payment_status != "已结")
+                else 0
+            )
             deltas.append(
                 DeltaLine(
                     entity=ENTITY_AR_AP,

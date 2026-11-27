@@ -54,7 +54,7 @@ from app.domain.inventory_service import (
 )
 from app.domain.inventory_service import VersionConflict as InvVersionConflict
 from app.models.catalog import Product
-from app.services.gaps import upsert_gap
+from app.services.gaps import resolve_gaps, upsert_gap
 from app.utils.date_utils import is_iso_date, today_in_tz
 from app.models.doc import DocHeader
 from app.models.partner import Partner
@@ -814,6 +814,10 @@ class LedgerService:
         card = self._get_card_by_session(tenant_id, session_id)
         if card is None:
             return None
+        if str(card.status) == "confirmed":
+            raise AppError("E_VALIDATION", message="该卡片已确认落账，不能重复复活")
+        if str(card.status) == "cancelled":
+            raise AppError("E_VALIDATION", message="该卡片已取消，请重新录入")
         payload = StoredCardPayload.from_json(card.slots)
         spec = self._registry.require(payload.intent_id)
         if spec.whitelist_blocked:  # pragma: no cover - R3 不会建卡
@@ -1687,12 +1691,15 @@ class LedgerService:
         # 先落出真实 doc_id 再记应收应付/收付款，保证 ArAp.doc_id 是外键真值
         if ar_mode != "none" and partner_id is not None:
             is_settle = ar_mode.endswith("decrease")
-            if is_settle or payment_status != "已结":
+            is_pure_settle = (inventory_mode == "none") and is_settle
+            if is_pure_settle or payment_status != "已结":
                 direction = "receivable" if ar_mode.startswith("receivable") else "payable"
                 amt = int(doc.total_amount_fen)
                 slot_amt = payload.slots.get("AMT") if payload.slots.get("AMT") is not None else payload.slots.get("TA")
                 if amt <= 0 and slot_amt is not None:
                     amt = int(slot_amt)
+                if is_settle and int(doc.total_amount_fen or 0) <= 0 and amt > 0:
+                    doc.total_amount_fen = amt
                 if amt > 0:
                     try:
                         ar_rows = ArApService(self._session).apply(
@@ -1710,16 +1717,25 @@ class LedgerService:
                             ],
                         )
                         if is_settle and ar_rows:
-                            ArApService(self._session).record_payment(
-                                tenant_id=tenant_id,
-                                store_id=store_id,
-                                ar_ap_id=ar_rows[0].ar_ap_id,
-                                amount_fen=amt,
-                                biz_date=biz_date,
-                                idempotency_key=f"doc:{doc.doc_id}",
-                                method=str(payload.slots.get("PM") or "现金"),
-                                note=f"单据 {doc.doc_no}",
-                            )
+                            ar_svc = ArApService(self._session)
+                            allocs = ar_rows[0].allocations or ((ar_rows[0].ar_ap_id, amt),)
+                            pm_method = str(payload.slots.get("PM") or "现金")
+                            for idx, (alloc_ar_id, alloc_fen) in enumerate(allocs):
+                                idem = (
+                                    f"doc:{doc.doc_id}"
+                                    if len(allocs) == 1
+                                    else f"doc:{doc.doc_id}:{idx}"
+                                )
+                                ar_svc.record_payment(
+                                    tenant_id=tenant_id,
+                                    store_id=store_id,
+                                    ar_ap_id=alloc_ar_id,
+                                    amount_fen=int(alloc_fen),
+                                    biz_date=biz_date,
+                                    idempotency_key=idem,
+                                    method=pm_method,
+                                    note=f"单据 {doc.doc_no}",
+                                )
                     except ArVersionConflict as exc:
                         raise AppError(
                             "E_PREVIEW_VERSION_CONFLICT",
@@ -1737,13 +1753,13 @@ class LedgerService:
         if reason is not None and inventory_mode in {"increase", "decrease", "snapshot"}:
             doc_lines = doc_service.lines_of(tenant_id=tenant_id, doc_id=doc.doc_id)
             if inventory_mode == "increase" and policy is not None:
+                running_qty_before: dict[uuid.UUID, Decimal] = {
+                    pid: Decimal(row.qty_base_before) for pid, row in inv_rows_by_product.items()
+                }
                 for line in doc_lines:
                     qty_base = Decimal(line.qty_base)
-                    qty_before = (
-                        inv_rows_by_product[line.product_id].qty_base_before
-                        if line.product_id in inv_rows_by_product
-                        else Decimal(0)
-                    )
+                    qty_before = running_qty_before.get(line.product_id, Decimal(0))
+                    running_qty_before[line.product_id] = qty_before + qty_base
                     if line.amount_fen is not None and qty_base > 0:
                         unit_cost: int | None = int(
                             (Decimal(line.amount_fen) / qty_base).quantize(
@@ -1756,7 +1772,7 @@ class LedgerService:
                         unit_cost = None
 
                     created_batch = None
-                    if reason == "purchase" and batch_service.product_tracks_batch(
+                    if reason in ("purchase", "sales_return") and batch_service.product_tracks_batch(
                         self._session, tenant_id, line.product_id, policy
                     ):
                         created_batch = batch_service.create_batch(
@@ -1767,6 +1783,7 @@ class LedgerService:
                             partner_id=partner_id,
                             partner_name=partner_name,
                             biz_date=biz_date,
+                            label="销售退货回库" if reason == "sales_return" else None,
                         )
                         line.batch_id = created_batch.batch_id
 
@@ -1796,30 +1813,59 @@ class LedgerService:
                         )
                     )
                     if qty_before < 0:
-                        batch_service.settle_oversold_on_purchase(
-                            self._session,
-                            tenant_id=tenant_id,
-                            store_id=store_id,
-                            product_id=line.product_id,
-                            source_doc_id=doc.doc_id,
-                            qty_before=qty_before,
-                            qty_in=qty_base,
-                            unit_cost_fen=unit_cost,
-                            new_batch=created_batch,
-                        )
-                    if reason == "purchase" and unit_cost is None:
-                        prod = self._session.get(Product, line.product_id)
-                        upsert_gap(
-                            self._session,
-                            tenant_id=tenant_id,
-                            store_id=store_id,
-                            kind="missing_cost",
-                            ref_entity="product",
-                            ref_id=line.product_id,
-                            title=f"{prod.name if prod else '商品'} 缺进价",
-                            detail_json={"doc_id": str(doc.doc_id), "doc_no": str(doc.doc_no)},
-                            priority=30,
-                        )
+                        if reason == "purchase":
+                            batch_service.settle_oversold_on_purchase(
+                                self._session,
+                                tenant_id=tenant_id,
+                                store_id=store_id,
+                                product_id=line.product_id,
+                                source_doc_id=doc.doc_id,
+                                qty_before=qty_before,
+                                qty_in=qty_base,
+                                unit_cost_fen=unit_cost,
+                                new_batch=created_batch,
+                            )
+                        else:
+                            batch_service.repay_virtual_batch(
+                                self._session,
+                                tenant_id=tenant_id,
+                                store_id=store_id,
+                                product_id=line.product_id,
+                                qty_in=qty_base,
+                                new_batch=created_batch,
+                            )
+                            if qty_before + qty_base >= 0:
+                                resolve_gaps(
+                                    self._session,
+                                    tenant_id=tenant_id,
+                                    store_id=store_id,
+                                    kind="negative_stock",
+                                    ref_entity="product",
+                                    ref_id=line.product_id,
+                                )
+                    if reason == "purchase":
+                        if unit_cost is None:
+                            prod = self._session.get(Product, line.product_id)
+                            upsert_gap(
+                                self._session,
+                                tenant_id=tenant_id,
+                                store_id=store_id,
+                                kind="missing_cost",
+                                ref_entity="product",
+                                ref_id=line.product_id,
+                                title=f"{prod.name if prod else '商品'} 缺进价",
+                                detail_json={"doc_id": str(doc.doc_id), "doc_no": str(doc.doc_no)},
+                                priority=30,
+                            )
+                        else:
+                            resolve_gaps(
+                                self._session,
+                                tenant_id=tenant_id,
+                                store_id=store_id,
+                                kind="missing_cost",
+                                ref_entity="product",
+                                ref_id=line.product_id,
+                            )
                 self._session.flush()
             elif inventory_mode == "decrease":
                 all_allocations: list[batch_service.BatchAllocation] = []
@@ -1891,6 +1937,34 @@ class LedgerService:
                                 cost_status="final",
                                 created_by=member_id,
                             )
+                        )
+                        if policy is not None and batch_service.product_tracks_batch(
+                            self._session, tenant_id, line.product_id, policy
+                        ):
+                            if diff < 0:
+                                batch_service.consume_batches_for_adjustment(
+                                    self._session,
+                                    tenant_id=tenant_id,
+                                    store_id=store_id,
+                                    product_id=line.product_id,
+                                    qty=-diff,
+                                )
+                            else:
+                                batch_service.surplus_batches_for_adjustment(
+                                    self._session,
+                                    tenant_id=tenant_id,
+                                    store_id=store_id,
+                                    product_id=line.product_id,
+                                    qty=diff,
+                                )
+                    if inv_row.qty_base_after >= 0:
+                        resolve_gaps(
+                            self._session,
+                            tenant_id=tenant_id,
+                            store_id=store_id,
+                            kind="negative_stock",
+                            ref_entity="product",
+                            ref_id=line.product_id,
                         )
                 self._session.flush()
         return doc

@@ -33,6 +33,7 @@ from app.models.catalog import Product
 from app.models.doc import ArAp, DocHeader
 from app.models.inventory import Inventory
 from app.models.ops import AuditLog, ExportJob
+from app.utils.date_utils import today_in_tz
 from app.models.partner import Partner
 from app.models.quota import UsageQuota
 from app.services.audit import AuditService
@@ -517,8 +518,8 @@ def _csv_safe_cell(value: Any) -> str:
 
 
 def period_range(period: str | None) -> tuple[date, date]:
-    """把 ``YYYY-MM`` / ``YYYY-MM-DD~YYYY-MM-DD`` 解析成日期区间。"""
-    today = date.today()
+    """把 ``YYYY-MM`` / ``YYYY-MM-DD~YYYY-MM-DD`` 解析成日期区间（默认中国时区今日）。"""
+    today = date.fromisoformat(today_in_tz("Asia/Shanghai"))
     if not period:
         return today, today
     text_value = period.strip()

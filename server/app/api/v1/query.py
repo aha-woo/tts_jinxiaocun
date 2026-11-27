@@ -73,20 +73,27 @@ def query_doc_candidates(
 ) -> JSONResponse:
     """说「刚才那笔」时列候选，让老板点选，避免改错单。"""
     ids = ids_of(context)
+    show_cost = can_view_cost(session, context)
     rows = LedgerService(session).reversal_candidates(
         tenant_id=ids.tenant_id, raw_ref=ref, limit=limit
     )
-    items = [
-        {
-            "doc_id": str(row.doc_id),
-            "doc_no": str(row.doc_no),
-            "intent_id": str(row.intent_id),
-            "biz_date": str(row.biz_date),
-            "total_amount_fen": int(row.total_amount_fen),
-            "total_amount_display": format_fen(int(row.total_amount_fen)),
-        }
-        for row in rows
-    ]
+    items = []
+    for row in rows:
+        hide = (not show_cost) and (
+            str(row.doc_type) in ("purchase", "purchase_return")
+            or str(row.intent_id).startswith("purchase")
+        )
+        items.append(
+            {
+                "doc_id": str(row.doc_id),
+                "doc_no": str(row.doc_no),
+                "intent_id": str(row.intent_id),
+                "biz_date": str(row.biz_date),
+                "total_amount_fen": None if hide else int(row.total_amount_fen),
+                "total_amount_display": "—" if hide else format_fen(int(row.total_amount_fen)),
+                "cost_hidden": hide,
+            }
+        )
     return JSONResponse(
         status_code=200,
         content=ok({"items": items, "ambiguous": len(items) > 1, "readonly": True}),

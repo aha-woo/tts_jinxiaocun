@@ -36,6 +36,7 @@ from app.models.dict import Reversal
 from app.models.inventory import InventoryMovement
 from app.services import batch as batch_service
 from app.services.audit import AuditService
+from app.services.gaps import resolve_gaps
 from app.services.movement import reason_of, record_doc_movements
 from app.services.batch import restore_on_reversal
 from app.utils.date_utils import today_in_tz
@@ -290,8 +291,11 @@ class ReversalService:
             )
 
         # ③ 反做：数量取反、金额取反，写一张新单
+        side_effect = dict(spec.side_effect or {}) if spec is not None else {}
+        ar_mode = str(side_effect.get("ar_ap_delta") or "none")
+        is_payment_doc = ar_mode in {"receivable_decrease", "payable_decrease"}
         lines = doc_service.lines_of(tenant_id=tenant_id, doc_id=doc_id)
-        if not lines:
+        if not lines and not is_payment_doc:
             raise AppError("E_VALIDATION", message="单据没有明细行，无法反做")
 
         draft = DocDraft(
@@ -322,6 +326,8 @@ class ReversalService:
             ),
         )
         reversal_doc = doc_service.create(draft, doc_no=f"{doc.doc_no}{REVERSAL_SUFFIX}")
+        if not lines and int(doc.total_amount_fen or 0) > 0:
+            reversal_doc.total_amount_fen = int(doc.total_amount_fen)
         self._apply_reverse_effects(
             tenant_id=tenant_id,
             store_id=store_id,
@@ -512,6 +518,15 @@ class ReversalService:
                 tenant_id=tenant_id, store_id=store_id, deltas=[delta], allow_negative=allow_neg
             ):
                 inv_rows_by_pid[row.product_id] = row
+                if row.qty_base_after >= Decimal(0):
+                    resolve_gaps(
+                        self._session,
+                        tenant_id=tenant_id,
+                        store_id=store_id,
+                        kind="negative_stock",
+                        ref_entity="product",
+                        ref_id=row.product_id,
+                    )
 
         new_doc = doc_service.create(
             DocDraft(
@@ -548,20 +563,20 @@ class ReversalService:
         move_reason = reason_of(intent_id)
         created_lines = doc_service.lines_of(tenant_id=tenant_id, doc_id=new_doc.doc_id)
         if move_reason is not None and inv_mode == "increase" and policy is not None:
+            running_qty_before: dict[uuid.UUID, Decimal] = {
+                pid: Decimal(row.qty_base_before) for pid, row in inv_rows_by_pid.items()
+            }
             for dline in created_lines:
                 qb = Decimal(dline.qty_base)
-                qty_before = (
-                    inv_rows_by_pid[dline.product_id].qty_base_before
-                    if dline.product_id in inv_rows_by_pid
-                    else Decimal(0)
-                )
+                qty_before = running_qty_before.get(dline.product_id, Decimal(0))
+                running_qty_before[dline.product_id] = qty_before + qb
                 uc = (
                     int((Decimal(dline.amount_fen) / qb).quantize(Decimal(1), rounding=ROUND_HALF_UP))
                     if dline.amount_fen is not None and qb > 0
                     else None
                 )
                 created_batch = None
-                if move_reason == "purchase" and batch_service.product_tracks_batch(
+                if move_reason in ("purchase", "sales_return") and batch_service.product_tracks_batch(
                     self._session, tenant_id, dline.product_id, policy
                 ):
                     created_batch = batch_service.create_batch(
@@ -571,6 +586,7 @@ class ReversalService:
                         line=dline,
                         partner_id=orig.partner_id,
                         biz_date=target_biz_date,
+                        label="销售退货回库" if move_reason == "sales_return" else None,
                     )
                     dline.batch_id = created_batch.batch_id
                 batch_service.update_moving_avg_on_purchase(
@@ -598,6 +614,28 @@ class ReversalService:
                         created_by=member_id,
                     )
                 )
+                if qty_before < 0:
+                    if move_reason == "purchase":
+                        batch_service.settle_oversold_on_purchase(
+                            self._session,
+                            tenant_id=tenant_id,
+                            store_id=store_id,
+                            product_id=dline.product_id,
+                            source_doc_id=new_doc.doc_id,
+                            qty_before=qty_before,
+                            qty_in=qb,
+                            unit_cost_fen=uc,
+                            new_batch=created_batch,
+                        )
+                    else:
+                        batch_service.repay_virtual_batch(
+                            self._session,
+                            tenant_id=tenant_id,
+                            store_id=store_id,
+                            product_id=dline.product_id,
+                            qty_in=qb,
+                            new_batch=created_batch,
+                        )
             self._session.flush()
         elif move_reason is not None and inv_mode == "decrease":
             all_allocs: list[batch_service.BatchAllocation] = []
@@ -687,12 +725,22 @@ class ReversalService:
                     product_id=line.product_id,
                     qty_base_delta=(prev.qty_base_delta if prev else Decimal(0)) + delta_qty,
                 )
-            InventoryService(self._session).apply(
+            applied = InventoryService(self._session).apply(
                 tenant_id=tenant_id,
                 store_id=store_id,
                 deltas=list(deltas_by_pid.values()),
                 allow_negative=True,
             )
+            for inv_row in applied:
+                if inv_row.qty_base_after >= Decimal(0):
+                    resolve_gaps(
+                        self._session,
+                        tenant_id=tenant_id,
+                        store_id=store_id,
+                        kind="negative_stock",
+                        ref_entity="product",
+                        ref_id=inv_row.product_id,
+                    )
         elif inventory_mode == "snapshot":
             raise AppError(
                 "E_VALIDATION",
@@ -700,7 +748,11 @@ class ReversalService:
                 data={"reason": "snapshot_not_reversible"},
             )
 
-        if ar_mode != "none":
+        if ar_mode in {"receivable_decrease", "payable_decrease"}:
+            ArApService(self._session).reverse_payment_doc(
+                tenant_id=tenant_id, payment_doc_id=original_doc_id
+            )
+        elif ar_mode != "none":
             ArApService(self._session).reverse_doc_ar_ap(
                 tenant_id=tenant_id, doc_id=original_doc_id
             )

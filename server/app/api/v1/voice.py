@@ -27,7 +27,7 @@ from fastapi import APIRouter, Depends, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field
 
-from app.api.v1._shared import assert_writable, ids_of, require_roles, runtime_for, WRITE_ROLES
+from app.api.v1._shared import assert_writable, can_view_cost, ids_of, require_roles, runtime_for, WRITE_ROLES
 from app.api.v1.cards import apply_card_updates
 from app.common.envelope import ok
 from app.common.errors import AppError
@@ -140,8 +140,8 @@ def _reversal_lines(
                 quantity=_json_number(row.qty),
                 unit=str(row.unit),
                 qty_base=row.qty_base,
-                unit_price_fen=int(row.unit_price_fen),
-                amount_fen=int(row.amount_fen),
+                unit_price_fen=int(row.unit_price_fen) if row.unit_price_fen is not None else None,
+                amount_fen=int(row.amount_fen) if row.amount_fen is not None else 0,
                 calc_trace=f"原单 {target.doc_no} 的明细（按原样反做）",
                 pending=False,
             )
@@ -570,6 +570,7 @@ def _try_repeat_purchase_card(
     text: str,
     asr_confidence: float,
     novice_info: dict[str, Any],
+    show_cost: bool = True,
 ) -> JSONResponse | None:
     """命中「跟上次一样」快捷复购时，查找最近一笔进货单生成确认卡（0 LLM，绝不静默直接记账）。"""
     if not _REPEAT_PURCHASE_RE.search(text or ""):
@@ -666,7 +667,7 @@ def _try_repeat_purchase_card(
     for dl in chosen_lines:
         prod = products_by_id.get(dl.product_id)
         pname = f"{prod.name} {prod.spec}".strip() if prod is not None else "未知货品"
-        amt = int(dl.amount_fen) if dl.amount_fen is not None else 0
+        amt = (int(dl.amount_fen) if dl.amount_fen is not None else 0) if show_cost else 0
         total_fen += amt
         qty_val = float(dl.qty) if Decimal(dl.qty) % 1 else int(Decimal(dl.qty))
         card_lines.append(
@@ -677,11 +678,15 @@ def _try_repeat_purchase_card(
                 "quantity": qty_val,
                 "unit": str(dl.unit),
                 "qty_base": str(dl.qty_base),
-                "unit_price_fen": dl.unit_price_fen,
-                "amount_fen": dl.amount_fen,
+                "unit_price_fen": dl.unit_price_fen if show_cost else None,
+                "amount_fen": dl.amount_fen if show_cost else None,
                 "partner_id": str(chosen_doc.partner_id) if chosen_doc.partner_id else None,
                 "payment_status": str(chosen_doc.payment_status or "已结"),
-                "calc_trace": f"{pname} {qty_val}{dl.unit}（沿用上次数量与单价）",
+                "calc_trace": (
+                    f"{pname} {qty_val}{dl.unit}（沿用上次数量与单价）"
+                    if show_cost
+                    else f"{pname} {qty_val}{dl.unit}（沿用上次数量，进价按权限隐藏）"
+                ),
                 "pending": False,
             }
         )
@@ -818,6 +823,7 @@ def parse_session(
 
         # 「跟上次一样」快捷复购（0 LLM，出确认卡核对数量单价）
         member_row = session.get(Member, ids.member_id)
+        show_cost = can_view_cost(session, context)
         repeat_resp = _try_repeat_purchase_card(
             session=session,
             database=database,
@@ -826,6 +832,7 @@ def parse_session(
             text=text,
             asr_confidence=asr_conf,
             novice_info=novice_status_of(member_row),
+            show_cost=show_cost,
         )
         if repeat_resp is not None:
             return repeat_resp
@@ -1005,6 +1012,7 @@ def parse_session(
 
         spec = runtime.registry.require(result.parse.intent) if result.parse is not None else None
         if spec is not None and route_of_spec(spec) == ROUTE_ANSWER:
+            show_cost = can_view_cost(session, context)
             answer = _read_only_answer(
                 session,
                 tenant_id=ids.tenant_id,
@@ -1012,6 +1020,7 @@ def parse_session(
                 intent_id=spec.intent_id,
                 parse=result.parse,
                 runtime=runtime,
+                show_cost=show_cost,
             )
             voice_session.state = STATE_CLOSED_READ
             session.flush()
@@ -1249,38 +1258,54 @@ def _read_only_answer(
     intent_id: str,
     parse: Any,
     runtime: Any,
+    show_cost: bool = True,
 ) -> Any:
-    """R0 只读：按意图查库并直接返回（**不建卡片**）。"""
+    """R0 只读：按意图查库并直接返回（**不建卡片**，严格按角色隐藏进价与毛利）。"""
     service = ReportService(session)
     if intent_id == "stock.query":
         product_ids = []
         product = runtime.products.resolve(str(parse.slots.get("P") or ""))
         if product is not None and product.product is not None:
             product_ids.append(uuid.UUID(product.product.product_id))
-        return {
-            "kind": "stock",
-            "items": [
-                row.as_dict()
-                for row in service.stock_of(
-                    tenant_id=tenant_id, store_id=store_id, product_ids=product_ids
-                )
-            ],
-        }
+        items = []
+        for row in service.stock_of(
+            tenant_id=tenant_id, store_id=store_id, product_ids=product_ids
+        ):
+            item = row.as_dict()
+            if not show_cost:
+                item["avg_cost_fen"] = None
+                item["last_purchase_price_fen"] = None
+                item["cost_hidden"] = True
+            else:
+                item["cost_hidden"] = False
+            items.append(item)
+        return {"kind": "stock", "items": items, "cost_hidden": not show_cost}
     if intent_id == "stock.query_low":
-        return {
-            "kind": "stock_low",
-            "items": [
-                row.as_dict()
-                for row in service.low_stock(tenant_id=tenant_id, store_id=store_id)
-            ],
-        }
+        items = []
+        for row in service.low_stock(tenant_id=tenant_id, store_id=store_id):
+            item = row.as_dict()
+            if not show_cost:
+                item["avg_cost_fen"] = None
+                item["last_purchase_price_fen"] = None
+                item["cost_hidden"] = True
+            else:
+                item["cost_hidden"] = False
+            items.append(item)
+        return {"kind": "stock_low", "items": items, "cost_hidden": not show_cost}
     if intent_id in {"stock.query_movement"}:
         return {"kind": "movement", "items": []}
     if intent_id in {"doc.query", "doc.query_summary"}:
-        return {
-            "kind": "docs",
-            "items": [row.as_dict() for row in service.docs(tenant_id=tenant_id, store_id=store_id)],
-        }
+        items = []
+        for row in service.docs(tenant_id=tenant_id, store_id=store_id):
+            item = row.as_dict()
+            if (not show_cost) and str(item.get("doc_type") or "") in ("purchase", "purchase_return"):
+                item["total_amount_fen"] = None
+                item["total_amount_display"] = "—"
+                item["cost_hidden"] = True
+            else:
+                item["cost_hidden"] = False
+            items.append(item)
+        return {"kind": "docs", "items": items, "cost_hidden": not show_cost}
     if intent_id == "debt.query":
         return {
             "kind": "debt",
@@ -1292,12 +1317,18 @@ def _read_only_answer(
                 "kind": "report_top",
                 "items": list(service.top_products(tenant_id=tenant_id, store_id=store_id)),
             }
-        return {
-            "kind": "report",
-            "report": service.today(
-                tenant_id=tenant_id, store_id=store_id, biz_date=date.fromisoformat(_today_iso())
-            ).as_dict(),
-        }
+        report = service.today(
+            tenant_id=tenant_id, store_id=store_id, biz_date=date.fromisoformat(_today_iso())
+        ).as_dict()
+        if not show_cost:
+            report["purchase_fen"] = None
+            report["purchase_display"] = None
+            report["gross_profit_fen"] = None
+            report["gross_profit_display"] = None
+            report["cost_hidden"] = True
+        else:
+            report["cost_hidden"] = False
+        return {"kind": "report", "report": report}
     return {"kind": "unknown", "note": f"{intent_id} 的只读查询尚未接线（需核实）"}
 
 

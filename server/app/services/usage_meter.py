@@ -27,6 +27,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.models.quota import UsageLedger, UsageQuota
+from app.utils.date_utils import today_in_tz
 
 __all__ = [
     "BILLABLE_EVENTS",
@@ -53,9 +54,8 @@ NON_BILLABLE_REASONS: Mapping[str, str] = {
 
 
 def current_period(now: datetime | None = None) -> str:
-    """自然月归集口径 ``YYYY-MM``（与 ``usage_quota.period`` 一致）。"""
-    moment = now or datetime.now(timezone.utc)
-    return moment.strftime("%Y-%m")
+    """自然月归集口径 ``YYYY-MM``（中国时区 ``Asia/Shanghai``）。"""
+    return today_in_tz("Asia/Shanghai", now=now)[:7]
 
 
 @dataclass

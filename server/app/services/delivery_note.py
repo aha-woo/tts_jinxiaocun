@@ -15,7 +15,7 @@ from datetime import date, datetime, timezone
 from decimal import Decimal
 from typing import Any, Mapping, Sequence
 
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.orm import Session
 
 from app.common.errors import AppError
@@ -288,7 +288,7 @@ def confirm_delivery_note(
     stated_total_fen: int | None = None,
 ) -> dict[str, Any]:
     """核对进货单并经由 ``LedgerService`` 正式建卡确认入账（原单标记 source='photo'）。"""
-    attachment = session.execute(
+    att_stmt = (
         select(Attachment)
         .where(
             Attachment.tenant_id == tenant_id,
@@ -296,7 +296,10 @@ def confirm_delivery_note(
             Attachment.attachment_id == attachment_id,
         )
         .limit(1)
-    ).scalar_one_or_none()
+    )
+    if database.is_pg and hasattr(att_stmt, "with_for_update"):
+        att_stmt = att_stmt.with_for_update()
+    attachment = session.execute(att_stmt).scalar_one_or_none()
     if attachment is None:
         raise AppError("E_NOT_FOUND", message="进货单识别记录不存在或无权操作")
     if attachment.doc_id is not None:
@@ -510,7 +513,23 @@ def confirm_delivery_note(
     ).scalar_one_or_none()
     if doc is not None:
         doc.source = "photo"
-    attachment.doc_id = doc_uuid
+    claim = session.execute(
+        update(Attachment)
+        .where(
+            Attachment.tenant_id == tenant_id,
+            Attachment.store_id == store_id,
+            Attachment.attachment_id == attachment_id,
+            Attachment.doc_id.is_(None),
+        )
+        .values(doc_id=doc_uuid)
+        .execution_options(synchronize_session=False)
+    )
+    if claim.rowcount != 1:
+        raise AppError(
+            "E_DUPLICATE_REQUEST",
+            message="这张进货单已经确认入账过了，请勿重复记账",
+        )
+    session.expire(attachment)
     session.flush()
 
     AuditService(session).record(

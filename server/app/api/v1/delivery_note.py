@@ -9,13 +9,30 @@ from fastapi import APIRouter
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field
 
-from app.api.v1._shared import ids_of
+from app.api.v1._shared import WRITE_ROLES, assert_writable, can_view_cost, ids_of, require_roles
 from app.common.envelope import ok
 from app.common.errors import AppError
 from app.deps import AuthContextDep, DatabaseDep, SettingsDep, TenantSessionDep
 from app.services.delivery_note import confirm_delivery_note, list_delivery_notes, parse_delivery_note
 
 router = APIRouter(prefix="/delivery-note", tags=["delivery-note"])
+
+
+def _mask_parse_costs(data: dict[str, Any]) -> dict[str, Any]:
+    """店员无进价查看权限时，对进货单识别草稿金额脱敏。"""
+    masked = dict(data)
+    masked["cost_hidden"] = True
+    masked["stated_total_fen"] = None
+    masked["computed_total_fen"] = None
+    masked["total_diff_fen"] = None
+    masked_lines: list[dict[str, Any]] = []
+    for raw_line in masked.get("lines") or []:
+        line = dict(raw_line)
+        line["unit_price_fen"] = None
+        line["amount_fen"] = None
+        masked_lines.append(line)
+    masked["lines"] = masked_lines
+    return masked
 
 
 class DeliveryNoteParseRequest(BaseModel):
@@ -64,7 +81,11 @@ def api_parse_delivery_note(
     database: DatabaseDep,
 ) -> JSONResponse:
     """调用中国开源多模态视觉模型提取进货单明细并保存草稿附件。"""
+    require_roles(context, WRITE_ROLES)
     ids = ids_of(context)
+    with database.session(context=context) as ro_sess:
+        assert_writable(ro_sess, ids.tenant_id)
+        show_cost = can_view_cost(ro_sess, context)
     data = parse_delivery_note(
         database=database,
         settings=settings,
@@ -77,6 +98,10 @@ def api_parse_delivery_note(
         object_ref=payload.object_ref,
         hint_text=payload.hint_text,
     )
+    if not show_cost:
+        data = _mask_parse_costs(data)
+    else:
+        data = {**data, "cost_hidden": False}
     return JSONResponse(status_code=200, content=ok(data))
 
 
@@ -89,12 +114,15 @@ def api_confirm_delivery_note(
     database: DatabaseDep,
 ) -> JSONResponse:
     """通过 LedgerService 统一入账，原单标记 source='photo' 并绑定凭证附件。"""
+    require_roles(context, WRITE_ROLES)
     try:
         att_uuid = uuid.UUID(attachment_id)
     except ValueError as exc:
         raise AppError("E_VALIDATION", message="attachment_id 格式不合法") from exc
 
     ids = ids_of(context)
+    assert_writable(session, ids.tenant_id)
+    show_cost = can_view_cost(session, context)
     data = confirm_delivery_note(
         session=session,
         database=database,
@@ -108,6 +136,10 @@ def api_confirm_delivery_note(
         payment_status=payload.payment_status,
         stated_total_fen=payload.stated_total_fen,
     )
+    if not show_cost:
+        data = {**data, "total_amount_fen": None, "cost_hidden": True}
+    else:
+        data = {**data, "cost_hidden": False}
     return JSONResponse(status_code=200, content=ok(data))
 
 
@@ -119,7 +151,15 @@ def api_list_delivery_notes(
 ) -> JSONResponse:
     """查看最近拍过的进货单与关联入账状态。"""
     ids = ids_of(context)
+    show_cost = can_view_cost(session, context)
     items = list_delivery_notes(
         session, tenant_id=ids.tenant_id, store_id=ids.store_id, limit=limit
     )
-    return JSONResponse(status_code=200, content=ok({"items": items}))
+    if not show_cost:
+        items = [
+            {**item, "computed_total_fen": None, "cost_hidden": True}
+            for item in items
+        ]
+    else:
+        items = [{**item, "cost_hidden": False} for item in items]
+    return JSONResponse(status_code=200, content=ok({"items": items, "cost_hidden": not show_cost}))

@@ -524,81 +524,16 @@ def apply_count(
 def _consume_batches(
     session: object, *, tenant_id: uuid.UUID, store_id: uuid.UUID, line: CountLine, qty: Decimal
 ) -> None:
-    """盘亏：按先到期先出 / 先进先出从在库批次扣。"""
-    batches = list(
-        session.execute(  # type: ignore[attr-defined]
-            select(StockBatch)
-            .where(
-                StockBatch.tenant_id == tenant_id,
-                StockBatch.store_id == store_id,
-                StockBatch.product_id == line.product_id,
-                StockBatch.status == "open",
-                StockBatch.is_virtual.is_(False),
-                StockBatch.qty_left > 0,
-            )
-            .order_by(StockBatch.expiry_date.is_(None), StockBatch.expiry_date, StockBatch.received_at, StockBatch.batch_id)
-        ).scalars()
+    """盘亏：按先到期先出 / 先进先出从在库批次扣，不足记入虚拟批。"""
+    batch_service.consume_batches_for_adjustment(
+        session, tenant_id=tenant_id, store_id=store_id, product_id=line.product_id, qty=qty
     )
-    left = qty
-    for batch in batches:
-        if left <= 0:
-            break
-        take = min(Decimal(batch.qty_left), left)
-        batch.qty_left = Decimal(batch.qty_left) - take
-        if Decimal(batch.qty_left) <= 0:
-            batch.qty_left = Decimal(0)
-            batch.status = "exhausted"
-        left -= take
 
 
 def _surplus_to_batches(
     session: object, *, tenant_id: uuid.UUID, store_id: uuid.UUID, line: CountLine, qty: Decimal
 ) -> None:
     """盘盈：先抵扣「未到货」虚拟批，余下新建一张「盘盈调整」批次（不改历史批次 qty_in）。"""
-    rem = qty
-    vbatch = session.execute(  # type: ignore[attr-defined]
-        select(StockBatch)
-        .where(
-            StockBatch.tenant_id == tenant_id,
-            StockBatch.store_id == store_id,
-            StockBatch.product_id == line.product_id,
-            StockBatch.is_virtual.is_(True),
-            StockBatch.status == "open",
-        )
-        .limit(1)
-    ).scalar_one_or_none()
-    if vbatch is not None and Decimal(vbatch.qty_left) < 0:
-        repay = min(rem, abs(Decimal(vbatch.qty_left)))
-        vbatch.qty_left = Decimal(vbatch.qty_left) + repay
-        if Decimal(vbatch.qty_left) >= 0:
-            vbatch.qty_left = Decimal(0)
-            vbatch.status = "exhausted"
-        rem -= repay
-
-    if rem <= 0:
-        return
-    product = session.execute(  # type: ignore[attr-defined]
-        select(Product).where(
-            Product.tenant_id == tenant_id, Product.product_id == line.product_id
-        ).limit(1)
-    ).scalar_one_or_none()
-    unit_cost = (
-        product.avg_cost_fen if (product and product.avg_cost_fen is not None)
-        else (product.last_purchase_price_fen if product else None)
-    )
-    session.add(  # type: ignore[attr-defined]
-        StockBatch(
-            tenant_id=tenant_id,
-            store_id=store_id,
-            product_id=line.product_id,
-            doc_line_id=None,
-            partner_id=None,
-            label="盘盈调整",
-            is_virtual=False,
-            qty_in=rem,
-            qty_left=rem,
-            unit_cost_fen=unit_cost,
-            status="open",
-            received_at=datetime.now(timezone.utc),
-        )
+    batch_service.surplus_batches_for_adjustment(
+        session, tenant_id=tenant_id, store_id=store_id, product_id=line.product_id, qty=qty
     )
