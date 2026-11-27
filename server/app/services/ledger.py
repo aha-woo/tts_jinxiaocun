@@ -55,7 +55,7 @@ from app.domain.inventory_service import (
 from app.domain.inventory_service import VersionConflict as InvVersionConflict
 from app.models.catalog import Product
 from app.services.gaps import upsert_gap
-from app.utils.date_utils import today_in_tz
+from app.utils.date_utils import is_iso_date, today_in_tz
 from app.models.doc import DocHeader
 from app.models.partner import Partner
 from app.models.voice import ConfirmCard, VoiceLog
@@ -165,6 +165,18 @@ class StoredCardPayload:
             expires_at=str(data.get("expires_at") or ""),
             edited=bool(data.get("edited", False)),
         )
+
+
+def _resolve_confirm_biz_date(
+    biz_date: date | None, slots: Mapping[str, Any], moment: datetime
+) -> date:
+    """确认落账业务日：显式传参 > 卡内合法 D 槽位 > 北京时间当日（避免凌晨 0~7 点倒退一天）。"""
+    if biz_date is not None:
+        return biz_date
+    raw_date = slots.get("D")
+    if isinstance(raw_date, str) and is_iso_date(raw_date):
+        return date.fromisoformat(raw_date)
+    return date.fromisoformat(today_in_tz("Asia/Shanghai", now=moment))
 
 
 def _pending_gaps(payload: StoredCardPayload) -> list[dict[str, Any]]:
@@ -686,7 +698,7 @@ class LedgerService:
             card=card,
             payload=payload,
             spec_intent=payload.intent_id,
-            biz_date=biz_date or moment.date(),
+            biz_date=_resolve_confirm_biz_date(biz_date, payload.slots, moment),
         )
         card.status = "confirmed"
         # 把落账结果写回卡片载荷：重复确认时不用反查审计就能幂等返回

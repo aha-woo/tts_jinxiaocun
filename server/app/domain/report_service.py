@@ -355,7 +355,7 @@ class ReportService:
                     doc_type=str(header.doc_type) if header is not None else str(move.reason),
                     biz_date=header.biz_date.isoformat()
                     if header is not None
-                    else move.occurred_at.date().isoformat(),
+                    else today_in_tz("Asia/Shanghai", now=move.occurred_at),
                     qty_base=str(move.qty_base),
                     unit=str(product.base_unit),
                     reason=str(move.reason),

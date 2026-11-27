@@ -105,6 +105,14 @@
         </view>
       </view>
 
+      <view wx:if="{{syncErrorText}}" class="bar" bindtap="onRetryDashboard">
+        <view class="bar__lead">
+          <view class="ico ico--sm ico--warn-wn"></view>
+          <text>{{syncErrorText}}</text>
+        </view>
+        <text class="bar__more">重试</text>
+      </view>
+
       <view wx:if="{{errorText}}" class="bar" style="background:var(--dgrb);border-color:#e0b9b0;color:var(--dgr)">
         <text>{{errorText}}</text>
       </view>

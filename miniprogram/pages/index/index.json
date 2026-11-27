@@ -1,5 +1,6 @@
 {
   "navigationBarTitleText": "今天",
+  "enablePullDownRefresh": true,
   "usingComponents": {
     "action-sheet": "/components/action-sheet/action-sheet"
   }

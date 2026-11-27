@@ -32,7 +32,7 @@ export const CLOUD_SERVICE = 'voice-inventory-api';
 /** 成功码，与 `packages/shared/contracts/api-envelope.ts` 的 SUCCESS_CODE 一致。 */
 export const SUCCESS_CODE = 0;
 
-const DEFAULT_TIMEOUT_MS = 8000;
+const DEFAULT_TIMEOUT_MS = 15000;
 const TOKEN_STORAGE_KEY = 'vi.token';
 
 export type HttpMethod = 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
@@ -659,6 +659,14 @@ function isAuthExpired(error: unknown): boolean {
   return error instanceof ApiError && error.errorCode === 'E_AUTH_INVALID';
 }
 
+function isTransientNetworkError(error: unknown): boolean {
+  return error instanceof ApiError && error.code === -2;
+}
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 async function doCallApi<T>(path: string, options: RequestOptions): Promise<T> {
   const normalizedPath = path.startsWith('/') ? path : `/${path}`;
   const method: HttpMethod = options.method ?? 'GET';
@@ -682,8 +690,9 @@ async function doCallApi<T>(path: string, options: RequestOptions): Promise<T> {
 /**
  * 调用后端接口并解包。
  *
- * 登录过期（`E_AUTH_INVALID`）时：清 token → 静默重登一次 → 原请求重试一次。
- * 这样用户不会在模拟器里放一晚上后看到「登录已过期」，而是自动续上。
+ * 1. 遇到微信云托管瞬时断连/超时（`code === -2`）：等待 500ms 自动重试一次
+ *    （写接口复用同一 `Idempotency-Key`，后端幂等表防重入，绝不重复落账）；
+ * 2. 登录过期（`E_AUTH_INVALID`）：清 token → 静默重登一次 → 原请求重试一次。
  */
 export async function callApi<T>(path: string, options: RequestOptions = {}): Promise<T> {
   const method: HttpMethod = options.method ?? 'GET';
@@ -695,6 +704,24 @@ export async function callApi<T>(path: string, options: RequestOptions = {}): Pr
     }
     return result;
   } catch (error) {
+    if (isTransientNetworkError(error)) {
+      await delay(500);
+      try {
+        const retried = await doCallApi<T>(path, options);
+        if (method !== 'GET' && options.idempotencyKey === undefined) {
+          resetIdempotencyKey(scope);
+        }
+        return retried;
+      } catch (retryError) {
+        if (method !== 'GET' && options.idempotencyKey === undefined) {
+          resetIdempotencyKey(scope);
+        }
+        if (isTransientNetworkError(retryError)) {
+          throw new ApiError(-2, '网络连接不稳定，请稍后下拉刷新重试');
+        }
+        throw retryError;
+      }
+    }
     if (isAuthExpired(error) && !path.includes('/auth/login')) {
       clearToken();
       await reloginOnce();

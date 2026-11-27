@@ -328,6 +328,13 @@ Page<ManualData, WechatMiniprogram.Page.CustomOption>({
         asr_confidence: 1.0,
         duration_ms: 0,
       });
+      if (parsed.route === 'auto_posted' || parsed.auto_posted === true) {
+        rememberRecentProduct(this.data.product);
+        const docNo = parsed.result?.doc_no ?? '';
+        wx.showToast({ title: docNo ? `已直记 ${docNo}` : '已直记', icon: 'success' });
+        setTimeout(() => wx.navigateBack({ delta: 1 }), 700);
+        return;
+      }
       if (parsed.card !== null && parsed.card !== undefined) {
         rememberRecentProduct(this.data.product);
         wx.redirectTo({ url: `/pages/card/index?cardId=${parsed.card.meta.card_id}` });

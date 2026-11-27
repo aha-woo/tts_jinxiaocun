@@ -34,6 +34,7 @@ from app.models.inventory import (
 )
 from app.models.tenant import Tenant
 from app.services.gaps import resolve_gaps
+from app.utils.date_utils import today_in_tz
 
 _BATCH_METHODS = frozenset({"batch", "fifo", "fefe", "fefo"})
 
@@ -158,7 +159,7 @@ def create_batch(
     else:
         unit_cost = None
 
-    day = biz_date or datetime.now(timezone.utc).date()
+    day = biz_date or date.fromisoformat(today_in_tz("Asia/Shanghai"))
     auto_label = label or (
         f"{day.month}/{day.day} {partner_name}" if partner_name else f"{day.month}/{day.day} 进货"
     )

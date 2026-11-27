@@ -380,3 +380,51 @@ def test_negative_marker_blocks_write_intent() -> None:
     codes = {conflict.code for conflict in conflicts}
     assert "C7" in codes, f"负数标记没被拦住，conflicts={sorted(codes)}"
     assert any(conflict.code == "C7" and conflict.blocked for conflict in conflicts)
+
+
+def test_confirm_uses_shanghai_biz_date_in_early_morning(shop: Seed) -> None:
+    """北京时间凌晨 05:16（UTC 前一天 21:16）确认卖货单：biz_date 必须落到当日（11-27）并计入今日报表。"""
+    from datetime import date, datetime, timezone
+
+    from app.domain.report_service import ReportService
+    from app.services.ledger import LedgerService
+    from t04_fixtures import parse_of, preview_for
+
+    early_morning_utc = datetime(2026, 11, 26, 21, 16, tzinfo=timezone.utc)
+    with shop.database.session(context=shop.context) as session:
+        ledger = LedgerService(session)
+        rows = lines_for(shop)
+        parse = parse_of("sales.create")
+        preview = preview_for(shop, session=session, lines=rows)
+        creation = ledger.create_card(
+            tenant_id=shop.tenant_id,
+            store_id=shop.store_id,
+            member_id=shop.member_id,
+            session_id=uuid.uuid4(),
+            parse=parse,
+            asr_text="卖两箱可乐",
+            asr_confidence=0.98,
+            lines=rows,
+            preview=preview,
+            now=early_morning_utc,
+        )
+        outcome = ledger.confirm(
+            tenant_id=shop.tenant_id,
+            store_id=shop.store_id,
+            member_id=shop.member_id,
+            card_id=uuid.UUID(creation.card_id),
+            now=early_morning_utc,
+        )
+        assert outcome.confirmed, outcome.as_dict()
+        doc = session.get(DocHeader, uuid.UUID(str(outcome.doc_id)))
+        assert doc is not None
+        assert doc.biz_date == date(2026, 11, 27)
+
+        report = ReportService(session).today(
+            tenant_id=shop.tenant_id,
+            store_id=shop.store_id,
+            biz_date=date(2026, 11, 27),
+        )
+        assert report.sales_fen == outcome.total_amount_fen
+        assert report.doc_count == 1
+

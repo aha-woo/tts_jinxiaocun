@@ -114,6 +114,7 @@ interface IndexData {
   mode: 'hold' | 'tap';
   talkingText: string;
   errorText: string;
+  syncErrorText: string;
   /** 同声传译插件是否可用（不可用时降级为键盘录入，大按钮仍可点、只给提示） */
   speechReady: boolean;
   /** 插件不可用的**具体原因**（自检面板显示；空串 = 可用） */
@@ -170,6 +171,7 @@ Page<IndexData, WechatMiniprogram.Page.CustomOption>({
     mode: 'hold',
     talkingText: '',
     errorText: '',
+    syncErrorText: '',
     speechReady: true,
     speechReason: '',
     recent: [],
@@ -276,9 +278,23 @@ Page<IndexData, WechatMiniprogram.Page.CustomOption>({
       await ensureLogin();
     } catch (error) {
       console.warn('[index] 登录未就绪', error);
+      this.setData({ syncErrorText: '网络未就绪，点右侧重试刷新流水' });
       return;
     }
-    await Promise.all([this.refreshMe(), this.refreshReport(), this.refreshPending(), this.refreshFlow()]);
+    await Promise.all([this.refreshFlow(), this.refreshReport()]);
+    await Promise.all([this.refreshPending(), this.refreshMe()]);
+  },
+
+  async onPullDownRefresh(): Promise<void> {
+    try {
+      await this.loadDashboard();
+    } finally {
+      wx.stopPullDownRefresh();
+    }
+  },
+
+  onRetryDashboard(): void {
+    void this.loadDashboard();
   },
 
   async refreshMe(): Promise<void> {
@@ -342,9 +358,10 @@ Page<IndexData, WechatMiniprogram.Page.CustomOption>({
           reversed,
         };
       });
-      this.setData({ flow });
+      this.setData({ flow, syncErrorText: '' });
     } catch (error) {
       console.warn('[index] 拉取流水失败', error);
+      this.setData({ syncErrorText: '网络波动，今日流水暂未刷新' });
     }
   },
 
@@ -373,6 +390,9 @@ Page<IndexData, WechatMiniprogram.Page.CustomOption>({
       });
     } catch (error) {
       console.warn('[index] 取今日报表失败', error);
+      if (this.data.syncErrorText === '') {
+        this.setData({ syncErrorText: '网络波动，今日汇总暂未刷新' });
+      }
     }
   },
 

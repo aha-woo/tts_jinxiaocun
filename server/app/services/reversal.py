@@ -38,6 +38,7 @@ from app.services import batch as batch_service
 from app.services.audit import AuditService
 from app.services.movement import reason_of, record_doc_movements
 from app.services.batch import restore_on_reversal
+from app.utils.date_utils import today_in_tz
 
 __all__ = [
     "CorrectionOutcome",
@@ -297,7 +298,7 @@ class ReversalService:
             tenant_id=tenant_id,
             store_id=store_id,
             intent_id=f"{doc.intent_id}",
-            biz_date=date.today() if moment is None else moment.date(),
+            biz_date=date.fromisoformat(today_in_tz("Asia/Shanghai", now=moment)),
             created_by=member_id,
             payment_status=str(doc.payment_status),
             partner_id=doc.partner_id,
