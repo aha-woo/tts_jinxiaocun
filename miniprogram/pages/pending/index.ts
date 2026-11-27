@@ -1,8 +1,7 @@
 /**
  * 待处理（原型 vPending）：
  * - 没确认：卡在、只差点确认；
- * - 要补：卡上有缺项（服务端在条目里给出 gaps），点「补 X」直接填这一项，
- *   填完只重算这张卡，不打开整张卡。
+ * - 要补：卡上有缺项或账本缺口，右侧统一等宽短按钮直接处理。
  */
 
 import {
@@ -20,7 +19,6 @@ import {
   type UnifiedGapRow,
 } from '../../services/api';
 import { ensureLogin } from '../../services/auth';
-import { appendNumericKey } from '../../utils/format';
 import type { SheetActionItem } from '../../components/action-sheet/action-sheet';
 
 interface PendingItem {
@@ -70,6 +68,13 @@ interface PendingData {
   };
 }
 
+/** 清洗标题里的冗余小数尾巴（如 -456.0000 -> -456）。 */
+function cleanDecimalText(raw: string): string {
+  return String(raw ?? '')
+    .replace(/(\d+)\.0+\b/g, '$1')
+    .replace(/(\.\d*?[1-9])0+\b/g, '$1');
+}
+
 /** 待确认列表项（服务端摘要）→ 展示项。 */
 export function toPendingItem(row: PendingCardRow): PendingItem {
   const title = row.intent_id.startsWith('purchase.')
@@ -82,7 +87,7 @@ export function toPendingItem(row: PendingCardRow): PendingItem {
     cardId: row.card_id,
     title,
     said: row.asr_text ?? '',
-    statusText: expired ? '已超时 · 未记账' : '待确认',
+    statusText: expired ? '已超时' : '待确认',
     expired,
     gaps: row.gaps ?? [],
   };
@@ -96,15 +101,15 @@ function isTextGap(code: string): boolean {
 function gapKindText(kind: string): { label: string; action: string } {
   switch (kind) {
     case 'missing_cost':
-      return { label: '缺进价', action: '补进价 ›' };
+      return { label: '缺进价', action: '补进价' };
     case 'negative_stock':
-      return { label: '负库存', action: '去补货/已处理 ›' };
+      return { label: '负库存', action: '去补货' };
     case 'unit_ratio':
-      return { label: '缺换算', action: '去设换算 ›' };
+      return { label: '缺换算', action: '设换算' };
     case 'missing_customer':
-      return { label: '缺往来', action: '标记已处理 ›' };
+      return { label: '缺往来', action: '已处理' };
     default:
-      return { label: '要补', action: '标记已处理 ›' };
+      return { label: '要补', action: '已处理' };
   }
 }
 
@@ -147,7 +152,7 @@ Page<PendingData, WechatMiniprogram.Page.CustomOption>({
           kind: row.kind,
           refEntity: row.ref_entity,
           refId: row.ref_id,
-          title: row.title,
+          title: cleanDecimalText(row.title),
           kindLabel: meta.label,
           actionLabel: meta.action,
         };
@@ -177,7 +182,6 @@ Page<PendingData, WechatMiniprogram.Page.CustomOption>({
       return;
     }
     try {
-      // 先复活：重写 TTL 并复用同一 session（不重复扣次），避免打开就显示「超时」
       await reviveCard(cardId);
       await getCard(cardId);
       wx.navigateTo({ url: `/pages/card/index?cardId=${cardId}` });
@@ -186,7 +190,7 @@ Page<PendingData, WechatMiniprogram.Page.CustomOption>({
     }
   },
 
-  /** 点「补 X」：数字项弹键盘，文字项弹输入框。 */
+  /** 点「去补齐」：数字项弹统一键盘，文字项弹输入框。 */
   onFillStart(event: WechatMiniprogram.TouchEvent): void {
     const cardId = String(event.currentTarget.dataset['card'] ?? '');
     const code = String(event.currentTarget.dataset['code'] ?? '');
@@ -214,9 +218,8 @@ Page<PendingData, WechatMiniprogram.Page.CustomOption>({
     this.setData({ editing: { cardId, code, label, unit }, keypad: gap.current ?? '' });
   },
 
-  onKey(event: WechatMiniprogram.TouchEvent): void {
-    const key = String(event.currentTarget.dataset['key'] ?? '');
-    this.setData({ keypad: appendNumericKey(this.data.keypad, key, 8) });
+  onKeyChange(event: WechatMiniprogram.CustomEvent<{ value: string }>): void {
+    this.setData({ keypad: String(event.detail?.value ?? '') });
   },
 
   onLedgerGapTap(event: WechatMiniprogram.TouchEvent): void {

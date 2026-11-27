@@ -3,6 +3,7 @@
   "usingComponents": {
     "slot-table": "/components/slot-table/slot-table",
     "impact-preview": "/components/impact-preview/impact-preview",
-    "action-sheet": "/components/action-sheet/action-sheet"
+    "action-sheet": "/components/action-sheet/action-sheet",
+    "keypad-sheet": "/components/keypad-sheet/keypad-sheet"
   }
 }

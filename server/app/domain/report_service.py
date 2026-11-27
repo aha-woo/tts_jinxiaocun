@@ -121,6 +121,8 @@ class DocBrief:
     payment_status: str
     status: str
     total_amount_fen: int
+    summary: str = ""
+    partner_name: str | None = None
 
     def as_dict(self) -> dict[str, Any]:
         """JSON 形态。"""
@@ -134,6 +136,8 @@ class DocBrief:
             "status": self.status,
             "total_amount_fen": self.total_amount_fen,
             "total_amount_display": format_fen(self.total_amount_fen),
+            "summary": self.summary,
+            "partner_name": self.partner_name,
         }
 
 
@@ -377,7 +381,7 @@ class ReportService:
         doc_type: str | None = None,
         limit: int = 20,
     ) -> list[DocBrief]:
-        """查单据列表。"""
+        """查单据列表（附带商品摘要与往来单位，避免前端只看到单号）。"""
         statement = select(DocHeader).where(DocHeader.tenant_id == tenant_id)
         if store_id is not None:
             statement = statement.where(DocHeader.store_id == store_id)
@@ -386,7 +390,48 @@ class ReportService:
         if doc_type is not None:
             statement = statement.where(DocHeader.doc_type == doc_type)
         statement = statement.order_by(DocHeader.created_at.desc()).limit(max(1, limit))
-        return [_brief_of(header) for header in self._session.execute(statement).scalars()]
+        headers = list(self._session.execute(statement).scalars())
+        if not headers:
+            return []
+
+        doc_ids = [header.doc_id for header in headers]
+        lines_by_doc: dict[uuid.UUID, list[tuple[str, str, str]]] = {}
+        line_stmt = (
+            select(DocLine, Product)
+            .outerjoin(
+                Product,
+                (Product.product_id == DocLine.product_id) & (Product.tenant_id == DocLine.tenant_id),
+            )
+            .where(DocLine.tenant_id == tenant_id, DocLine.doc_id.in_(doc_ids))
+            .order_by(DocLine.created_at.asc())
+        )
+        for line, product in self._session.execute(line_stmt).all():
+            if product is not None:
+                base_name = str(product.name)
+                spec = str(product.spec or "")
+                pname = f"{base_name} {spec}" if spec and spec not in base_name else base_name
+            else:
+                pname = str(line.product_id)[:8]
+            lines_by_doc.setdefault(line.doc_id, []).append(
+                (pname, _qty_text(line.qty), str(line.unit or ""))
+            )
+
+        partner_ids = list({header.partner_id for header in headers if header.partner_id is not None})
+        partner_names: dict[uuid.UUID, str] = {}
+        if partner_ids:
+            for partner in self._session.execute(
+                select(Partner).where(Partner.tenant_id == tenant_id, Partner.partner_id.in_(partner_ids))
+            ).scalars():
+                partner_names[partner.partner_id] = str(partner.name)
+
+        return [
+            _brief_of(
+                header,
+                summary=_doc_summary(header, lines_by_doc.get(header.doc_id, ())),
+                partner_name=partner_names.get(header.partner_id) if header.partner_id else None,
+            )
+            for header in headers
+        ]
 
     # ------------------------------------------------------------------ 欠款
     def debts(
@@ -650,7 +695,37 @@ class ReportService:
         return int(self._session.execute(statement).scalar_one() or 0)
 
 
-def _brief_of(header: DocHeader) -> DocBrief:
+def _doc_summary(header: DocHeader, doc_lines: Sequence[tuple[str, str, str]]) -> str:
+    """生成给商户看的单据业务摘要（商品名 × 数量），无明细时按业务类型兜底。"""
+    if doc_lines:
+        first_name, first_qty, first_unit = doc_lines[0]
+        base = f"{first_name} × {first_qty}{first_unit}"
+        return f"{base} 等{len(doc_lines)}种" if len(doc_lines) > 1 else base
+    doc_type = str(header.doc_type or "")
+    intent_id = str(header.intent_id or "")
+    if doc_type == "receipt" or intent_id == "ar_ap.receive":
+        return "收款核销"
+    if doc_type == "payment" or intent_id == "ar_ap.pay":
+        return "付款核销"
+    if doc_type in ("count", "count_adjust"):
+        return "库存盘点调整"
+    if doc_type == "loss":
+        return "货品报损"
+    if doc_type == "sales_return":
+        return "销售退货"
+    if doc_type == "purchase_return":
+        return "采购退货"
+    if doc_type == "opening":
+        return "期初建账"
+    return str(header.doc_no)
+
+
+def _brief_of(
+    header: DocHeader,
+    *,
+    summary: str = "",
+    partner_name: str | None = None,
+) -> DocBrief:
     """单据 → 摘要。"""
     return DocBrief(
         doc_id=str(header.doc_id),
@@ -661,6 +736,8 @@ def _brief_of(header: DocHeader) -> DocBrief:
         payment_status=str(header.payment_status),
         status=str(header.status),
         total_amount_fen=int(header.total_amount_fen),
+        summary=summary or str(header.doc_no),
+        partner_name=partner_name,
     )
 
 

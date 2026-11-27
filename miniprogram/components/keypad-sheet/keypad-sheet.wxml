@@ -1,0 +1,32 @@
+<!-- 统一底部数字键盘弹层 -->
+<view class="kpsheet" wx:if="{{visible}}" bindtap="onClose">
+  <view class="kpsheet__in" catchtap="noop">
+    <text class="kpsheet__h">{{title}}</text>
+    <text wx:if="{{subtitle}}" class="kpsheet__sub">{{subtitle}}</text>
+    <view class="kpsheet__v">
+      <text>{{value || '0'}}</text>
+      <text wx:if="{{unit}}" class="kpsheet__u">{{unit}}</text>
+    </view>
+
+    <slot />
+
+    <view class="kp">
+      <view
+        wx:for="{{keys}}"
+        wx:key="*this"
+        class="kp__k {{item === 'del' || item === 'clear' ? 'kp__k--fn' : ''}}"
+        data-key="{{item}}"
+        bindtap="onKey"
+      >
+        <view wx:if="{{item === 'del'}}" class="ico-backspace"></view>
+        <text wx:elif="{{item === 'clear'}}" class="kp__fn-txt">清空</text>
+        <text wx:else>{{item}}</text>
+      </view>
+    </view>
+
+    <view class="kp__acts">
+      <view class="kp__c" bindtap="onClose">取消</view>
+      <view class="kp__ok" bindtap="onConfirm">{{confirmText || '确定'}}</view>
+    </view>
+  </view>
+</view>

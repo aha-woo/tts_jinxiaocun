@@ -1,5 +1,6 @@
-/* 待处理：紧凑行 + 行内「补」+ 数字键盘 */
+/* 待处理：两层整齐排版 + 定宽短按钮 + 不折行状态标签 */
 .hint {
+  display: block;
   font-size: 24rpx;
   color: var(--mu);
   line-height: 1.6;
@@ -9,7 +10,7 @@
 .pend {
   display: flex;
   align-items: center;
-  gap: 16rpx;
+  gap: 18rpx;
   padding: 22rpx 24rpx;
   border-top: 2rpx solid var(--ln);
 }
@@ -27,127 +28,63 @@
   min-width: 0;
 }
 
-.pend__top {
+.pend__meta {
   display: flex;
   align-items: center;
-  gap: 12rpx;
+  gap: 10rpx;
+}
+
+.pend__tag {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 36rpx;
+  padding: 0 12rpx;
+  border-radius: 8rpx;
+  font-size: 20rpx;
+  font-weight: 700;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.pend__tag--warn {
+  background: var(--wnb);
+  color: var(--wn);
+}
+
+.pend__tag--danger {
+  background: var(--dgrb);
+  color: var(--dgr);
+}
+
+.pend__kind {
+  font-size: 22rpx;
+  color: var(--mu);
+  font-weight: 600;
+  white-space: nowrap;
 }
 
 .pend__t {
-  font-weight: 700;
-  font-size: 30rpx;
-}
-
-.pend__said {
   display: block;
-  margin-top: 6rpx;
-  font-size: 24rpx;
-  color: var(--mu);
-  overflow: hidden;
-  white-space: nowrap;
-  text-overflow: ellipsis;
+  margin-top: 8rpx;
+  font-weight: 700;
+  font-size: 28rpx;
+  line-height: 1.4;
+  color: var(--ink);
+  word-break: break-all;
 }
 
 .pend__go {
+  width: 144rpx;
+  text-align: center;
+  white-space: nowrap;
   flex-shrink: 0;
   font-size: 24rpx;
   font-weight: 700;
   color: var(--act);
-  padding: 8rpx 20rpx;
+  padding: 12rpx 0;
   border-radius: var(--r-pill);
   background: var(--acs);
   border: 2rpx solid #eabaa0;
-}
-
-/* 补数字 */
-.kpsheet {
-  position: fixed;
-  inset: 0;
-  background: rgba(31, 27, 22, 0.45);
-  display: flex;
-  align-items: flex-end;
-  z-index: 70;
-}
-
-.kpsheet__in {
-  width: 100%;
-  background: var(--sf);
-  border-radius: 36rpx 36rpx 0 0;
-  padding: 32rpx 32rpx calc(32rpx + env(safe-area-inset-bottom));
-}
-
-.kpsheet__h {
-  display: block;
-  font-family: 'Songti SC', 'Noto Serif SC', serif;
-  font-size: 30rpx;
-  font-weight: 700;
-  text-align: center;
-  color: var(--mu);
-}
-
-.kpsheet__v {
-  display: block;
-  text-align: center;
-  font-family: 'Songti SC', 'Noto Serif SC', serif;
-  font-size: 72rpx;
-  font-weight: 700;
-  padding: 8rpx 0 20rpx;
-  border-bottom: 2rpx solid var(--ink);
-}
-
-.kpsheet__u {
-  font-size: 30rpx;
-  color: var(--mu);
-  margin-left: 8rpx;
-}
-
-.kp {
-  display: grid;
-  grid-template-columns: repeat(3, 1fr);
-  gap: 12rpx;
-  margin-top: 20rpx;
-}
-
-.kp__k {
-  height: 100rpx;
-  border-radius: 18rpx;
-  background: var(--bg);
-  font-family: 'Songti SC', 'Noto Serif SC', serif;
-  font-size: 38rpx;
-  font-weight: 700;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
-
-.kp__k:active {
-  background: var(--acs);
-}
-
-.kp__acts {
-  display: flex;
-  gap: 16rpx;
-  margin-top: 16rpx;
-}
-
-.kp__c,
-.kp__ok {
-  flex: 1;
-  height: 96rpx;
-  border-radius: 20rpx;
-  font-size: 30rpx;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
-
-.kp__c {
-  border: 2rpx solid var(--ln);
-  background: var(--sf);
-}
-
-.kp__ok {
-  background: var(--ac);
-  color: #fff;
-  font-weight: 700;
+  box-sizing: border-box;
 }

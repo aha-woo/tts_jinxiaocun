@@ -958,6 +958,8 @@ export interface DocBrief {
   status: string;
   total_amount_fen: number | null;
   total_amount_display: string;
+  summary?: string;
+  partner_name?: string | null;
   cost_hidden?: boolean;
 }
 

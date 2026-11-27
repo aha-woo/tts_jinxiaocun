@@ -49,10 +49,10 @@
           <view wx:if="{{!costHidden}}" class="chip {{filter === 'nocost' ? 'chip--on' : ''}}" data-filter="nocost" bindtap="onFilter">缺进价</view>
         </view>
 
-        <button class="goods-count-btn" bindtap="onStartCount">
+        <view class="goods-count-btn" bindtap="onStartCount">
           <view class="ico ico--sm ico--count-white"></view>
           <text>盘点</text>
-        </button>
+        </view>
       </view>
     </view>
 

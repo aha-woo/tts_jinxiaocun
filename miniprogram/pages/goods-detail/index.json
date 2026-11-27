@@ -1,6 +1,7 @@
 {
   "navigationBarTitleText": "货品详情",
   "usingComponents": {
-    "action-sheet": "/components/action-sheet/action-sheet"
+    "action-sheet": "/components/action-sheet/action-sheet",
+    "keypad-sheet": "/components/keypad-sheet/keypad-sheet"
   }
 }

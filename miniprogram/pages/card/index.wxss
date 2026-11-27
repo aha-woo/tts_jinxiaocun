@@ -233,93 +233,6 @@
   color: var(--act);
 }
 
-/* 补数字键盘 */
-.kpsheet {
-  position: fixed;
-  inset: 0;
-  background: rgba(31, 27, 22, 0.45);
-  display: flex;
-  align-items: flex-end;
-  z-index: 70;
-}
-
-.kpsheet__in {
-  width: 100%;
-  background: var(--sf);
-  border-radius: 36rpx 36rpx 0 0;
-  padding: 32rpx 32rpx calc(32rpx + env(safe-area-inset-bottom));
-}
-
-.kpsheet__h {
-  display: block;
-  font-family: 'Songti SC', 'Noto Serif SC', serif;
-  font-size: 30rpx;
-  font-weight: 700;
-  text-align: center;
-  color: var(--mu);
-}
-
-.kpsheet__v {
-  display: block;
-  text-align: center;
-  font-family: 'Songti SC', 'Noto Serif SC', serif;
-  font-size: 72rpx;
-  font-weight: 700;
-  padding: 8rpx 0 20rpx;
-  border-bottom: 2rpx solid var(--ink);
-}
-
-.kpsheet__u {
-  font-size: 30rpx;
-  color: var(--mu);
-  margin-left: 8rpx;
-}
-
-.kp {
-  display: grid;
-  grid-template-columns: repeat(3, 1fr);
-  gap: 12rpx;
-  margin-top: 20rpx;
-}
-
-.kp__k {
-  height: 100rpx;
-  border-radius: 18rpx;
-  background: var(--bg);
-  font-family: 'Songti SC', 'Noto Serif SC', serif;
-  font-size: 38rpx;
-  font-weight: 700;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
-
-.kp__k:active {
-  background: var(--acs);
-}
-
-.kp__acts {
-  display: flex;
-  gap: 16rpx;
-  margin-top: 16rpx;
-}
-
-.kp__c,
-.kp__ok {
-  flex: 1;
-  height: 96rpx;
-  border-radius: 20rpx;
-  font-size: 30rpx;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
-
-.kp__c {
-  border: 2rpx solid var(--ln);
-  background: var(--sf);
-}
-
 .card-layout,
 .card-main,
 .card-r-rest {
@@ -327,12 +240,6 @@
   flex-direction: column;
   gap: 24rpx;
   min-width: 0;
-}
-
-.kp__ok {
-  background: var(--ac);
-  color: #fff;
-  font-weight: 700;
 }
 
 /* 电脑版微信大屏（>=768px）：左明细 + 右操作与影响预览双栏；键盘居中弹窗 */
@@ -422,46 +329,6 @@
     border-radius: 12px;
     border-width: 1px;
     font-size: 14px;
-    cursor: pointer;
-  }
-
-  .kpsheet {
-    align-items: center;
-    justify-content: center;
-  }
-
-  .kpsheet__in {
-    max-width: 420px;
-    border-radius: 18px;
-    padding: 24px;
-  }
-
-  .kpsheet__h {
-    font-size: 15px;
-  }
-
-  .kpsheet__v {
-    font-size: 36px;
-    padding: 6px 0 12px;
-  }
-
-  .kp {
-    gap: 8px;
-    margin-top: 14px;
-  }
-
-  .kp__k {
-    height: 48px;
-    border-radius: 10px;
-    font-size: 20px;
-    cursor: pointer;
-  }
-
-  .kp__c,
-  .kp__ok {
-    height: 44px;
-    border-radius: 10px;
-    font-size: 15px;
     cursor: pointer;
   }
 }

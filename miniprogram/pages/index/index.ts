@@ -331,29 +331,50 @@ Page<IndexData, WechatMiniprogram.Page.CustomOption>({
         return;
       }
       const flow = items.map((doc: DocBrief) => {
-        const isSale = doc.intent_id.startsWith('sales.') || doc.doc_type === 'sales';
+        const dt = doc.doc_type || '';
+        const iid = doc.intent_id || '';
         const isCredit = doc.payment_status === '未结';
-        const isReturn = doc.intent_id.includes('return');
-        const tag = isReturn ? '退' : isCredit ? '赊' : isSale ? '卖' : '进';
-        const tagClass = isReturn
-          ? 'tg--back'
-          : isCredit
-            ? 'tg--owe'
-            : isSale
-              ? 'tg--sell'
-              : 'tg--in';
+        const isReturn = iid.includes('return') || dt.includes('return');
+        const isLoss = dt === 'loss' || iid.includes('loss');
+        const isCount = dt === 'count' || dt === 'count_adjust' || iid.includes('count');
+        const isPay = dt === 'receipt' || dt === 'payment' || iid.startsWith('ar_ap.');
+        const isSale = iid.startsWith('sales.') || dt === 'sales';
+
+        let tag = '进';
+        let tagClass = 'tg--in';
+        if (isLoss) {
+          tag = '损';
+          tagClass = 'tg--waste';
+        } else if (isCount) {
+          tag = '盘';
+          tagClass = 'tg--count';
+        } else if (isPay) {
+          tag = dt === 'receipt' || iid === 'ar_ap.receive' ? '收' : '付';
+          tagClass = 'tg--pay';
+        } else if (isReturn) {
+          tag = '退';
+          tagClass = 'tg--back';
+        } else if (isCredit) {
+          tag = '赊';
+          tagClass = 'tg--owe';
+        } else if (isSale) {
+          tag = '卖';
+          tagClass = 'tg--sell';
+        }
+
         const reversed = doc.status === 'reversed';
         const amountYuan = (Number(doc.total_amount_fen || 0) / 100)
           .toFixed(2)
           .replace(/\.00$/, '');
+        const partnerPart = doc.partner_name ? `${doc.partner_name} · ` : '';
         return {
           id: doc.doc_id,
           docId: doc.doc_id,
           time: doc.biz_date.slice(5),
           tag,
           tagClass,
-          title: `${doc.doc_no} · ${doc.payment_status}`,
-          meta: reversed ? '已撤' : '已记账',
+          title: doc.summary || doc.doc_no,
+          meta: `${partnerPart}${doc.payment_status}${reversed ? ' · 已撤' : ''}`,
           amount: amountYuan,
           reversed,
         };

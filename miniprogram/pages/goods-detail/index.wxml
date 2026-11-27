@@ -1,4 +1,4 @@
-<!-- 货品详情：概览指标 + 档案编辑 + 批次余量 + 出入库流水台账 -->
+<!-- 货品详情：概览指标 + 档案参数管理 + 在库批次 + 出入库流水台账 -->
 <view class="page {{wide ? 'page--wide' : ''}}">
   <view class="page__gap">
     <view wx:if="{{errorText}}" class="bar" style="background:var(--dgrb);border-color:#e0b9b0;color:var(--dgr)">
@@ -33,69 +33,72 @@
             <text class="gd-kpi__v serif-num">{{avgCostText}}</text>
           </view>
           <view class="gd-kpi">
-            <text class="gd-kpi__k">最近售价</text>
+            <text class="gd-kpi__k">默认售价</text>
             <text class="gd-kpi__v serif-num">{{salePriceText}}</text>
           </view>
           <view class="gd-kpi">
             <text class="gd-kpi__k">库存货值</text>
-            <text class="gd-kpi__v serif-num">{{stockValueText}}</text>
+            <text class="gd-kpi__v serif-num {{stockValueWarn ? 'gd-kpi__v--dgr' : ''}}">{{stockValueText}}</text>
           </view>
         </view>
       </view>
 
-      <!-- 档案编辑与管理 -->
+      <!-- 档案管理（口径透明 + 点击弹统一数字键盘） -->
       <view class="card pad gd-sec">
         <view class="gd-sec__h">
           <text class="gd-sec__t serif">档案参数与管理</text>
-          <text class="gd-sec__hint">修改后立即生效，不影响历史已结单据</text>
+          <text class="gd-sec__hint">仅改默认参考值，不篡改历史账目</text>
         </view>
 
-        <view class="gd-form">
-          <view wx:if="{{!costHidden}}" class="gd-field">
-            <text class="gd-field__lbl">最近进价（元 / {{baseUnit}}）</text>
-            <input
-              class="gd-field__in"
-              type="digit"
-              value="{{purchaseInput}}"
-              placeholder="待补"
-              bindinput="onPurchaseInput"
-            />
+        <view class="gd-params">
+          <!-- 参考进价：已有值时只读，缺价时才允许补录 -->
+          <view
+            wx:if="{{!costHidden}}"
+            class="gd-param {{missingCost ? 'gd-param--tap' : ''}}"
+            bindtap="onEditPurchase"
+          >
+            <view class="gd-param__l">
+              <text class="gd-param__t">参考进价</text>
+              <text class="gd-param__sub">{{missingCost ? '补录后计入毛利，不改历史批次' : '由进货单与批次自动核算，不可手改'}}</text>
+            </view>
+            <view class="gd-param__r">
+              <text class="gd-param__v {{missingCost ? 'gd-param__v--wn' : ''}}">{{purchaseDisplayText}}</text>
+              <text wx:if="{{missingCost}}" class="gd-param__edit">去补 ›</text>
+            </view>
           </view>
 
-          <view class="gd-field">
-            <text class="gd-field__lbl">最近售价（元 / {{baseUnit}}）</text>
-            <input
-              class="gd-field__in"
-              type="digit"
-              value="{{saleInput}}"
-              placeholder="未设"
-              bindinput="onSaleInput"
-            />
+          <!-- 默认售价 -->
+          <view class="gd-param gd-param--tap" bindtap="onEditSale">
+            <view class="gd-param__l">
+              <text class="gd-param__t">默认售价</text>
+              <text class="gd-param__sub">仅作开单默认价，不影响历史订单</text>
+            </view>
+            <view class="gd-param__r">
+              <text class="gd-param__v">{{saleDisplayText}}</text>
+              <text class="gd-param__edit">改 ›</text>
+            </view>
           </view>
 
-          <view class="gd-field">
-            <text class="gd-field__lbl">低库存预警线（{{baseUnit}}）</text>
-            <input
-              class="gd-field__in"
-              type="digit"
-              value="{{lowStockInput}}"
-              placeholder="默认 5"
-              bindinput="onLowStockInput"
-            />
+          <!-- 低库存预警线 -->
+          <view class="gd-param gd-param--tap" bindtap="onEditLow">
+            <view class="gd-param__l">
+              <text class="gd-param__t">低库存预警线</text>
+              <text class="gd-param__sub">低于此数量在列表提醒，不影响账务</text>
+            </view>
+            <view class="gd-param__r">
+              <text class="gd-param__v">{{lowStockDisplayText}}</text>
+              <text class="gd-param__edit">改 ›</text>
+            </view>
           </view>
         </view>
-
-        <button class="cta gd-save-btn" loading="{{saving}}" disabled="{{saving}}" bindtap="onSaveParams">
-          保存参数
-        </button>
 
         <view class="gd-actions">
-          <button class="sub" bindtap="onToggleBatch">
-            {{trackBatch ? '切回移动平均' : '开启按批次管理'}}
-          </button>
-          <button class="sub sub--ac" bindtap="onOpenMerge">
-            合并重复商品
-          </button>
+          <view class="gd-act-btn" bindtap="onToggleBatch">
+            <text>{{trackBatch ? '切回移动平均' : '开启按批次管理'}}</text>
+          </view>
+          <view class="gd-act-btn gd-act-btn--ac" bindtap="onOpenMerge">
+            <text>合并重复商品</text>
+          </view>
         </view>
 
         <view wx:if="{{aliases.length > 0 || unitConversions.length > 0}}" class="gd-extra">
@@ -114,7 +117,7 @@
         </view>
       </view>
 
-      <!-- 在库批次（开启分批或已有批记录时显示） -->
+      <!-- 在库批次 -->
       <view wx:if="{{trackBatch || batches.length > 0}}" class="card">
         <view class="gd-card-h">
           <text class="gd-sec__t serif">在库批次</text>
@@ -123,14 +126,14 @@
         <view wx:if="{{batches.length === 0}}" class="empty">暂无在库批次</view>
         <view wx:else>
           <view wx:for="{{batches}}" wx:key="batchId" class="gd-batch">
-            <view class="gd-batch__l">
+            <view class="gd-batch__top">
               <text class="gd-batch__t">{{item.titleText}}</text>
-              <text class="gd-batch__s">{{item.qtyText}} · 成本 {{item.unitCostText}}</text>
-              <text wx:if="{{item.expiryDate}}" class="gd-batch__e">到期 {{item.expiryDate}}</text>
+              <text class="gd-batch__tag {{item.isVirtual ? 'gd-batch__tag--virtual' : item.isOpen ? 'gd-batch__tag--open' : ''}}">
+                {{item.statusText}}
+              </text>
             </view>
-            <text class="gd-batch__tag {{item.isVirtual ? 'gd-batch__tag--virtual' : item.isOpen ? 'gd-batch__tag--open' : ''}}">
-              {{item.statusText}}
-            </text>
+            <text class="gd-batch__s">{{item.qtyText}} · 成本 {{item.unitCostText}}</text>
+            <text wx:if="{{item.expiryDate}}" class="gd-batch__e">到期 {{item.expiryDate}}</text>
           </view>
         </view>
       </view>
@@ -159,6 +162,18 @@
       </view>
     </block>
   </view>
+
+  <keypad-sheet
+    visible="{{kp.visible}}"
+    title="{{kp.title}}"
+    subtitle="{{kp.subtitle}}"
+    value="{{kp.value}}"
+    unit="{{kp.unit}}"
+    confirmText="{{kp.confirmText}}"
+    bind:change="onKpChange"
+    bind:confirm="onKpConfirm"
+    bind:close="onKpClose"
+  />
 
   <action-sheet
     visible="{{sheet.visible}}"

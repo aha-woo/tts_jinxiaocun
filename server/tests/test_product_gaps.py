@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import uuid
+from datetime import date
 from decimal import Decimal
 from typing import Iterator
 
@@ -12,7 +13,9 @@ from fastapi.testclient import TestClient
 from app.config import Settings
 from app.main import create_app
 from app.models.catalog import Product, ProductAlias, UnitConversion
+from app.models.doc import DocHeader, DocLine
 from app.models.inventory import Inventory, InventoryMovement
+from app.models.partner import Partner
 
 
 def _settings() -> Settings:
@@ -93,6 +96,44 @@ def shop() -> Iterator[dict[str, object]]:
                     created_by=member_id,
                 )
             )
+            partner_id = uuid.uuid4()
+            doc_id = uuid.uuid4()
+            session.add(
+                Partner(
+                    tenant_id=tenant_id,
+                    partner_id=partner_id,
+                    name="张老板",
+                    type="customer",
+                )
+            )
+            session.add(
+                DocHeader(
+                    tenant_id=tenant_id,
+                    store_id=store_id,
+                    doc_id=doc_id,
+                    doc_no="XS20261127001",
+                    intent_id="sales.create",
+                    doc_type="sales",
+                    partner_id=partner_id,
+                    biz_date=date(2026, 11, 27),
+                    payment_status="已结",
+                    total_amount_fen=36000,
+                    created_by=member_id,
+                )
+            )
+            session.add(
+                DocLine(
+                    tenant_id=tenant_id,
+                    store_id=store_id,
+                    doc_id=doc_id,
+                    product_id=priced,
+                    qty=Decimal("24"),
+                    unit="瓶",
+                    qty_base=Decimal("24"),
+                    unit_price_fen=1500,
+                    amount_fen=36000,
+                )
+            )
         yield {
             "client": client,
             "headers": headers,
@@ -148,3 +189,10 @@ def test_product_detail_and_stock_fields(shop: dict[str, object]) -> None:
     items = stock.json()["data"]["items"]
     assert len(items) == 1
     assert items[0]["low_stock_qty"] == "12.0000"
+
+    docs = client.get("/api/v1/query/docs", headers=shop["headers"])
+    assert docs.status_code == 200, docs.text
+    doc_items = docs.json()["data"]["items"]
+    assert len(doc_items) == 1
+    assert doc_items[0]["summary"] == "有价货 500ml × 24瓶"
+    assert doc_items[0]["partner_name"] == "张老板"

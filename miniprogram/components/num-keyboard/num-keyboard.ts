@@ -8,6 +8,8 @@
  * **一次语音都不用**——而不是「语音失败后的降级提示页」。
  */
 
+import { appendNumericKey } from '../../utils/format';
+
 Component({
   properties: {
     /** 当前输入的数量文本（受控） */
@@ -27,8 +29,8 @@ Component({
   },
 
   data: {
-    /** 按键布局（数字键盘，故意不含小数点：单价按元整数输入，分由服务端算） */
-    keys: ['1', '2', '3', '4', '5', '6', '7', '8', '9', '×', '0', '⌫'] as string[],
+    /** 统一 3×4 按键布局：支持小数点与 SVG 退格 */
+    keys: ['1', '2', '3', '4', '5', '6', '7', '8', '9', '.', '0', 'del'] as string[],
     /** 当前输入焦点：quantity / price */
     focus: 'quantity' as 'quantity' | 'price',
   },
@@ -52,21 +54,12 @@ Component({
       this.triggerEvent('direction', { direction });
     },
 
-    /** 点键盘：数字追加、×清空、⌫ 退格。 */
+    /** 点键盘：统一数字/小数点/退格校验。 */
     onKey(event: WechatMiniprogram.TouchEvent): void {
       const key = String(event.currentTarget.dataset['key'] ?? '');
       const field = this.data.focus === 'price' ? 'price' : 'quantity';
-      const current = this.data.focus === 'price' ? this.properties.price : this.properties.quantity;
-
-      if (key === '×') {
-        this.triggerEvent('input', { field, value: '' });
-        return;
-      }
-      if (key === '⌫') {
-        this.triggerEvent('input', { field, value: current.slice(0, -1) });
-        return;
-      }
-      const next = `${current}${key}`.slice(0, 8);
+      const current = String((this.data.focus === 'price' ? this.properties.price : this.properties.quantity) ?? '');
+      const next = appendNumericKey(current, key, 8);
       this.triggerEvent('input', { field, value: next });
     },
 

@@ -1,4 +1,4 @@
-<!-- 待处理（原型 vPending）：没确认 / 要补；要补直接在行上补这一项 -->
+<!-- 待处理（原型 vPending）：没确认 / 要补；标签不换行 + 按钮等宽对齐 + 统一数字键盘 -->
 <view class="page">
   <view class="page__gap">
     <view class="seg">
@@ -11,7 +11,7 @@
     </view>
 
     <text class="hint">
-      {{tab === 'unconf' ? '说过但没点确认的卡。打开后还是同一张卡，不会重复扣次数。' : '账已经记了，就差这一项。点「补」直接填，不用打开整张卡。'}}
+      {{tab === 'unconf' ? '说过但没点确认的卡。打开后还是同一张卡，不会重复扣次数。' : '账已经记了，就差这一项。点右侧按钮直接处理，不用打开整张卡。'}}
     </text>
 
     <view class="card">
@@ -29,13 +29,13 @@
         bindlongpress="onDiscardMenu"
       >
         <view class="pend__md">
-          <view class="pend__top">
-            <text class="pend__t">{{item.title}}</text>
-            <text class="tg {{item.expired ? 'tg--waste' : 'tg--owe'}}">{{item.statusText}}</text>
+          <view class="pend__meta">
+            <text class="pend__tag {{item.expired ? 'pend__tag--danger' : 'pend__tag--warn'}}">{{item.statusText}}</text>
+            <text class="pend__kind">{{item.title}}</text>
           </view>
-          <text class="pend__said" wx:if="{{item.said}}">“{{item.said}}”</text>
+          <text class="pend__t" wx:if="{{item.said}}">“{{item.said}}”</text>
         </view>
-        <text
+        <view
           wx:if="{{item.gaps.length > 0}}"
           class="pend__go"
           data-card="{{item.cardId}}"
@@ -43,8 +43,8 @@
           data-label="{{item.gaps[0].label}}"
           data-unit="{{item.gaps[0].unit}}"
           catchtap="onFillStart"
-        >补 {{item.gaps[0].label}} ›</text>
-        <text wx:else class="pend__go">打开 ›</text>
+        >去补齐</view>
+        <view wx:else class="pend__go">去打开</view>
       </view>
 
       <!-- 统一账本待补队列（缺进价 / 负库存 / 缺换算等） -->
@@ -57,12 +57,12 @@
         bindtap="onLedgerGapTap"
       >
         <view class="pend__md">
-          <view class="pend__top">
-            <text class="pend__t">{{item.title}}</text>
-            <text class="tg {{item.kind === 'negative_stock' ? 'tg--waste' : 'tg--owe'}}">{{item.kindLabel}}</text>
+          <view class="pend__meta">
+            <text class="pend__tag {{item.kind === 'negative_stock' ? 'pend__tag--danger' : 'pend__tag--warn'}}">{{item.kindLabel}}</text>
           </view>
+          <text class="pend__t">{{item.title}}</text>
         </view>
-        <text class="pend__go">{{item.actionLabel}}</text>
+        <view class="pend__go">{{item.actionLabel}}</view>
       </view>
     </view>
 
@@ -71,20 +71,17 @@
     </view>
   </view>
 
-  <!-- 补数字：大键盘 -->
-  <view class="kpsheet" wx:if="{{editing}}">
-    <view class="kpsheet__in">
-      <text class="kpsheet__h">补 {{editing.label}}</text>
-      <text class="kpsheet__v">{{keypad || '0'}}<text class="kpsheet__u">{{editing.unit}}</text></text>
-      <view class="kp">
-        <view wx:for="{{['1','2','3','4','5','6','7','8','9','.','0','del']}}" wx:key="*this" class="kp__k" data-key="{{item}}" bindtap="onKey">{{item === 'del' ? '删' : item}}</view>
-      </view>
-      <view class="kp__acts">
-        <button class="kp__c" bindtap="onKeyClose">取消</button>
-        <button class="kp__ok" bindtap="onKeyOk">补上</button>
-      </view>
-    </view>
-  </view>
+  <!-- 统一底部数字键盘 -->
+  <keypad-sheet
+    visible="{{editing !== null}}"
+    title="{{editing ? '补 ' + editing.label : ''}}"
+    value="{{keypad}}"
+    unit="{{editing ? editing.unit : ''}}"
+    confirmText="补上"
+    bind:change="onKeyChange"
+    bind:confirm="onKeyOk"
+    bind:close="onKeyClose"
+  />
 
   <action-sheet
     visible="{{sheet.visible}}"

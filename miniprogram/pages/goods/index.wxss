@@ -100,9 +100,9 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: 8rpx;
+  gap: 6rpx;
   flex-shrink: 0;
-  padding: 10rpx 22rpx;
+  padding: 10rpx 20rpx;
   border-radius: var(--r-pill);
   background: var(--ink);
   color: var(--sf);

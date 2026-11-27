@@ -32,7 +32,6 @@ import {
   type PendingGap,
 } from '../../services/api';
 import { SpeechGate, type SpeechResult } from '../../services/speech';
-import { appendNumericKey } from '../../utils/format';
 import { isWideScreen } from '../../utils/screen';
 import type { SheetActionItem } from '../../components/action-sheet/action-sheet';
 
@@ -519,9 +518,8 @@ Page<CardData, WechatMiniprogram.Page.CustomOption>({
     }
   },
 
-  onGapKey(event: WechatMiniprogram.TouchEvent): void {
-    const key = String(event.currentTarget.dataset['key'] ?? '');
-    this.setData({ gapKeypad: appendNumericKey(this.data.gapKeypad, key, 8) });
+  onGapKeyChange(event: WechatMiniprogram.CustomEvent<{ value: string }>): void {
+    this.setData({ gapKeypad: String(event.detail?.value ?? '') });
   },
 
   onGapKeyOk(): void {

@@ -57,10 +57,13 @@
     <view
       wx:for="{{keys}}"
       wx:key="*this"
-      class="ui-key {{item === '⌫' || item === '×' ? 'ui-key--fn' : ''}}"
+      class="ui-key {{item === 'del' ? 'ui-key--fn' : ''}}"
       data-key="{{item}}"
       bindtap="onKey"
-    >{{item}}</view>
+    >
+      <view wx:if="{{item === 'del'}}" class="ico-backspace"></view>
+      <text wx:else>{{item}}</text>
+    </view>
   </view>
 
   <button class="kb__submit" bindtap="onSubmit">生成确认卡片</button>

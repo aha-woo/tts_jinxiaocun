@@ -154,20 +154,17 @@
     </view>
   </view>
 
-  <!-- 补数字键盘 -->
-  <view class="kpsheet" wx:if="{{editingGap}}">
-    <view class="kpsheet__in">
-      <text class="kpsheet__h">补 {{editingGap.label}}</text>
-      <text class="kpsheet__v">{{gapKeypad || '0'}}<text class="kpsheet__u">{{editingGap.unit}}</text></text>
-      <view class="kp">
-        <view wx:for="{{['1','2','3','4','5','6','7','8','9','.','0','del']}}" wx:key="*this" class="kp__k" data-key="{{item}}" bindtap="onGapKey">{{item === 'del' ? '删' : item}}</view>
-      </view>
-      <view class="kp__acts">
-        <button class="kp__c" bindtap="onGapClose">取消</button>
-        <button class="kp__ok" bindtap="onGapKeyOk">补上</button>
-      </view>
-    </view>
-  </view>
+  <!-- 统一补数字键盘 -->
+  <keypad-sheet
+    visible="{{editingGap !== null}}"
+    title="{{editingGap ? '补 ' + editingGap.label : ''}}"
+    value="{{gapKeypad}}"
+    unit="{{editingGap ? editingGap.unit : ''}}"
+    confirmText="补上"
+    bind:change="onGapKeyChange"
+    bind:confirm="onGapKeyOk"
+    bind:close="onGapClose"
+  />
 
   <action-sheet
     visible="{{sheet.visible}}"

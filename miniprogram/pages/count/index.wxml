@@ -56,27 +56,24 @@
     </view>
   </view>
 
-  <!-- 数字键盘 + 差异原因快选 -->
-  <view class="kpsheet" wx:if="{{editing}}">
-    <view class="kpsheet__in">
-      <text class="kpsheet__h">填实盘数</text>
-      <text class="kpsheet__v">{{keypad || '0'}}</text>
-      <view class="c-reasons">
-        <text
-          wx:for="{{reasons}}"
-          wx:key="*this"
-          class="c-reason {{reason === item ? 'c-reason--on' : ''}}"
-          data-reason="{{item}}"
-          bindtap="onReason"
-        >{{item}}</text>
-      </view>
-      <view class="kp">
-        <view wx:for="{{['1','2','3','4','5','6','7','8','9','.','0','del']}}" wx:key="*this" class="kp__k" data-key="{{item}}" bindtap="onKey">{{item === 'del' ? '删' : item}}</view>
-      </view>
-      <view class="kp__acts">
-        <button class="kp__c" bindtap="onKeyClose">取消</button>
-        <button class="kp__ok" bindtap="onKeyOk">确定</button>
-      </view>
+  <!-- 统一数字键盘 + 差异原因快选 -->
+  <keypad-sheet
+    visible="{{editing !== ''}}"
+    title="填实盘数"
+    value="{{keypad}}"
+    confirmText="确定"
+    bind:change="onKeyChange"
+    bind:confirm="onKeyOk"
+    bind:close="onKeyClose"
+  >
+    <view class="c-reasons">
+      <text
+        wx:for="{{reasons}}"
+        wx:key="*this"
+        class="c-reason {{reason === item ? 'c-reason--on' : ''}}"
+        data-reason="{{item}}"
+        bindtap="onReason"
+      >{{item}}</text>
     </view>
-  </view>
+  </keypad-sheet>
 </view>

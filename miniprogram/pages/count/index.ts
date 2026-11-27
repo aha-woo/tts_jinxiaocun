@@ -15,7 +15,6 @@ import {
 } from '../../services/api';
 import { ensureLogin } from '../../services/auth';
 import { SpeechGate, type SpeechResult } from '../../services/speech';
-import { appendNumericKey } from '../../utils/format';
 import { isWideScreen } from '../../utils/screen';
 
 interface CountDisplayLine extends CountLineRow {
@@ -198,9 +197,8 @@ Page<CountData, WechatMiniprogram.Page.CustomOption>({
     this.setData({ reason });
   },
 
-  onKey(event: WechatMiniprogram.TouchEvent): void {
-    const key = String(event.currentTarget.dataset['key'] ?? '');
-    this.setData({ keypad: appendNumericKey(this.data.keypad, key, 8) });
+  onKeyChange(event: WechatMiniprogram.CustomEvent<{ value: string }>): void {
+    this.setData({ keypad: String(event.detail?.value ?? '') });
   },
 
   async onKeyOk(): Promise<void> {

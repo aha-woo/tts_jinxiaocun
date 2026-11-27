@@ -1,4 +1,6 @@
 {
   "navigationBarTitleText": "盘点",
-  "usingComponents": {}
+  "usingComponents": {
+    "keypad-sheet": "/components/keypad-sheet/keypad-sheet"
+  }
 }
