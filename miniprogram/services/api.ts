@@ -250,7 +250,13 @@ export interface ParsePayload {
   /** route=clarify */
   clarify?: ClarifyPayload | null;
   /** route=answer（R0 只读查询结果） */
-  answer?: { kind: string; items: unknown[]; note?: string } | null;
+  answer?: {
+    kind: string;
+    items?: unknown[];
+    report?: Record<string, unknown>;
+    cost_hidden?: boolean;
+    note?: string;
+  } | null;
   /** route=card / auto_posted / card_updated */
   card?: CardPayload | null;
   auto_posted?: boolean;
@@ -1355,7 +1361,7 @@ export function listTasks(): Promise<{
 export function approveTask(
   taskId: string,
   body: { approve: boolean; second_confirm: boolean; device?: string }
-): Promise<TaskDecisionPayload & { hint_zh: string; idempotency_key: string }> {
+): Promise<{ decision: TaskDecisionPayload; hint_zh: string; idempotency_key: string }> {
   return callApi(`/api/v1/tasks/${taskId}/approve`, {
     method: 'POST',
     data: { device: 'pc_bigscreen', ...body } as unknown as Record<string, unknown>,
@@ -1435,13 +1441,14 @@ export interface DeliveryNoteDraft {
   doc_date: string;
   payment_status: '已结' | '未结' | string;
   stated_total_fen: number | null;
-  computed_total_fen: number;
+  computed_total_fen: number | null;
   total_mismatch: boolean;
-  total_diff_fen: number;
+  total_diff_fen: number | null;
   warnings: string[];
   lines: DeliveryNoteLine[];
   notes: string;
   model: string;
+  cost_hidden?: boolean;
 }
 
 /** 拍进货单识别（调用中国开源视觉模型提取明细，不直接写账）。 */
@@ -1455,6 +1462,7 @@ export function parseDeliveryNote(body: {
     method: 'POST',
     data: body as unknown as Record<string, unknown>,
     idempotencyScope: `dn-parse:${body.object_ref ?? Date.now()}`,
+    timeoutMs: 30000,
   });
 }
 

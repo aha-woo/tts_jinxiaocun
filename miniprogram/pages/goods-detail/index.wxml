@@ -101,17 +101,18 @@
           </view>
         </view>
 
-        <view wx:if="{{aliases.length > 0 || unitConversions.length > 0}}" class="gd-extra">
+        <view class="gd-extra">
           <view wx:if="{{aliases.length > 0}}" class="gd-extra__row">
             <text class="gd-extra__k">语音别名</text>
             <view class="gd-tags">
               <text wx:for="{{aliases}}" wx:key="*this" class="gd-tag">{{item}}</text>
             </view>
           </view>
-          <view wx:if="{{unitConversions.length > 0}}" class="gd-extra__row">
+          <view class="gd-extra__row">
             <text class="gd-extra__k">单位换算</text>
             <view class="gd-tags">
               <text wx:for="{{unitConversions}}" wx:key="*this" class="gd-tag">{{item}}</text>
+              <view class="gd-tag gd-tag--add" bindtap="onAddUnitRatio">+ 设换算</view>
             </view>
           </view>
         </view>

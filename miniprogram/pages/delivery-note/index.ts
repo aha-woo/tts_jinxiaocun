@@ -2,10 +2,13 @@ import {
   confirmDeliveryNote,
   DeliveryNoteDraft,
   DeliveryNoteLine,
+  ensureCloudReady,
   parseDeliveryNote,
 } from '../../services/api';
+import { ensureLogin } from '../../services/auth';
 
 interface EditableLine extends DeliveryNoteLine {
+  quantity_input: string;
   unit_price_yuan: string;
   amount_yuan: string;
   unit_ratio_input: string;
@@ -17,6 +20,7 @@ interface DeliveryNoteData {
   errorText: string;
   previewImagePath: string;
   draft: DeliveryNoteDraft | null;
+  costHidden: boolean;
   supplierName: string;
   docDate: string;
   paymentStatus: '已结' | '未结';
@@ -52,6 +56,7 @@ Page<DeliveryNoteData, WechatMiniprogram.Page.CustomOption>({
     errorText: '',
     previewImagePath: '',
     draft: null,
+    costHidden: false,
     supplierName: '',
     docDate: '',
     paymentStatus: '已结',
@@ -83,34 +88,62 @@ Page<DeliveryNoteData, WechatMiniprogram.Page.CustomOption>({
   },
 
   async compressAndParse(rawPath: string): Promise<void> {
-    try {
-      const compressedPath = await new Promise<string>((resolve) => {
+    const compressTo = (src: string, quality: number) =>
+      new Promise<string>((resolve) => {
         wx.compressImage({
-          src: rawPath,
-          quality: 50,
-          success: (r) => resolve(r.tempFilePath || rawPath),
-          fail: () => resolve(rawPath),
+          src,
+          quality,
+          success: (r) => resolve(r.tempFilePath || src),
+          fail: () => resolve(src),
         });
       });
-      const base64 = await new Promise<string>((resolve, reject) => {
+    const readBase64 = (filePath: string) =>
+      new Promise<string>((resolve, reject) => {
         wx.getFileSystemManager().readFile({
-          filePath: compressedPath,
+          filePath,
           encoding: 'base64',
           success: (r) => resolve(String(r.data ?? '')),
           fail: (e) => reject(new Error(e.errMsg || '读取照片失败')),
         });
       });
 
-      let payload: { image_base64?: string; object_ref?: string };
-      if (base64.length <= 75000) {
+    try {
+      await ensureLogin();
+      const compressedPath = await compressTo(rawPath, 50);
+      const base64 = await readBase64(compressedPath);
+
+      let payload: { image_base64?: string; image_url?: string; object_ref?: string } | null = null;
+      if (base64.length <= 85000) {
         payload = { image_base64: base64, object_ref: `local://${Date.now()}.jpg` };
       } else if (typeof wx.cloud?.uploadFile === 'function') {
+        await ensureCloudReady();
         const uploaded = await wx.cloud.uploadFile({
-          cloudPath: `delivery_notes/${Date.now()}.jpg`,
+          cloudPath: `delivery_notes/${Date.now()}-${Math.random().toString(36).slice(2, 6)}.jpg`,
           filePath: compressedPath,
         });
-        payload = { object_ref: uploaded.fileID };
+        let tempUrl = '';
+        if (typeof wx.cloud?.getTempFileURL === 'function') {
+          const urlRes = await wx.cloud.getTempFileURL({ fileList: [uploaded.fileID] });
+          tempUrl = String(urlRes.fileList?.[0]?.tempFileURL ?? '');
+        }
+        if (tempUrl !== '') {
+          payload = { image_url: tempUrl, object_ref: uploaded.fileID };
+        } else {
+          const smallerPath = await compressTo(compressedPath, 25);
+          const smallerBase64 = await readBase64(smallerPath);
+          if (smallerBase64.length <= 90000) {
+            payload = { image_base64: smallerBase64, object_ref: uploaded.fileID };
+          }
+        }
       } else {
+        const smallerPath = await compressTo(compressedPath, 25);
+        const smallerBase64 = await readBase64(smallerPath);
+        if (smallerBase64.length <= 90000) {
+          payload = { image_base64: smallerBase64, object_ref: `local://${Date.now()}.jpg` };
+        }
+      }
+
+      if (payload === null) {
         this.setData({
           loading: false,
           errorText: '这张进货单照片稍微大了点，请离远半步重拍一张（更省流量、识别更快）',
@@ -132,12 +165,14 @@ Page<DeliveryNoteData, WechatMiniprogram.Page.CustomOption>({
   applyDraft(draft: DeliveryNoteDraft): void {
     const lines: EditableLine[] = (draft.lines ?? []).map((line) => ({
       ...line,
+      quantity_input: String(line.quantity ?? ''),
       unit_price_yuan: fenToYuanText(line.unit_price_fen),
       amount_yuan: fenToYuanText(line.amount_fen),
       unit_ratio_input: line.unit_ratio ?? '',
     }));
     this.setData({
       draft,
+      costHidden: Boolean(draft.cost_hidden),
       supplierName: draft.supplier_name ?? '',
       docDate: draft.doc_date ?? '',
       paymentStatus: draft.payment_status === '未结' ? '未结' : '已结',
@@ -187,10 +222,17 @@ Page<DeliveryNoteData, WechatMiniprogram.Page.CustomOption>({
     const updated: EditableLine = { ...row };
     if (field === 'product_name') {
       updated.product_name = value;
+      const origMatched = String(updated.matched_product_name ?? '').trim();
+      if (updated.matched_product_id && value.trim() !== origMatched) {
+        updated.matched_product_id = null;
+        updated.is_new_product = true;
+        updated.needs_unit_ratio = false;
+      }
     } else if (field === 'unit') {
       updated.unit = value;
     } else if (field === 'quantity') {
-      const q = Number(value);
+      updated.quantity_input = value;
+      const q = Number(value.trim());
       updated.quantity = Number.isFinite(q) && q > 0 ? q : 0;
       const upFen = yuanTextToFen(updated.unit_price_yuan);
       if (upFen !== null && updated.quantity > 0) {
@@ -218,6 +260,7 @@ Page<DeliveryNoteData, WechatMiniprogram.Page.CustomOption>({
         product_name: '',
         unit: '箱',
         quantity: 1,
+        quantity_input: '1',
         unit_price_fen: null,
         amount_fen: null,
         unit_price_yuan: '',
@@ -256,12 +299,13 @@ Page<DeliveryNoteData, WechatMiniprogram.Page.CustomOption>({
         unit_ratio: row.unit_ratio_input.trim() || null,
       }));
     if (payloadLines.length === 0) {
-      this.setData({ errorText: '请至少保留一行有效商品和数量' });
+      this.setData({ errorText: '请至少保留一行有效商品和大于 0 的数量' });
       return;
     }
 
     this.setData({ submitting: true, errorText: '' });
     try {
+      await ensureLogin();
       const res = await confirmDeliveryNote(this.data.draft.attachment_id, {
         supplier_name: this.data.supplierName.trim() || null,
         doc_date: this.data.docDate.trim() || null,

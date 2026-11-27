@@ -30,7 +30,7 @@
       >
         <view class="pend__md">
           <view class="pend__meta">
-            <text class="pend__tag {{item.expired ? 'pend__tag--danger' : 'pend__tag--warn'}}">{{item.statusText}}</text>
+            <view class="pend__tag {{item.expired ? 'pend__tag--danger' : 'pend__tag--warn'}}">{{item.statusText}}</view>
             <text class="pend__kind">{{item.title}}</text>
           </view>
           <text class="pend__t" wx:if="{{item.said}}">“{{item.said}}”</text>
@@ -58,7 +58,7 @@
       >
         <view class="pend__md">
           <view class="pend__meta">
-            <text class="pend__tag {{item.kind === 'negative_stock' ? 'pend__tag--danger' : 'pend__tag--warn'}}">{{item.kindLabel}}</text>
+            <view class="pend__tag {{item.kind === 'negative_stock' ? 'pend__tag--danger' : 'pend__tag--warn'}}">{{item.kindLabel}}</view>
           </view>
           <text class="pend__t">{{item.title}}</text>
         </view>

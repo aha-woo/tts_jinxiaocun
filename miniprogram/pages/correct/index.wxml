@@ -3,6 +3,10 @@
   <view class="page__gap">
     <view wx:if="{{loading}}" class="empty">读取这张单…</view>
 
+    <view wx:if="{{errorText}}" class="bar" style="background:var(--dgrb);border-color:#e0b9b0;color:var(--dgr)">
+      <text>{{errorText}}</text>
+    </view>
+
     <block wx:if="{{doc}}">
       <view class="card pad">
         <view class="head">
@@ -10,49 +14,60 @@
           <text class="no">{{doc.doc_no}}</text>
         </view>
         <text class="date">{{doc.biz_date}} · {{paymentLabel}} · {{statusLabel}}</text>
-        <text class="total serif-num">合计 {{doc.total_amount_display}}</text>
+        <text class="total serif-num">合计 {{totalDisplay}}</text>
       </view>
 
-      <view class="card pad">
+      <view wx:if="{{isReversed}}" class="bar" style="background:var(--dgrb);border-color:#e0b9b0;color:var(--dgr)">
+        <text>这张单已撤销，仅保留存档查看，不能再重复更正或撤销。</text>
+      </view>
+
+      <view wx:if="{{hasLines}}" class="card pad">
         <text class="c-title">改前 → 改后</text>
         <view wx:for="{{lines}}" wx:key="productId" class="line">
           <view class="line__before">
-            <text class="muted">{{item.productName}} · 原：{{item.beforeQty}} {{item.unit}} × ¥{{item.beforePrice || '待补'}}</text>
+            <text class="muted">{{item.productName}} · 原：{{item.beforeQty}} {{item.unit}}{{hidePrice ? '' : ' × ¥' + (item.beforePrice || '待补')}}</text>
           </view>
           <view class="line__edit">
             <input
               class="in"
               type="digit"
               value="{{item.qty}}"
+              disabled="{{isReversed}}"
               data-index="{{index}}"
               data-field="qty"
               bindinput="onLineInput"
             />
-            <text class="unit">{{item.unit}} × ¥</text>
-            <input
-              class="in"
-              type="digit"
-              placeholder="待补"
-              value="{{item.price}}"
-              data-index="{{index}}"
-              data-field="price"
-              bindinput="onLineInput"
-            />
+            <text class="unit">{{item.unit}} ×</text>
+            <text wx:if="{{hidePrice}}" class="unit">仅老板可见（保持原进价）</text>
+            <block wx:else>
+              <text class="unit">¥</text>
+              <input
+                class="in"
+                type="digit"
+                placeholder="待补"
+                value="{{item.price}}"
+                disabled="{{isReversed}}"
+                data-index="{{index}}"
+                data-field="price"
+                bindinput="onLineInput"
+              />
+            </block>
           </view>
         </view>
-        <text class="hint">修改每行数量和单价，总金额和库存差额自动重算。</text>
+        <text class="hint">{{hidePrice ? '修改每行数量后，原进价将自动保留，库存同步重算。' : '修改每行数量和单价，总金额和库存差额自动重算。'}}</text>
+      </view>
+
+      <view wx:else class="card pad">
+        <text class="c-title">无商品明细单据</text>
+        <text class="hint">这是一笔收付款核销单据，不支持直接修改行明细；如需回退，请点下方「只撤销，不重记」。</text>
       </view>
 
       <view wx:if="{{note}}" class="bar">
         <text>{{note}}</text>
       </view>
 
-      <button class="cta" bindtap="onSubmitCorrect" loading="{{submitting}}">确认更正 · 一步完成</button>
-      <button class="sub" bindtap="onReverseOnly" disabled="{{submitting}}">只撤销，不重记</button>
-
-      <view wx:if="{{errorText}}" class="bar" style="background:var(--dgrb);border-color:#e0b9b0;color:var(--dgr)">
-        <text>{{errorText}}</text>
-      </view>
+      <button wx:if="{{hasLines && !isReversed}}" class="cta" bindtap="onSubmitCorrect" loading="{{submitting}}">确认更正 · 一步完成</button>
+      <button wx:if="{{!isReversed}}" class="sub" bindtap="onReverseOnly" disabled="{{submitting}}">只撤销，不重记</button>
     </block>
   </view>
 </view>

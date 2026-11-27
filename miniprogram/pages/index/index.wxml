@@ -62,7 +62,7 @@
         </view>
         <view class="stats__i">
           <text class="stats__k">进货</text>
-          <text class="stats__v">¥{{stats.buy}}</text>
+          <text class="stats__v">{{stats.buyDisplay}}</text>
         </view>
         <view class="stats__i">
           <text class="stats__k">赊出去</text>
@@ -71,12 +71,12 @@
       </view>
 
       <!-- 降级提醒（只在非 L0 出现） -->
-      <view wx:if="{{degrade.level !== 'L0'}}" class="bar" bindtap="onOpenSelfCheck">
+      <view wx:if="{{degrade.level !== 'L0'}}" class="bar" bindtap="onGoPay">
         <view class="bar__lead">
           <view class="ico ico--sm ico--warn-wn"></view>
           <text>{{degrade.title}} · {{degrade.hint}}</text>
         </view>
-        <text class="bar__more">看详情</text>
+        <text class="bar__more">去查看</text>
       </view>
 
       <!-- 待补提醒：越早补，毛利越准 -->
@@ -151,7 +151,7 @@
             <text class="fi__md small" wx:if="{{item.meta}}">{{item.meta}}</text>
           </view>
           <view class="fi__rt">
-            <text class="{{item.reversed ? 'fi__strike' : ''}}" wx:if="{{item.amount}}">¥{{item.amount}}</text>
+            <text class="{{item.reversed ? 'fi__strike' : ''}}" wx:if="{{item.amountDisplay}}">{{item.amountDisplay}}</text>
           </view>
         </view>
       </view>

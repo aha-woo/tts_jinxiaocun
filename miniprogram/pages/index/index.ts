@@ -16,6 +16,7 @@ import {
   health,
   listDocs,
   listPending,
+  listUnifiedGaps,
   login,
   parseSession,
   queryReport,
@@ -130,7 +131,7 @@ interface IndexData {
   periods: { key: string; label: string }[];
   period: string;
   periodLabel: string;
-  stats: { sell: string; buy: string; owe: string };
+  stats: { sell: string; buy: string; buyDisplay: string; owe: string };
   pendingCount: number;
   fillCount: number;
   flow: {
@@ -142,6 +143,7 @@ interface IndexData {
     title: string;
     meta: string;
     amount: string;
+    amountDisplay: string;
     reversed?: boolean;
   }[];
   talkingMsText: string;
@@ -188,7 +190,7 @@ Page<IndexData, WechatMiniprogram.Page.CustomOption>({
     ],
     period: 'today',
     periodLabel: '今日',
-    stats: { sell: '0', buy: '0', owe: '0' },
+    stats: { sell: '0', buy: '0', buyDisplay: '¥0', owe: '0' },
     pendingCount: 0,
     fillCount: 0,
     flow: [],
@@ -363,9 +365,13 @@ Page<IndexData, WechatMiniprogram.Page.CustomOption>({
         }
 
         const reversed = doc.status === 'reversed';
-        const amountYuan = (Number(doc.total_amount_fen || 0) / 100)
-          .toFixed(2)
-          .replace(/\.00$/, '');
+        const hideAmt =
+          doc.cost_hidden === true ||
+          doc.total_amount_fen === null ||
+          doc.total_amount_fen === undefined;
+        const amountYuan = hideAmt
+          ? ''
+          : (Number(doc.total_amount_fen) / 100).toFixed(2).replace(/\.00$/, '');
         const partnerPart = doc.partner_name ? `${doc.partner_name} · ` : '';
         return {
           id: doc.doc_id,
@@ -376,6 +382,7 @@ Page<IndexData, WechatMiniprogram.Page.CustomOption>({
           title: doc.summary || doc.doc_no,
           meta: `${partnerPart}${doc.payment_status}${reversed ? ' · 已撤' : ''}`,
           amount: amountYuan,
+          amountDisplay: hideAmt ? '—' : amountYuan !== '' ? `¥${amountYuan}` : '',
           reversed,
         };
       });
@@ -402,10 +409,16 @@ Page<IndexData, WechatMiniprogram.Page.CustomOption>({
         const value = fen / 100;
         return Number.isInteger(value) ? String(value) : value.toFixed(2);
       };
+      const hidePurchase =
+        report.cost_hidden === true ||
+        report.purchase_fen === null ||
+        report.purchase_fen === undefined;
+      const buyVal = hidePurchase ? '--' : yuan('purchase_fen');
       this.setData({
         stats: {
           sell: yuan('sales_fen'),
-          buy: report.cost_hidden === true || report.purchase_fen === null ? '--' : yuan('purchase_fen'),
+          buy: buyVal,
+          buyDisplay: hidePurchase ? '仅老板可见' : `¥${buyVal}`,
           owe: yuan('receivable_open_fen'),
         },
       });
@@ -417,13 +430,18 @@ Page<IndexData, WechatMiniprogram.Page.CustomOption>({
     }
   },
 
-  /** 待处理角标：没确认的卡有几张。 */
+  /** 待处理角标：待确认卡片 + 统一待补事项。 */
   async refreshPending(): Promise<void> {
     try {
-      const payload = await listPending();
+      const [payload, unified] = await Promise.all([
+        listPending(),
+        listUnifiedGaps().catch(() => ({ items: [], readonly: true })),
+      ]);
+      const cardGapsCount = payload.items.filter((row) => (row.gaps ?? []).length > 0).length;
+      const unifiedCount = (unified.items ?? []).length;
       this.setData({
-        pendingCount: payload.items.length,
-        fillCount: payload.items.filter((row) => (row.gaps ?? []).length > 0).length,
+        pendingCount: payload.items.length + unifiedCount,
+        fillCount: cardGapsCount + unifiedCount,
       });
     } catch (error) {
       console.warn('[index] 取待处理失败', error);
@@ -466,6 +484,7 @@ Page<IndexData, WechatMiniprogram.Page.CustomOption>({
         title: item.text,
         meta: item.ok ? '已记' : '待确认',
         amount: '',
+        amountDisplay: '',
       };
     });
   },
@@ -721,9 +740,8 @@ Page<IndexData, WechatMiniprogram.Page.CustomOption>({
       return;
     }
     if (parsed.route === 'answer') {
-      const items = parsed.answer?.items ?? [];
-      const first = items.length > 0 ? JSON.stringify(items[0]) : '没有查到';
-      wx.showModal({ title: '查询结果', content: first.slice(0, 300), showCancel: false });
+      const content = this.formatVoiceAnswer(parsed.answer);
+      wx.showModal({ title: '查询结果', content, showCancel: false });
       return;
     }
     if (parsed.route === 'pending_task') {
@@ -735,10 +753,81 @@ Page<IndexData, WechatMiniprogram.Page.CustomOption>({
       return;
     }
     if (parsed.error_code !== undefined && parsed.error_code !== '') {
-      this.setData({ errorText: `没处理成功（${parsed.error_code}）` });
+      this.setData({ errorText: '没听清或暂无法处理，换个说法或点「手动点选」' });
       return;
     }
-    this.setData({ errorText: '没听出要记什么，换个说法或点「手动记账」' });
+    this.setData({ errorText: '没听出要记什么，换个说法或点「手动点选」' });
+  },
+
+  formatVoiceAnswer(answer: ParsePayload['answer']): string {
+    if (!answer) {
+      return '没有查到相关记录';
+    }
+    const kind = String(answer.kind ?? '');
+    const items = (answer.items ?? []) as Record<string, unknown>[];
+    if (kind === 'stock' || kind === 'stock_low') {
+      if (items.length === 0) {
+        return kind === 'stock_low' ? '目前没有低库存商品' : '店里还没有查到对应商品';
+      }
+      return items
+        .slice(0, 6)
+        .map((it) => {
+          const name = String(it['product_name'] ?? '商品');
+          const qty = String(it['qty_display'] ?? `${it['qty_base'] ?? '0'}${it['base_unit'] ?? ''}`);
+          const hidden = Boolean(it['cost_hidden']) || it['last_purchase_price_fen'] === null;
+          const price = hidden ? '' : `（进价 ¥${(Number(it['last_purchase_price_fen']) / 100).toFixed(2).replace(/\.00$/, '')}）`;
+          return `${name}：${qty}${price}`;
+        })
+        .join('\n');
+    }
+    if (kind === 'docs') {
+      if (items.length === 0) {
+        return '最近还没有单据记录';
+      }
+      return items
+        .slice(0, 6)
+        .map((it) => {
+          const summary = String(it['summary'] ?? it['doc_no'] ?? '单据');
+          const amt = it['total_amount_fen'] === null || it['cost_hidden'] === true
+            ? '金额已隐藏'
+            : `¥${(Number(it['total_amount_fen'] ?? 0) / 100).toFixed(2).replace(/\.00$/, '')}`;
+          return `${String(it['biz_date'] ?? '').slice(5)} ${summary} · ${amt}`;
+        })
+        .join('\n');
+    }
+    if (kind === 'debt') {
+      if (items.length === 0) {
+        return '目前没有未结往来账款';
+      }
+      return items
+        .slice(0, 6)
+        .map((it) => {
+          const dir = it['direction'] === 'payable' ? '应付' : '应收';
+          return `${String(it['partner_name'] ?? '往来单位')}（${dir}）：${String(it['outstanding_display'] ?? '')}`;
+        })
+        .join('\n');
+    }
+    if (kind === 'report') {
+      const r = (answer.report ?? {}) as Record<string, unknown>;
+      const sales = String(r['sales_display'] ?? '¥0.00');
+      const buy = r['cost_hidden'] === true || r['purchase_display'] === null
+        ? '仅老板可见'
+        : String(r['purchase_display'] ?? '¥0.00');
+      const profit = r['cost_hidden'] === true || r['gross_profit_display'] === null
+        ? '—'
+        : String(r['gross_profit_display'] ?? '¥0.00');
+      return `今日销售：${sales}\n今日进货：${buy}\n毛利：${profit}\n单据数：${Number(r['doc_count'] ?? 0)} 笔`;
+    }
+    if (kind === 'report_top') {
+      if (items.length === 0) {
+        return '近期暂无热销排行';
+      }
+      return items
+        .slice(0, 5)
+        .map((it, idx) => `${idx + 1}. ${String(it['product_name'] ?? '')} · ${String(it['qty_base'] ?? '0')} · ${String(it['amount_display'] ?? '')}`)
+        .join('\n');
+    }
+    return String(answer.note ?? '没有查到相关记录');
   },
 
   onGoManual(): void {
@@ -847,7 +936,7 @@ Page<IndexData, WechatMiniprogram.Page.CustomOption>({
   },
 
   onOpenSelfCheck(): void {
-    this.setData({ selfCheckOpen: !this.data.selfCheckOpen });
+    wx.navigateTo({ url: '/pages/pay/index' });
   },
 
   /** 轻点：开始 / 结束。 */

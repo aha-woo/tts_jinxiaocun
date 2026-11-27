@@ -29,10 +29,22 @@ interface CorrectData {
   dirLabel: string;
   paymentLabel: string;
   statusLabel: string;
+  hidePrice: boolean;
+  isReversed: boolean;
+  hasLines: boolean;
+  totalDisplay: string;
   lines: EditLine[];
   submitting: boolean;
   errorText: string;
   note: string;
+}
+
+function trimDecimal(raw: string | number | null | undefined): string {
+  const s = String(raw ?? '').trim();
+  if (!s.includes('.')) {
+    return s;
+  }
+  return s.replace(/0+$/, '').replace(/\.$/, '') || '0';
 }
 
 const PAYMENT_LABELS: Record<string, string> = {
@@ -66,6 +78,10 @@ Page<CorrectData, WechatMiniprogram.Page.CustomOption>({
     dirLabel: '',
     paymentLabel: '',
     statusLabel: '',
+    hidePrice: false,
+    isReversed: false,
+    hasLines: false,
+    totalDisplay: '',
     lines: [],
     submitting: false,
     errorText: '',
@@ -89,24 +105,32 @@ Page<CorrectData, WechatMiniprogram.Page.CustomOption>({
       const detail = await getDocDetail(this.data.docId);
       const doc = detail.doc;
       const isSales = doc.intent_id.startsWith('sales');
+      const isPurchase = doc.doc_type === 'purchase' || doc.doc_type === 'purchase_return' || doc.intent_id.startsWith('purchase');
+      const hidePrice = Boolean(detail.cost_hidden || doc.cost_hidden) && isPurchase;
+      const isReversed = doc.status === 'reversed';
+      const lines = detail.lines.map((line: DocLineDetail) => ({
+        productId: line.product_id,
+        productName: line.product_name || '货品',
+        qty: trimDecimal(line.qty),
+        unit: line.unit,
+        price: hidePrice ? '' : fenToYuan(line.unit_price_fen),
+        beforeQty: trimDecimal(line.qty),
+        beforePrice: hidePrice ? '仅老板可见' : fenToYuan(line.unit_price_fen),
+      }));
       this.setData({
         doc,
-        dirLabel: isSales ? '卖货' : doc.intent_id.startsWith('purchase') ? '进货' : '单据',
+        dirLabel: isSales ? '卖货' : isPurchase ? '进货' : '单据',
         paymentLabel: PAYMENT_LABELS[doc.payment_status] ?? doc.payment_status,
         statusLabel: STATUS_LABELS[doc.status] ?? doc.status,
-        lines: detail.lines.map((line: DocLineDetail) => ({
-          productId: line.product_id,
-          productName: line.product_name || '货品',
-          qty: line.qty,
-          unit: line.unit,
-          price: fenToYuan(line.unit_price_fen),
-          beforeQty: line.qty,
-          beforePrice: fenToYuan(line.unit_price_fen),
-        })),
+        hidePrice,
+        isReversed,
+        hasLines: lines.length > 0,
+        totalDisplay: hidePrice ? '仅老板可见' : doc.total_amount_display,
+        lines,
         loading: false,
       });
     } catch (error) {
-      const message = error instanceof ApiError ? `${error.message}（${error.errorCode}）` : String(error);
+      const message = error instanceof ApiError ? error.message : String(error);
       this.setData({ loading: false, errorText: message });
     }
   },
@@ -123,6 +147,10 @@ Page<CorrectData, WechatMiniprogram.Page.CustomOption>({
   /** 一步原子改单：校验输入 → 确认弹窗 → POST /docs/{id}/correct。 */
   async onSubmitCorrect(): Promise<void> {
     const doc = this.data.doc;
+    if (this.data.isReversed) {
+      this.setData({ errorText: '这张单已经撤销过了，不能重复更正' });
+      return;
+    }
     if (doc === null || this.data.lines.length === 0) {
       this.setData({ errorText: '这张单没有明细，不能改' });
       return;
@@ -138,6 +166,15 @@ Page<CorrectData, WechatMiniprogram.Page.CustomOption>({
       if (!Number.isFinite(qtyNum) || qtyNum <= 0) {
         this.setData({ errorText: `${line.productName} 的数量必须大于 0` });
         return;
+      }
+      if (this.data.hidePrice) {
+        // 店员无权看/改采购进价：省略 unit_price_fen 让后端保留原单进价，避免误覆写为 null
+        payloadLines.push({
+          product_id: line.productId,
+          qty: qtyNum,
+          unit: line.unit,
+        });
+        continue;
       }
       const priceTrimmed = line.price.trim();
       let priceFen: number | null | undefined;
@@ -180,7 +217,7 @@ Page<CorrectData, WechatMiniprogram.Page.CustomOption>({
       wx.showToast({ title: `已更正为 ${resp.result.new_doc_no}`, icon: 'none' });
       setTimeout(() => wx.navigateBack(), 900);
     } catch (error) {
-      const message = error instanceof ApiError ? `${error.message}（${error.errorCode}）` : String(error);
+      const message = error instanceof ApiError ? error.message : String(error);
       this.setData({ errorText: message });
     } finally {
       this.setData({ submitting: false });
@@ -189,6 +226,10 @@ Page<CorrectData, WechatMiniprogram.Page.CustomOption>({
 
   /** 只撤销，不重记。 */
   async onReverseOnly(): Promise<void> {
+    if (this.data.isReversed) {
+      this.setData({ errorText: '这张单已经撤销过了' });
+      return;
+    }
     const confirmed = await new Promise<boolean>((resolve) => {
       wx.showModal({
         title: '确认只撤销不重记？',
@@ -207,7 +248,7 @@ Page<CorrectData, WechatMiniprogram.Page.CustomOption>({
       wx.showToast({ title: '已撤销（原单保留）', icon: 'none' });
       setTimeout(() => wx.navigateBack(), 800);
     } catch (error) {
-      const message = error instanceof ApiError ? `${error.message}（${error.errorCode}）` : String(error);
+      const message = error instanceof ApiError ? error.message : String(error);
       this.setData({ errorText: message });
     } finally {
       this.setData({ submitting: false });

@@ -49,7 +49,8 @@
         </view>
         <view class="dn-field">
           <text class="dn-lbl">合计对比</text>
-          <text class="dn-sum">单面 ¥{{statedTotalYuan || '--'}} / 逐行计算 ¥{{computedTotalYuan}}</text>
+          <text wx:if="{{costHidden && computedTotalYuan === '0'}}" class="dn-sum">进价按权限隐藏（请按纸面原单核填单价后入库）</text>
+          <text wx:else class="dn-sum">单面 ¥{{statedTotalYuan || '--'}} / 逐行计算 ¥{{computedTotalYuan}}</text>
         </view>
       </view>
 
@@ -71,7 +72,7 @@
           <view class="dn-line__nums">
             <view class="dn-num">
               <text class="dn-num__k">数量</text>
-              <input class="dn-num__v" type="digit" value="{{item.quantity}}" data-index="{{index}}" data-field="quantity" bindinput="onLineInput" />
+              <input class="dn-num__v" type="digit" value="{{item.quantity_input}}" data-index="{{index}}" data-field="quantity" bindinput="onLineInput" />
             </view>
             <view class="dn-num">
               <text class="dn-num__k">单位</text>

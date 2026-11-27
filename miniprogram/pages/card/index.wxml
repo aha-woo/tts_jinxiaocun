@@ -57,7 +57,7 @@
           </view>
         </view>
         <view class="rows">
-          <view class="r" wx:for="{{card.calc.lines}}" wx:key="product_label" bindtap="onLineTap">
+          <view class="r" wx:for="{{card.calc.lines}}" wx:key="index" data-index="{{index}}" bindtap="onLineTap">
             <text class="r__k">{{item.product_label}}</text>
             <text class="r__v">{{item.quantity}}{{item.unit}} · {{item.amount_display}} <text class="r__edit">改</text></text>
           </view>

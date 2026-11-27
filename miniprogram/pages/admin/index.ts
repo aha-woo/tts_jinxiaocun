@@ -23,10 +23,10 @@ import {
   approveTask,
   createExport,
   entitlement,
+  getMe,
   listDict,
   listExports,
   listTasks,
-  login,
   queryDocs,
   queryReport,
   queryStock,
@@ -34,6 +34,7 @@ import {
   type EntitlementPayload,
   type UsagePayload,
 } from '../../services/api';
+import { ensureLogin } from '../../services/auth';
 import { deliverExport, supportedModes } from '../../services/wx-file-forward';
 
 type PanelKey =
@@ -319,18 +320,12 @@ Page<AdminData, WechatMiniprogram.Page.CustomOption>({
   async bootstrap(): Promise<void> {
     this.setData({ loading: true, errorText: '' });
     try {
-      const result = await new Promise<{ code: string }>((resolve, reject) => {
-        wx.login({
-          success: (res: { code: string }) => resolve(res),
-          fail: (error: { errMsg?: string }) => reject(new Error(error.errMsg ?? '登录失败')),
-        });
-      });
-      const session = await login(result.code);
-      // 服务端真实字段是 `role`（见 app/api/v1/auth.py），不是 `role_code`
+      await ensureLogin();
+      const me = await getMe();
       this.setData({
-        isBoss: session.role === 'boss',
-        roleCode: session.role,
-        roleLabel: roleLabelOf(session.role),
+        isBoss: me.role === 'boss',
+        roleCode: me.role,
+        roleLabel: roleLabelOf(me.role),
       });
     } catch (error) {
       this.setData({ errorText: `登录未完成：${this.messageOf(error)}` });
@@ -344,12 +339,12 @@ Page<AdminData, WechatMiniprogram.Page.CustomOption>({
   },
 
   /** 按面板取数（每个面板只调它自己的接口，不预取一堆没用的）。 */
-  async loadPanel(key: PanelKey): Promise<void> {
+  async loadPanel(key: PanelKey, preserveMessage = false): Promise<void> {
     this.setData({
       active: key,
       loading: true,
       errorText: '',
-      message: '',
+      ...(preserveMessage ? {} : { message: '' }),
       rows: [],
       stockRows: [],
       docRows: [],
@@ -497,7 +492,7 @@ Page<AdminData, WechatMiniprogram.Page.CustomOption>({
       // 真实结构是 `{export: {job_id, ...}}`（见 app/api/v1/exports.py）
       const delivered = await deliverExport(payload.export.job_id, mode);
       this.setData({ message: delivered.message });
-      await this.loadPanel('export');
+      await this.loadPanel('export', true);
     } catch (error) {
       this.setData({ errorText: this.messageOf(error) });
     }
@@ -534,12 +529,18 @@ Page<AdminData, WechatMiniprogram.Page.CustomOption>({
         second_confirm: true,
         device: 'pc_bigscreen',
       });
+      const dec = result.decision;
+      const statusText =
+        dec?.status === 'approved'
+          ? '已执行'
+          : dec?.status === 'rejected'
+            ? '已驳回'
+            : String(dec?.status ?? '已处理');
+      const detailText = dec?.detail ? `：${dec.detail}` : '';
       this.setData({
-        message: `${action === 'approve' ? '已执行' : '已驳回'}（${result.status}）${
-          result.executed ? '' : `：${result.detail}`
-        }`,
+        message: `${statusText}${detailText}`,
       });
-      await this.loadPanel('tasks');
+      await this.loadPanel('tasks', true);
     } catch (error) {
       this.setData({ errorText: this.messageOf(error) });
     }
@@ -547,7 +548,7 @@ Page<AdminData, WechatMiniprogram.Page.CustomOption>({
 
   messageOf(error: unknown): string {
     if (error instanceof ApiError) {
-      return `${error.message}${error.errorCode ? `（${error.errorCode}）` : ''}`;
+      return error.message;
     }
     return error instanceof Error ? error.message : String(error);
   },

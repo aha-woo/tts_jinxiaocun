@@ -107,15 +107,22 @@ Page<ManualData, WechatMiniprogram.Page.CustomOption>({
 
   onLoad(query: Record<string, string | undefined>) {
     const direction = query['direction'] === 'out' ? 'out' : 'in';
+    const product = decodeURIComponent(String(query['product'] ?? '')).trim();
     const quantity = String(query['qty'] ?? '');
     const price = String(query['price'] ?? '');
     this.setData({
       direction,
+      product,
+      customProduct: product,
       quantity,
       price,
-      preview: composeUtterance({ direction, product: '', quantity, unit: '件', price }),
+      preview: composeUtterance({ direction, product, quantity, unit: '件', price }),
     });
-    void this.loadCatalog();
+    void this.loadCatalog().then(() => {
+      if (this.data.product !== '') {
+        this.selectProductName(this.data.product);
+      }
+    });
   },
 
   async loadCatalog(): Promise<void> {

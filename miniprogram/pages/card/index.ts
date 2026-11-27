@@ -32,6 +32,7 @@ import {
   type PendingGap,
 } from '../../services/api';
 import { SpeechGate, type SpeechResult } from '../../services/speech';
+import { ensureLogin } from '../../services/auth';
 import { isWideScreen } from '../../utils/screen';
 import type { SheetActionItem } from '../../components/action-sheet/action-sheet';
 
@@ -239,7 +240,7 @@ Page<CardData, WechatMiniprogram.Page.CustomOption>({
   },
 
   fieldSpeechGate: null as SpeechGate | null,
-  sheetCtx: null as { mode: 'line' } | { mode: 'ps' } | null,
+  sheetCtx: null as { mode: 'line'; lineIndex: number } | { mode: 'ps' } | null,
 
   onLoad(query: Record<string, string | undefined>) {
     const cardId = String(query['cardId'] ?? '');
@@ -287,6 +288,7 @@ Page<CardData, WechatMiniprogram.Page.CustomOption>({
   async loadCard(cardId: string): Promise<void> {
     this.setData({ loading: true, errorText: '' });
     try {
+      await ensureLogin();
       const card = await getCard(cardId);
       const direction = directionOfIntent(card.intent.intent_id);
       const totalFen = card.calc.lines.reduce((sum, line) => {
@@ -396,7 +398,34 @@ Page<CardData, WechatMiniprogram.Page.CustomOption>({
   },
 
   openGapEditor(gap: PendingGap): void {
-    if (gap.code === 'S' || gap.code === 'C' || gap.code === 'P' || gap.code === 'U') {
+    if (gap.code === 'D') {
+      wx.showModal({
+        title: '修改单据日期',
+        editable: true,
+        placeholderText: '格式 YYYY-MM-DD，如 2026-11-27',
+        content: gap.current,
+        success: (res) => {
+          if (!res.confirm) {
+            return;
+          }
+          const text = String(res.content ?? '').trim();
+          if (!/^\d{4}-\d{2}-\d{2}$/.test(text)) {
+            wx.showToast({ title: '日期格式需为 YYYY-MM-DD', icon: 'none' });
+            return;
+          }
+          void this.submitGap('D', text);
+        },
+      });
+      return;
+    }
+    if (
+      gap.code === 'S' ||
+      gap.code === 'C' ||
+      gap.code === 'P' ||
+      gap.code === 'U' ||
+      gap.code === 'W' ||
+      gap.code === 'N'
+    ) {
       const isUnit = gap.code === 'U';
       wx.showModal({
         title: isUnit ? '填写商品基本单位' : `修改${gap.label}`,
@@ -415,13 +444,16 @@ Page<CardData, WechatMiniprogram.Page.CustomOption>({
   },
 
   /** 点击明细行：支持直接改数量 / 单价 / 总价 / 商品名（不重调 AI）。 */
-  onLineTap(): void {
+  onLineTap(event?: WechatMiniprogram.TouchEvent): void {
     const card = this.data.card;
     if (card === null || card.calc.lines.length === 0) {
       return;
     }
-    const line = card.calc.lines[0];
-    this.sheetCtx = { mode: 'line' };
+    const rawIdx = event?.currentTarget?.dataset?.['index'];
+    const lineIndex =
+      rawIdx !== undefined && Number.isFinite(Number(rawIdx)) ? Number(rawIdx) : 0;
+    const line = card.calc.lines[lineIndex] ?? card.calc.lines[0];
+    this.sheetCtx = { mode: 'line', lineIndex };
     this.setData({
       sheet: {
         visible: true,
@@ -486,7 +518,7 @@ Page<CardData, WechatMiniprogram.Page.CustomOption>({
     if (card === null || card.calc.lines.length === 0) {
       return;
     }
-    const line = card.calc.lines[0];
+    const line = card.calc.lines[ctx.lineIndex] ?? card.calc.lines[0];
     if (key === 'Q') {
       this.openGapEditor({
         code: 'Q',

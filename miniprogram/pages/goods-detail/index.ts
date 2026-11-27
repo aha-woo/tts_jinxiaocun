@@ -9,6 +9,7 @@ import {
   mergeProduct,
   patchProductPrice,
   queryStock,
+  setProductUnitRatio,
 } from '../../services/api';
 import { ensureLogin } from '../../services/auth';
 import { isWideScreen } from '../../utils/screen';
@@ -71,7 +72,7 @@ interface GoodsDetailData {
   movements: MovementItemView[];
   kp: {
     visible: boolean;
-    field: 'purchase' | 'sale' | 'low' | '';
+    field: 'purchase' | 'sale' | 'low' | 'unit_ratio' | '';
     title: string;
     subtitle: string;
     value: string;
@@ -172,10 +173,13 @@ Page<GoodsDetailData, WechatMiniprogram.Page.CustomOption>({
   },
 
   productId: '',
+  pendingRatioUnit: '',
+  openUnitRatioAfterLoad: false,
   mergeCandidates: [] as MergeCandidate[],
 
   onLoad(options: Record<string, string | undefined>) {
     this.productId = decodeURIComponent(String(options['id'] ?? '')).trim();
+    this.openUnitRatioAfterLoad = options['action'] === 'unit_ratio';
     this.setData({ wide: isWideScreen(), productId: this.productId });
     if (this.productId === '') {
       this.setData({ loading: false, errorText: '缺少货品 ID' });
@@ -310,10 +314,49 @@ Page<GoodsDetailData, WechatMiniprogram.Page.CustomOption>({
         batches,
         movements,
       });
+      if (this.openUnitRatioAfterLoad) {
+        this.openUnitRatioAfterLoad = false;
+        this.onAddUnitRatio();
+      }
     } catch (error) {
-      const message = error instanceof ApiError ? `${error.message}（${error.errorCode}）` : String(error);
+      const message = error instanceof ApiError ? error.message : String(error);
       this.setData({ loading: false, errorText: message });
     }
+  },
+
+  onAddUnitRatio(): void {
+    const baseUnit = this.data.baseUnit || '件';
+    wx.showModal({
+      title: '设置单位换算',
+      editable: true,
+      placeholderText: `输入大单位名（如 箱 / 提），将换算为 ${baseUnit}`,
+      success: (res) => {
+        if (!res.confirm) {
+          return;
+        }
+        const fromUnit = String(res.content ?? '').trim();
+        if (fromUnit === '') {
+          wx.showToast({ title: '请填写单位名称', icon: 'none' });
+          return;
+        }
+        if (fromUnit === baseUnit) {
+          wx.showToast({ title: `已是基本单位「${baseUnit}」`, icon: 'none' });
+          return;
+        }
+        this.pendingRatioUnit = fromUnit;
+        this.setData({
+          kp: {
+            visible: true,
+            field: 'unit_ratio',
+            title: `1 ${fromUnit} = 多少 ${baseUnit}？`,
+            subtitle: '保存后开单与盘点会自动按该比例折算',
+            value: '',
+            unit: baseUnit,
+            confirmText: '保存换算',
+          },
+        });
+      },
+    });
   },
 
   onEditPurchase(): void {
@@ -385,6 +428,26 @@ Page<GoodsDetailData, WechatMiniprogram.Page.CustomOption>({
       wx.showToast({ title: '输入格式不正确', icon: 'none' });
       return;
     }
+    if (field === 'unit_ratio') {
+      if (n <= 0 || this.pendingRatioUnit === '') {
+        wx.showToast({ title: '换算比例需大于 0', icon: 'none' });
+        return;
+      }
+      try {
+        await setProductUnitRatio(this.productId, {
+          from_unit: this.pendingRatioUnit,
+          to_unit: this.data.baseUnit,
+          ratio: n,
+        });
+        this.pendingRatioUnit = '';
+        wx.showToast({ title: '单位换算已保存', icon: 'success' });
+        await this.load();
+      } catch (error) {
+        const message = error instanceof ApiError ? error.message : String(error);
+        wx.showToast({ title: message, icon: 'none' });
+      }
+      return;
+    }
     const body: {
       last_purchase_price_fen?: number;
       last_sale_price_fen?: number;
@@ -406,7 +469,7 @@ Page<GoodsDetailData, WechatMiniprogram.Page.CustomOption>({
       wx.showToast({ title: '已保存', icon: 'success' });
       await this.load();
     } catch (error) {
-      const message = error instanceof ApiError ? `${error.message}（${error.errorCode}）` : String(error);
+      const message = error instanceof ApiError ? error.message : String(error);
       wx.showToast({ title: message, icon: 'none' });
     }
   },

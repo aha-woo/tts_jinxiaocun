@@ -275,6 +275,13 @@
   color: var(--ink);
 }
 
+.gd-tag--add {
+  background: var(--acs);
+  border-color: #eabaa0;
+  color: var(--act);
+  font-weight: 600;
+}
+
 .gd-card-h {
   display: flex;
   justify-content: space-between;

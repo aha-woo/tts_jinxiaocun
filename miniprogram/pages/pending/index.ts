@@ -93,9 +93,18 @@ export function toPendingItem(row: PendingCardRow): PendingItem {
   };
 }
 
-/** 这些槽位是文字（客户/供应商），其余按数字键盘填。 */
+/** 这些槽位是文字（客户/供应商/商品/单位/仓库），其余按数字键盘填。 */
 function isTextGap(code: string): boolean {
-  return code === 'S' || code === 'C';
+  return code === 'S' || code === 'C' || code === 'P' || code === 'U' || code === 'W';
+}
+
+function extractProductNameFromGapTitle(title: string): string {
+  const clean = String(title ?? '').trim();
+  if (clean === '') {
+    return '';
+  }
+  const head = clean.split(/[·\s]/)[0] ?? clean;
+  return head.replace(/负库存.*$/, '').trim();
 }
 
 function gapKindText(kind: string): { label: string; action: string } {
@@ -129,6 +138,7 @@ Page<PendingData, WechatMiniprogram.Page.CustomOption>({
   },
 
   sheetCardId: '',
+  sheetGap: null as UnifiedGapView | null,
 
   onShow() {
     void this.load();
@@ -160,7 +170,7 @@ Page<PendingData, WechatMiniprogram.Page.CustomOption>({
       this.setData({ items, ledgerGaps, loading: false });
       this.applyTab();
     } catch (error) {
-      const message = error instanceof ApiError ? `${error.message}（${error.errorCode}）` : String(error);
+      const message = error instanceof ApiError ? error.message : String(error);
       this.setData({ loading: false, errorText: message });
     }
   },
@@ -236,7 +246,46 @@ Page<PendingData, WechatMiniprogram.Page.CustomOption>({
       return;
     }
     if (gap.kind === 'unit_ratio') {
-      wx.navigateTo({ url: '/pages/goods/index' });
+      if (gap.refEntity === 'product' && gap.refId) {
+        wx.navigateTo({
+          url: `/pages/goods-detail/index?id=${encodeURIComponent(gap.refId)}&action=unit_ratio`,
+        });
+      } else {
+        wx.switchTab({ url: '/pages/goods/index' });
+      }
+      return;
+    }
+    if (gap.kind === 'negative_stock') {
+      this.sheetCardId = '';
+      this.sheetGap = gap;
+      const actions: SheetActionItem[] = [
+        {
+          key: 'restock',
+          label: '去手动补进货',
+          desc: '打开进货录入页，自动带入该商品',
+          tone: 'primary',
+        },
+      ];
+      if (gap.refEntity === 'product' && gap.refId) {
+        actions.push({
+          key: 'detail',
+          label: '查看货品详情与批次',
+          desc: '核对库存变动与未到货记录',
+        });
+      }
+      actions.push({
+        key: 'resolve',
+        label: '标记为已处理',
+        desc: '确认核实无误后从待处理移除',
+      });
+      this.setData({
+        sheet: {
+          visible: true,
+          title: gap.kindLabel,
+          subtitle: gap.title,
+          actions,
+        },
+      });
       return;
     }
     wx.showModal({
@@ -246,10 +295,14 @@ Page<PendingData, WechatMiniprogram.Page.CustomOption>({
       cancelText: '先留着',
       success: (res) => {
         if (res.confirm) {
-          void resolveUnifiedGap(gap.gapId).then(() => {
-            wx.showToast({ title: '已处理', icon: 'success' });
-            void this.load();
-          });
+          void resolveUnifiedGap(gap.gapId)
+            .then(() => {
+              wx.showToast({ title: '已处理', icon: 'success' });
+              void this.load();
+            })
+            .catch((err: unknown) => {
+              this.setData({ errorText: err instanceof ApiError ? err.message : String(err) });
+            });
         }
       },
     });
@@ -288,16 +341,33 @@ Page<PendingData, WechatMiniprogram.Page.CustomOption>({
   },
 
   async submitGap(cardId: string, code: string, value: string): Promise<void> {
-    if (value === '') {
+    const trimmed = value.trim();
+    if (trimmed === '') {
       return;
     }
+    let normalized: string | number = trimmed;
+    if (code === 'UP' || code === 'TA' || code === 'AMT') {
+      const yuan = Number(trimmed);
+      if (!Number.isFinite(yuan) || yuan < 0) {
+        wx.showToast({ title: '请输入合法金额', icon: 'none' });
+        return;
+      }
+      normalized = Math.round(yuan * 100);
+    } else if (code === 'Q') {
+      const qty = Number(trimmed);
+      if (!Number.isFinite(qty) || qty <= 0) {
+        wx.showToast({ title: '请输入大于 0 的数量', icon: 'none' });
+        return;
+      }
+      normalized = qty;
+    }
     try {
-      await editCard(cardId, [{ code, value }]);
+      await editCard(cardId, [{ code, value: normalized }]);
       this.setData({ editing: null, keypad: '' });
       wx.showToast({ title: '补好了', icon: 'none' });
       await this.load();
     } catch (error) {
-      const message = error instanceof ApiError ? `${error.message}（${error.errorCode}）` : String(error);
+      const message = error instanceof ApiError ? error.message : String(error);
       this.setData({ errorText: message, editing: null });
     }
   },
@@ -308,6 +378,7 @@ Page<PendingData, WechatMiniprogram.Page.CustomOption>({
     if (cardId === '') {
       return;
     }
+    this.sheetGap = null;
     this.sheetCardId = cardId;
     this.setData({
       sheet: {
@@ -321,15 +392,41 @@ Page<PendingData, WechatMiniprogram.Page.CustomOption>({
 
   onSheetClose(): void {
     this.sheetCardId = '';
+    this.sheetGap = null;
     this.setData({ 'sheet.visible': false });
   },
 
   onSheetSelect(event: WechatMiniprogram.CustomEvent<{ index: number; key: string }>): void {
     const cardId = this.sheetCardId;
+    const gap = this.sheetGap;
     const { key } = event.detail;
     this.onSheetClose();
     if (key === 'discard' && cardId !== '') {
       void this.discard(cardId);
+      return;
+    }
+    if (gap === null) {
+      return;
+    }
+    if (key === 'restock') {
+      const productName = extractProductNameFromGapTitle(gap.title);
+      const q = productName !== '' ? `&product=${encodeURIComponent(productName)}` : '';
+      wx.navigateTo({ url: `/pages/manual/index?direction=in${q}` });
+      return;
+    }
+    if (key === 'detail' && gap.refId) {
+      wx.navigateTo({ url: `/pages/goods-detail/index?id=${encodeURIComponent(gap.refId)}` });
+      return;
+    }
+    if (key === 'resolve') {
+      void resolveUnifiedGap(gap.gapId)
+        .then(() => {
+          wx.showToast({ title: '已处理', icon: 'success' });
+          void this.load();
+        })
+        .catch((err: unknown) => {
+          this.setData({ errorText: err instanceof ApiError ? err.message : String(err) });
+        });
     }
   },
 
