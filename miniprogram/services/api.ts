@@ -1660,7 +1660,7 @@ export function updateStaffStatus(
   });
 }
 
-/** 生成或发送收摊总结（三账体检 + 订阅消息降级预览）。 */
+/** 生成或发送今日经营日报（三账体检 + 订阅消息推送）。 */
 export function sendClosingSummary(): Promise<{
   sent: boolean;
   dry_run: boolean;

@@ -1,4 +1,4 @@
-"""收摊经营总结与微信订阅消息推送（M2/V1 补齐）。"""
+"""每日经营日报与微信订阅消息推送（M2/V1 补齐）。"""
 
 from __future__ import annotations
 
@@ -27,7 +27,7 @@ def build_closing_summary(
     store_id: uuid.UUID,
     biz_date: date | None = None,
 ) -> dict[str, Any]:
-    """汇总今日收摊快报：销售额、进货额、参考毛利、新欠款与三账体检状态。"""
+    """汇总每日经营日报：销售额、采购额、参考毛利、新欠款与三账体检状态。"""
     target_date = biz_date or date.fromisoformat(today_in_tz("Asia/Shanghai"))
     rep = ReportService(session).today(tenant_id=tenant_id, store_id=store_id, biz_date=target_date)
     recon = reconcile_store(session, tenant_id=tenant_id, store_id=store_id)
@@ -37,8 +37,8 @@ def build_closing_summary(
         else "毛利待补进价"
     )
     summary_text = (
-        f"{target_date.isoformat()} 收摊总结：共 {rep.doc_count} 笔，"
-        f"卖了 ¥{rep.sales_fen / 100:.2f}，进货 ¥{rep.purchase_fen / 100:.2f}，{profit_part}"
+        f"{target_date.isoformat()} 经营日报：共 {rep.doc_count} 笔，"
+        f"销售 ¥{rep.sales_fen / 100:.2f}，采购 ¥{rep.purchase_fen / 100:.2f}，{profit_part}"
     )
     if rep.missing_cost_count > 0:
         summary_text += f"（{rep.missing_cost_count} 单待补成本）"

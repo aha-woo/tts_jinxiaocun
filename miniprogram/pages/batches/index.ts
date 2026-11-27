@@ -44,7 +44,7 @@ Page<BatchesData, WechatMiniprogram.Page.CustomOption>({
         const name = row.product_name || row.product_id.slice(0, 8);
         const label = row.label || (row.is_virtual ? '未到货' : '在库批次');
         const statusText = row.is_virtual
-          ? '未到货 · 待补进货'
+          ? '待补进货'
           : row.status === 'open'
             ? '在库'
             : row.status === 'exhausted'

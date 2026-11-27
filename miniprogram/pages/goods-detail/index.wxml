@@ -128,9 +128,9 @@
           <view wx:for="{{batches}}" wx:key="batchId" class="gd-batch">
             <view class="gd-batch__top">
               <text class="gd-batch__t">{{item.titleText}}</text>
-              <text class="gd-batch__tag {{item.isVirtual ? 'gd-batch__tag--virtual' : item.isOpen ? 'gd-batch__tag--open' : ''}}">
+              <view class="gd-batch__tag {{item.isVirtual ? 'gd-batch__tag--virtual' : item.isOpen ? 'gd-batch__tag--open' : ''}}">
                 {{item.statusText}}
-              </text>
+              </view>
             </view>
             <text class="gd-batch__s">{{item.qtyText}} · 成本 {{item.unitCostText}}</text>
             <text wx:if="{{item.expiryDate}}" class="gd-batch__e">到期 {{item.expiryDate}}</text>

@@ -309,14 +309,16 @@
 .gd-batch__tag {
   display: inline-flex;
   align-items: center;
+  justify-content: center;
   white-space: nowrap;
+  height: 36rpx;
+  padding: 0 12rpx;
   font-size: 20rpx;
   font-weight: 600;
-  line-height: 1.3;
+  line-height: 1;
   color: var(--mu);
   border: 2rpx solid var(--ln);
   border-radius: 8rpx;
-  padding: 2rpx 10rpx;
 }
 
 .gd-batch__tag--open {
@@ -521,8 +523,9 @@
   }
 
   .gd-batch__tag {
+    height: 20px;
+    padding: 0 8px;
     font-size: 11px;
-    padding: 1px 8px;
     border-width: 1px;
   }
 

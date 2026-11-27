@@ -107,8 +107,8 @@
               <view class="ico ico--summary-ok"></view>
             </view>
             <view class="mi__body">
-              <text class="mi__t">今日收摊总结</text>
-              <text class="mi__s">三账核对体检 + 一键看收摊简报</text>
+              <text class="mi__t">今日经营日报</text>
+              <text class="mi__s">当日营收毛利汇总 + 三账核对体检</text>
             </view>
           </view>
           <text class="mi__ar">›</text>

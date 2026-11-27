@@ -229,7 +229,7 @@ Page<GoodsDetailData, WechatMiniprogram.Page.CustomOption>({
       const batches: BatchItemView[] = (batchRes.items ?? []).map((b) => {
         const label = b.label || (b.is_virtual ? '未到货' : '在库批次');
         const statusText = b.is_virtual
-          ? '未到货 · 待补'
+          ? '待补进货'
           : b.status === 'open'
             ? '在库'
             : b.status === 'exhausted'

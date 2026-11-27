@@ -321,12 +321,24 @@ Page<MineData, WechatMiniprogram.Page.CustomOption>({
     void sendClosingSummary().then(
       (res) => {
         const s = res.summary;
-        const extra = res.sent
-          ? '（已推送到微信订阅消息）'
-          : '（订阅消息模板未配置或未授权，展示今日收摊简报）';
+        const profitText =
+          s.gross_profit_fen !== null && s.gross_profit_fen !== undefined
+            ? `¥${(s.gross_profit_fen / 100).toFixed(2)}`
+            : '待补进价';
+        const lines = [
+          `日期：${s.biz_date}`,
+          `单据笔数：${s.doc_count} 笔`,
+          `销售：¥${(s.sales_fen / 100).toFixed(2)}  ｜  采购：¥${(s.purchase_fen / 100).toFixed(2)}`,
+          `参考毛利：${profitText}`,
+          `三账核对：${s.reconcile_ok ? '账实相符' : '发现差异'}`,
+          `负库存商品：${s.negative_count} 种`,
+        ];
+        if (res.sent) {
+          lines.push('已同步推送至微信消息');
+        }
         wx.showModal({
-          title: `今日收摊总结${extra}`,
-          content: `${s.summary_text}\n三账核对：${s.reconcile_ok ? '账实相符' : '发现差异'}\n负库存商品数：${s.negative_count}`,
+          title: '今日经营日报',
+          content: lines.join('\n'),
           showCancel: false,
         });
       },
