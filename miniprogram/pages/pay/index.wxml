@@ -3,30 +3,39 @@
   <view class="page__gap">
     <view class="card pad">
       <text class="c-title">本月已用</text>
-      <view class="num">
+      <view wx:if="{{usage}}" class="num">
         <text class="num__v serif-num">{{usage.used}}</text>
         <text class="num__u">/ {{usage.quota}} 次</text>
       </view>
+      <view wx:else class="hint">读取中…</view>
       <text class="hint">每月 1 号重新计算；超出后仍可手动记账。</text>
     </view>
 
     <view class="card pad">
       <text class="c-title">我的套餐</text>
-      <text class="plan">{{entitlement.plan_name || '免费体验版'}}</text>
-      <view class="num">
-        <text class="num__v serif-num">{{entitlement.remaining_quota}}</text>
-        <text class="num__u">次剩余</text>
-        <text class="num__v serif-num num__v--gap">{{entitlement.days_left}}</text>
-        <text class="num__u">天剩余</text>
-      </view>
-      <text class="hint">到期：{{entitlement.valid_until || '长期有效'}}</text>
+      <block wx:if="{{entitlement}}">
+        <text class="plan">{{entitlement.plan_name || '免费体验版'}}</text>
+        <view class="num">
+          <text class="num__v serif-num">{{entitlement.remaining_quota}}</text>
+          <text class="num__u">次剩余</text>
+          <text class="num__v serif-num num__v--gap">{{entitlement.days_left}}</text>
+          <text class="num__u">天剩余</text>
+        </view>
+        <text class="hint">到期：{{entitlement.valid_until || '长期有效'}}</text>
+      </block>
+      <view wx:else class="hint">读取中…</view>
       <text class="hint">到期不会自动扣费，续费靠你自己决定。</text>
+    </view>
+
+    <view wx:if="{{!loading && !isBoss}}" class="bar">
+      <text>仅老板账号可下单续费或加购次数包，请联系店主操作。</text>
     </view>
 
     <view class="card">
       <view class="pad-b">
         <text class="c-title">可以买</text>
       </view>
+      <view wx:if="{{loading && goods.length === 0}}" class="empty">读取套餐中…</view>
       <view wx:for="{{goods}}" wx:key="goodsId" class="goods">
         <view class="goods__top">
           <view class="goods__title-wrap">
@@ -41,7 +50,7 @@
           data-goods="{{item.goodsId}}"
           bindtap="onBuy"
           loading="{{paying === item.goodsId}}"
-          disabled="{{paying !== '' || !canBuyHere}}"
+          disabled="{{loading || paying !== '' || !canBuyHere || !isBoss || !entitlement}}"
         >立即购买 · {{item.priceText}}</button>
       </view>
       <view wx:if="{{!canBuyHere}}" class="bar" style="margin:24rpx">

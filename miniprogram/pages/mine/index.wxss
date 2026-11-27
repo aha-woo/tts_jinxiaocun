@@ -185,7 +185,8 @@
 }
 
 .mine-btn-full {
-  margin-top: 16rpx;
+  width: 100% !important;
+  margin: 16rpx 0 0 !important;
 }
 
 .mine-btn-row {
@@ -197,6 +198,21 @@
 .mine-btn-half {
   flex: 1;
   width: auto !important;
+  min-width: 0;
+  margin: 0 !important;
+}
+
+.page--big .est__v {
+  font-size: 54rpx;
+}
+
+.page--big .mi__t {
+  font-size: 32rpx;
+}
+
+.page--big .mi__s,
+.page--big .mine-hint {
+  font-size: 26rpx;
 }
 
 /* 电脑版微信大屏（>=768px）：左资料与设置 + 右功能菜单双栏 */

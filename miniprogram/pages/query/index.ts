@@ -86,8 +86,7 @@ Page<QueryData, WechatMiniprogram.Page.CustomOption>({
         loading: false,
       });
     } catch (error) {
-      const message =
-        error instanceof ApiError ? `${error.message}（${error.errorCode}）` : String(error);
+      const message = error instanceof ApiError ? error.message : String(error);
       this.setData({ loading: false, errorText: message, rows: [], docs: [] });
     }
   },

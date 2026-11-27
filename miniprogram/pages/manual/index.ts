@@ -144,8 +144,17 @@ Page<ManualData, WechatMiniprogram.Page.CustomOption>({
       }
       seenCatalog.add(name);
       const unit = String(o['base_unit'] ?? o['unit'] ?? '');
-      const qty = o['qty_display'] ?? o['qty_base'] ?? '';
-      const stockText = qty !== '' ? `${qty}${unit}` : '';
+      const displayQty = String(o['qty_display'] ?? '').trim();
+      let stockText = '';
+      if (displayQty !== '') {
+        stockText = displayQty;
+      } else if (o['qty_base'] !== undefined && o['qty_base'] !== null && String(o['qty_base']).trim() !== '') {
+        const baseNum = Number(o['qty_base']);
+        const baseStr = Number.isFinite(baseNum)
+          ? (Number.isInteger(baseNum) ? String(baseNum) : String(Number(baseNum.toFixed(4))))
+          : String(o['qty_base']).trim();
+        stockText = `${baseStr}${unit}`;
+      }
       catalog.push({ name, stockText, unit });
     }
 
@@ -358,10 +367,7 @@ Page<ManualData, WechatMiniprogram.Page.CustomOption>({
       }
       this.setData({ errorText: `没生成卡片（${parsed.route}）` });
     } catch (error) {
-      const message =
-        error instanceof ApiError
-          ? `${error.message}${error.errorCode ? `（${error.errorCode}）` : ''}`
-          : String(error);
+      const message = error instanceof ApiError ? error.message : String(error);
       this.setData({ errorText: message });
     } finally {
       this.setData({ submitting: false });

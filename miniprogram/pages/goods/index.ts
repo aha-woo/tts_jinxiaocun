@@ -39,6 +39,7 @@ export interface Row {
 
 interface GoodsData {
   wide: boolean;
+  fontSize: 'big' | 'std';
   viewMode: ViewMode;
   sortKey: SortKey;
   sortDir: SortDir;
@@ -226,6 +227,7 @@ function compareNullableNum(a: number | null, b: number | null, dir: SortDir): n
 Page<GoodsData, WechatMiniprogram.Page.CustomOption>({
   data: {
     wide: false,
+    fontSize: 'big',
     viewMode: readStoredViewMode(),
     sortKey: 'default',
     sortDir: 'asc',
@@ -248,7 +250,8 @@ Page<GoodsData, WechatMiniprogram.Page.CustomOption>({
   onShow() {
     const bar = (this as unknown as { getTabBar?: () => { setData: (d: object) => void } }).getTabBar?.();
     bar?.setData({ selected: 1 });
-    this.setData({ wide: isWideScreen() });
+    const fontSize = (wx.getStorageSync('dsh:fontSize') as string) === 'std' ? 'std' : 'big';
+    this.setData({ wide: isWideScreen(), fontSize });
     void this.load();
   },
 
@@ -274,7 +277,7 @@ Page<GoodsData, WechatMiniprogram.Page.CustomOption>({
       });
       this.applyFilter();
     } catch (error) {
-      const message = error instanceof ApiError ? `${error.message}（${error.errorCode}）` : String(error);
+      const message = error instanceof ApiError ? error.message : String(error);
       this.setData({
         loading: false,
         errorText: message,

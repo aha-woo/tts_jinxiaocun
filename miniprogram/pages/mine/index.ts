@@ -71,7 +71,7 @@ Page<MineData, WechatMiniprogram.Page.CustomOption>({
     wide: false,
     displayName: '店主',
     storeName: '本店',
-    roleLabel: '老板',
+    roleLabel: '',
     mode: 'each',
     confirmMode: 'always',
     novice: null,
@@ -82,7 +82,7 @@ Page<MineData, WechatMiniprogram.Page.CustomOption>({
     dictOpen: false,
     dictItems: [],
     membersOpen: false,
-    isBoss: true,
+    isBoss: false,
     members: [],
     errorText: '',
   },
@@ -222,10 +222,15 @@ Page<MineData, WechatMiniprogram.Page.CustomOption>({
     if (!dictId) {
       return;
     }
-    void deleteDict(dictId).then(() => {
-      wx.showToast({ title: '已删', icon: 'none' });
-      void this.load();
-    });
+    void deleteDict(dictId).then(
+      () => {
+        wx.showToast({ title: '已删', icon: 'none' });
+        void this.load();
+      },
+      (err: unknown) => {
+        wx.showToast({ title: err instanceof ApiError ? err.message : '删除失败', icon: 'none' });
+      }
+    );
   },
 
   onToggleMembers(): void {

@@ -321,11 +321,11 @@ Page<AdminData, WechatMiniprogram.Page.CustomOption>({
     this.setData({ loading: true, errorText: '' });
     try {
       await ensureLogin();
-      const me = await getMe();
+      const session = await getMe();
       this.setData({
-        isBoss: me.role === 'boss',
-        roleCode: me.role,
-        roleLabel: roleLabelOf(me.role),
+        isBoss: session.role === 'boss',
+        roleCode: session.role,
+        roleLabel: roleLabelOf(session.role),
       });
     } catch (error) {
       this.setData({ errorText: `登录未完成：${this.messageOf(error)}` });

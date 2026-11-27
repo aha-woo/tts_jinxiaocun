@@ -26,7 +26,7 @@ Page<GapsData, WechatMiniprogram.Page.CustomOption>({
       const payload = await listProductGaps();
       this.setData({ items: payload.items ?? [], loading: false });
     } catch (error) {
-      const message = error instanceof ApiError ? `${error.message}（${error.errorCode}）` : String(error);
+      const message = error instanceof ApiError ? error.message : String(error);
       this.setData({ loading: false, errorText: message });
     }
   },
@@ -62,7 +62,7 @@ Page<GapsData, WechatMiniprogram.Page.CustomOption>({
       wx.showToast({ title: '补好了', icon: 'none' });
       await this.load();
     } catch (error) {
-      const message = error instanceof ApiError ? `${error.message}（${error.errorCode}）` : String(error);
+      const message = error instanceof ApiError ? error.message : String(error);
       this.setData({ errorText: message });
     }
   },

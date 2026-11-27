@@ -12,7 +12,7 @@
         <view class="pbadge" bindtap="onGoPending">
           <view class="ico ico--sm ico--pending-wn"></view>
           <text>待处理</text>
-          <text class="pbadge__n">{{pendingCount}}</text>
+          <view class="pbadge__n">{{pendingCount}}</view>
         </view>
       </view>
 

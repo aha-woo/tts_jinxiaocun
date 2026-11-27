@@ -13,6 +13,7 @@
 
 .search__in {
   flex: 1;
+  min-width: 0;
   height: 88rpx;
   padding: 0 24rpx;
   background: var(--sf);
@@ -26,6 +27,10 @@
 }
 
 .search__btn {
+  width: auto !important;
+  min-width: 0;
+  flex-shrink: 0;
+  margin: 0 !important;
   height: 88rpx;
   padding: 0 40rpx;
   border-radius: var(--r-pill);

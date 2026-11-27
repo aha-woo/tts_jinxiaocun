@@ -56,7 +56,8 @@
   flex-shrink: 0;
 }
 
-.manual-photo-btn:active {
+.manual-photo-btn:active,
+.manual-photo-btn--hover {
   background: var(--act);
 }
 

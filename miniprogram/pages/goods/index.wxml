@@ -1,5 +1,5 @@
 <!-- 货品：支持「传统多列表格 / 高密度卡片」一键切换 + 汇总条 + 独立货品详情页 -->
-<view class="page {{wide ? 'page--wide' : ''}}">
+<view class="page {{fontSize === 'big' ? 'page--big' : ''}} {{wide ? 'page--wide' : ''}}">
   <view class="page__gap">
     <view class="goods-bar">
       <!-- 第一行：搜索 + 表格/卡片视图切换 -->

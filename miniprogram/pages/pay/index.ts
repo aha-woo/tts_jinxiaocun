@@ -15,6 +15,7 @@
 import {
   ApiError,
   entitlement,
+  getMe,
   listGoods,
   usage,
   type EntitlementPayload,
@@ -33,6 +34,7 @@ interface GoodsView {
 
 interface PayData {
   loading: boolean;
+  isBoss: boolean;
   usage: UsagePayload | null;
   entitlement: EntitlementPayload | null;
   goods: GoodsView[];
@@ -70,6 +72,7 @@ function formatFenLabel(fen: unknown): string {
 Page<PayData, WechatMiniprogram.Page.CustomOption>({
   data: {
     loading: true,
+    isBoss: false,
     usage: null,
     entitlement: null,
     goods: [],
@@ -87,7 +90,8 @@ Page<PayData, WechatMiniprogram.Page.CustomOption>({
     this.setData({ loading: true, errorText: '' });
     try {
       await ensureLogin();
-      const [usagePayload, entitlementPayload, goodsPayload] = await Promise.all([
+      const [me, usagePayload, entitlementPayload, goodsPayload] = await Promise.all([
+        getMe(),
         usage(),
         entitlement(),
         listGoods(),
@@ -95,6 +99,7 @@ Page<PayData, WechatMiniprogram.Page.CustomOption>({
       const rawUsage = usagePayload.usage;
       const rawEnt = entitlementPayload.entitlement;
       this.setData({
+        isBoss: me.role === 'boss',
         // 两个口径分别来自各自的包络体，端上**不合并、不互相推导**
         usage: {
           ...rawUsage,
@@ -130,6 +135,9 @@ Page<PayData, WechatMiniprogram.Page.CustomOption>({
 
   /** 购买：下单 → 拉起支付 → **只轮询权益，不本地加额度**。 */
   async onBuy(event: WechatMiniprogram.TouchEvent): Promise<void> {
+    if (this.data.loading || this.data.paying !== '' || !this.data.canBuyHere || !this.data.isBoss) {
+      return;
+    }
     const goodsId = String(event.currentTarget.dataset['goods'] ?? '');
     if (goodsId === '' || this.data.entitlement === null) {
       return;
@@ -153,7 +161,7 @@ Page<PayData, WechatMiniprogram.Page.CustomOption>({
 
   messageOf(error: unknown): string {
     if (error instanceof ApiError) {
-      return `${error.message}${error.errorCode ? `（${error.errorCode}）` : ''}`;
+      return error.message;
     }
     return error instanceof Error ? error.message : String(error);
   },

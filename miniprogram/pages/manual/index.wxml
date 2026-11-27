@@ -6,12 +6,12 @@
         <text class="manual-photo-card__t">整单进货直接拍单更快</text>
         <text class="manual-photo-card__s">不想说话时在下面点选或打字，照样走确认卡落账</text>
       </view>
-      <button class="manual-photo-btn" bindtap="onGoPhoto">
+      <view class="manual-photo-btn" hover-class="manual-photo-btn--hover" bindtap="onGoPhoto">
         <view class="manual-photo-btn__in">
           <view class="ico ico--sm ico--photo-white"></view>
           <text>拍进货单</text>
         </view>
-      </button>
+      </view>
     </view>
 
     <view class="card pad">
@@ -68,13 +68,13 @@
         <view wx:if="{{quickProducts.length > 0}}" class="m-quick">
           <text class="m-quick__k">{{quickLabel}}</text>
           <view class="m-chips">
-            <text
+            <view
               wx:for="{{quickProducts}}"
               wx:key="*this"
               class="m-chip {{product === item ? 'm-chip--on' : ''}}"
               data-name="{{item}}"
               bindtap="onPickProductChip"
-            >{{item}}</text>
+            >{{item}}</view>
           </view>
         </view>
       </view>
@@ -86,13 +86,13 @@
           <text class="m-unit-hint">当前按「{{unit}}」记账</text>
         </view>
         <view class="m-chips m-chips--units">
-          <text
+          <view
             wx:for="{{unitOptions}}"
             wx:key="*this"
             class="m-chip m-chip--sm {{unit === item ? 'm-chip--on' : ''}}"
             data-unit="{{item}}"
             bindtap="onPickUnit"
-          >{{item}}</text>
+          >{{item}}</view>
         </view>
       </view>
 

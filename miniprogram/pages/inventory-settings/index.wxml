@@ -1,6 +1,9 @@
 <!-- 库存设置：移动平均 vs 批次成本 + 负库存 + 店员成本可见 -->
 <view class="page settings-page">
   <view class="page__gap">
+    <view wx:if="{{!loading && !isBoss}}" class="bar">
+      <text>当前账号非老板，仅可查看记账与成本策略，无法修改保存。</text>
+    </view>
     <text class="hint">标品默认用移动平均（省事）；生鲜/水产/食品可在货品页按商品开启「分批管理」。</text>
 
     <view class="card pad">
@@ -19,7 +22,7 @@
           <text class="row__t">允许负库存</text>
           <text class="row__s">默认开启：先卖后补进货不卡住；超卖先按暂估成本记，补进货自动结清并调毛利。</text>
         </view>
-        <switch checked="{{policy.allow_negative}}" bindchange="onAllowNegative" color="#c2410c" />
+        <switch checked="{{policy.allow_negative}}" disabled="{{loading || saving || !isBoss}}" bindchange="onAllowNegative" color="#c2410c" />
       </view>
     </view>
 
@@ -29,7 +32,7 @@
           <text class="row__t">允许店员看进价和毛利</text>
           <text class="row__s">默认关闭：店员只看库存数量与售价，进价、平均成本与毛利仅老板可见。</text>
         </view>
-        <switch checked="{{policy.staff_can_view_cost}}" bindchange="onStaffViewCost" color="#c2410c" />
+        <switch checked="{{policy.staff_can_view_cost}}" disabled="{{loading || saving || !isBoss}}" bindchange="onStaffViewCost" color="#c2410c" />
       </view>
     </view>
 
@@ -54,7 +57,7 @@
 
   <view class="settings-foot">
     <view class="settings-foot__in">
-      <button class="cta" bindtap="onSave" loading="{{saving}}">保存设置</button>
+      <button class="cta" bindtap="onSave" loading="{{saving}}" disabled="{{loading || saving || !isBoss}}">保存设置</button>
     </view>
   </view>
 </view>

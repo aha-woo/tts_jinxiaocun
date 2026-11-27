@@ -1,5 +1,5 @@
 <!-- 欠款：手机端切换分页；电脑版微信大屏（>=768px）应收/应付左右并排 + 行内快捷核销/发对账单 -->
-<view class="page {{wide ? 'page--wide' : ''}}">
+<view class="page {{fontSize === 'big' ? 'page--big' : ''}} {{wide ? 'page--wide' : ''}}">
   <view class="page__gap">
     <view wx:if="{{errorText}}" class="bar" style="background:var(--dgrb);border-color:#e0b9b0;color:var(--dgr)">
       <text>{{errorText}}</text>
@@ -121,5 +121,17 @@
     actions="{{sheet.actions}}"
     bind:select="onSheetSelect"
     bind:close="onSheetClose"
+  />
+
+  <keypad-sheet
+    visible="{{keypad.visible}}"
+    title="{{keypad.title}}"
+    subtitle="{{keypad.subtitle}}"
+    unit="{{keypad.unit}}"
+    value="{{keypad.value}}"
+    confirmText="选方式"
+    bind:change="onKeypadChange"
+    bind:confirm="onKeypadConfirm"
+    bind:close="onKeypadClose"
   />
 </view>

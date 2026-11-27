@@ -526,8 +526,95 @@ button::after {
 /* 原生 button 自带宽度与居中，这里强制撑满（居中靠上面的 flex） */
 button.cta {
   display: flex;
-  width: 100%;
-  margin: 0;
+  width: 100% !important;
+  margin: 0 !important;
+}
+
+button.sub {
+  width: 100% !important;
+  margin: 0 !important;
+}
+
+button.ui-btn--block {
+  width: 100% !important;
+  margin: 0 !important;
+}
+
+/* 大字号模式（我的 → 字号切换为「大」时在各 Tab 页生效） */
+.page--big {
+  font-size: 32rpx;
+}
+
+.page--big .hello__t {
+  font-size: 48rpx;
+}
+
+.page--big .hello__sub,
+.page--big .stats__k,
+.page--big .flow__h,
+.page--big .fi__tm,
+.page--big .fi__md small,
+.page--big .hint,
+.page--big .muted {
+  font-size: 26rpx;
+}
+
+.page--big .stats__v {
+  font-size: 44rpx;
+}
+
+.page--big .seg__item,
+.page--big .bar,
+.page--big .sub {
+  font-size: 28rpx;
+}
+
+.page--big .fi__md b,
+.page--big .cta {
+  font-size: 32rpx;
+}
+
+.page--big .fi__rt b {
+  font-size: 34rpx;
+}
+
+@media (min-width: 768px) {
+  .page--big {
+    font-size: 15px;
+  }
+
+  .page--big .hello__t {
+    font-size: 26px;
+  }
+
+  .page--big .hello__sub,
+  .page--big .stats__k,
+  .page--big .flow__h,
+  .page--big .fi__tm,
+  .page--big .fi__md small,
+  .page--big .hint,
+  .page--big .muted {
+    font-size: 13px;
+  }
+
+  .page--big .stats__v {
+    font-size: 26px;
+  }
+
+  .page--big .seg__item,
+  .page--big .bar,
+  .page--big .sub {
+    font-size: 14px;
+  }
+
+  .page--big .fi__md b,
+  .page--big .cta {
+    font-size: 15px;
+  }
+
+  .page--big .fi__rt b {
+    font-size: 16px;
+  }
 }
 
 /* ==========================================================================

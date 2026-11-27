@@ -238,10 +238,12 @@
 }
 
 .row-btn {
+  width: auto !important;
+  min-width: 0;
   height: 88rpx;
   font-size: var(--f-small);
   padding: 0 var(--s-3);
-  margin: 0 var(--s-2) var(--s-2) 0;
+  margin: 0 var(--s-2) var(--s-2) 0 !important;
 }
 
 .task {

@@ -22,6 +22,7 @@ interface Row {
 
 interface DebtsData {
   wide: boolean;
+  fontSize: 'big' | 'std';
   tab: Dir;
   loading: boolean;
   rows: Row[];
@@ -38,6 +39,13 @@ interface DebtsData {
     title: string;
     subtitle: string;
     actions: SheetActionItem[];
+  };
+  keypad: {
+    visible: boolean;
+    title: string;
+    subtitle: string;
+    unit: string;
+    value: string;
   };
 }
 
@@ -87,6 +95,7 @@ export function toDebtRow(item: unknown, index: number): Row {
 Page<DebtsData, WechatMiniprogram.Page.CustomOption>({
   data: {
     wide: false,
+    fontSize: 'big',
     tab: 'in',
     loading: true,
     rows: [],
@@ -99,17 +108,20 @@ Page<DebtsData, WechatMiniprogram.Page.CustomOption>({
     netSumText: '0.00',
     errorText: '',
     sheet: { visible: false, title: '', subtitle: '', actions: [] },
+    keypad: { visible: false, title: '', subtitle: '', unit: '元', value: '' },
   },
 
   sheetCtx: null as
     | { mode: 'row'; row: Row }
     | { mode: 'method'; row: Row; amountFen: number }
     | null,
+  keypadRow: null as Row | null,
 
   onShow() {
     const bar = (this as unknown as { getTabBar?: () => { setData: (d: object) => void } }).getTabBar?.();
     bar?.setData({ selected: 2 });
-    this.setData({ wide: isWideScreen() });
+    const fontSize = (wx.getStorageSync('dsh:fontSize') as string) === 'std' ? 'std' : 'big';
+    this.setData({ wide: isWideScreen(), fontSize });
     void this.load();
   },
 
@@ -126,7 +138,7 @@ Page<DebtsData, WechatMiniprogram.Page.CustomOption>({
       this.setData({ rows, loading: false });
       this.applyTab();
     } catch (error) {
-      const message = error instanceof ApiError ? `${error.message}（${error.errorCode}）` : String(error);
+      const message = error instanceof ApiError ? error.message : String(error);
       this.setData({ loading: false, errorText: message, rows: [], shown: [] });
     }
   },
@@ -235,37 +247,51 @@ Page<DebtsData, WechatMiniprogram.Page.CustomOption>({
   },
 
   promptSettle(row: Row): void {
-    const defaultYuan = row.amount.toFixed(2).replace(/\.00$/, '');
-    wx.showModal({
-      title: `${row.dir === 'in' ? '向' : '给'}「${row.name}」${row.dir === 'in' ? '收款' : '付款'}`,
-      editable: true,
-      placeholderText: `本次金额（元），未结 ${defaultYuan}`,
-      confirmText: '选方式并入账',
-      success: (res) => {
-        if (!res.confirm) {
-          return;
-        }
-        const raw = String(res.content ?? '').trim() || defaultYuan;
-        const numVal = Number(raw);
-        if (!Number.isFinite(numVal) || numVal <= 0) {
-          wx.showToast({ title: '金额必须是大于 0 的数字', icon: 'none' });
-          return;
-        }
-        const amountFen = Math.round(numVal * 100);
-        const amountYuan = (amountFen / 100).toFixed(2).replace(/\.00$/, '');
-        this.sheetCtx = { mode: 'method', row, amountFen };
-        this.setData({
-          sheet: {
-            visible: true,
-            title: `选择${row.dir === 'in' ? '收款' : '付款'}方式`,
-            subtitle: `${row.name} · 本次 ¥${amountYuan}`,
-            actions: [
-              { key: '微信', label: '微信收付款', tone: 'primary' },
-              { key: '现金', label: '现金' },
-              { key: '银行卡/支付宝', label: '银行卡 / 支付宝' },
-            ],
-          },
-        });
+    const defaultYuan = row.amount > 0 ? row.amount.toFixed(2).replace(/\.00$/, '') : '';
+    this.keypadRow = row;
+    this.setData({
+      keypad: {
+        visible: true,
+        title: `${row.dir === 'in' ? '登记收款' : '登记付款'} · ${row.name}`,
+        subtitle: `当前未结 ${row.amountText}`,
+        unit: '元',
+        value: defaultYuan,
+      },
+    });
+  },
+
+  onKeypadChange(event: WechatMiniprogram.CustomEvent<{ value: string }>): void {
+    this.setData({ 'keypad.value': String(event.detail?.value ?? '') });
+  },
+
+  onKeypadClose(): void {
+    this.keypadRow = null;
+    this.setData({ 'keypad.visible': false });
+  },
+
+  onKeypadConfirm(event: WechatMiniprogram.CustomEvent<{ value: string }>): void {
+    const row = this.keypadRow;
+    const raw = String(event.detail?.value ?? this.data.keypad.value).trim();
+    const numVal = Number(raw);
+    if (row === null || !Number.isFinite(numVal) || numVal <= 0) {
+      wx.showToast({ title: '金额必须是大于 0 的数字', icon: 'none' });
+      return;
+    }
+    this.keypadRow = null;
+    this.setData({ 'keypad.visible': false });
+    const amountFen = Math.round(numVal * 100);
+    const amountYuan = (amountFen / 100).toFixed(2).replace(/\.00$/, '');
+    this.sheetCtx = { mode: 'method', row, amountFen };
+    this.setData({
+      sheet: {
+        visible: true,
+        title: `选择${row.dir === 'in' ? '收款' : '付款'}方式`,
+        subtitle: `${row.name} · 本次 ¥${amountYuan}`,
+        actions: [
+          { key: '微信', label: '微信收付款', tone: 'primary' },
+          { key: '现金', label: '现金' },
+          { key: '银行卡/支付宝', label: '银行卡 / 支付宝' },
+        ],
       },
     });
   },
@@ -324,8 +350,10 @@ Page<DebtsData, WechatMiniprogram.Page.CustomOption>({
             reject(new Error('当前环境不支持绘制对账单图片'));
             return;
           }
+          const shownItems = stmt.items.slice(0, 10);
+          const overflowCount = Math.max(0, stmt.items.length - shownItems.length);
           const w = 640;
-          const h = Math.max(520, 260 + stmt.items.slice(0, 10).length * 46);
+          const h = Math.max(520, 260 + shownItems.length * 46 + (overflowCount > 0 ? 44 : 0));
           canvas.width = w;
           canvas.height = h;
           const ctx = canvas.getContext('2d');
@@ -356,10 +384,15 @@ Page<DebtsData, WechatMiniprogram.Page.CustomOption>({
           ctx.fillStyle = '#1f1b16';
           ctx.font = '20px sans-serif';
           let y = 242;
-          for (const item of stmt.items.slice(0, 10)) {
+          for (const item of shownItems) {
             ctx.fillText(`${item.biz_date}  ${item.doc_no}`, 36, y);
             ctx.fillText(`¥${(item.outstanding_fen / 100).toFixed(2)}`, w - 180, y);
             y += 42;
+          }
+          if (overflowCount > 0) {
+            ctx.fillStyle = '#7c7367';
+            ctx.font = '18px sans-serif';
+            ctx.fillText(`另有 ${overflowCount} 笔未结明细（合计已包含全部）`, 36, y + 6);
           }
 
           wx.canvasToTempFilePath({

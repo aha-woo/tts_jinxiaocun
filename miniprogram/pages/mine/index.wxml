@@ -66,7 +66,7 @@
               <text class="dict-row__target">{{item.targetText}}</text>
               <text class="dict-row__tag">{{item.typeLabel}}</text>
             </view>
-            <text class="act-pill act-pill--danger" data-id="{{item.dict_id}}" bindtap="onDeleteDict">删除</text>
+            <view class="act-pill act-pill--danger" data-id="{{item.dict_id}}" bindtap="onDeleteDict">删除</view>
           </view>
           <button class="sub sub--ac mine-btn-full" bindtap="onAddDict">+ 教一个说法</button>
         </view>
@@ -88,13 +88,13 @@
               <text class="member-row__name">{{item.name}}</text>
               <text class="member-row__meta">{{item.roleLabel}} · {{item.status === 'active' ? '正常' : '已停用'}}</text>
             </view>
-            <text
+            <view
               wx:if="{{isBoss && !item.is_self}}"
               class="act-pill {{item.status === 'active' ? 'act-pill--danger' : 'act-pill--ac'}}"
               data-id="{{item.member_id}}"
               data-status="{{item.status}}"
               bindtap="onToggleMemberStatus"
-            >{{item.status === 'active' ? '停用' : '启用'}}</text>
+            >{{item.status === 'active' ? '停用' : '启用'}}</view>
           </view>
           <view class="mine-btn-row">
             <button wx:if="{{isBoss}}" class="sub sub--ac mine-btn-half" bindtap="onCreateInvite">+ 生成店员邀请码</button>

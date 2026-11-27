@@ -101,7 +101,7 @@ Page<CountData, WechatMiniprogram.Page.CustomOption>({
       this.setData({ countId: cid, resumedOpen: resumed });
       await this.refresh();
     } catch (error) {
-      const message = error instanceof ApiError ? `${error.message}（${error.errorCode}）` : String(error);
+      const message = error instanceof ApiError ? error.message : String(error);
       this.setData({ loading: false, errorText: message });
     }
   },
@@ -154,7 +154,7 @@ Page<CountData, WechatMiniprogram.Page.CustomOption>({
         showCancel: false,
       });
     } catch (error) {
-      const message = error instanceof ApiError ? `${error.message}（${error.errorCode}）` : String(error);
+      const message = error instanceof ApiError ? error.message : String(error);
       this.setData({ errorText: message });
     }
   },
@@ -178,7 +178,7 @@ Page<CountData, WechatMiniprogram.Page.CustomOption>({
         counted: lines.filter((line) => line.qty_counted !== null).length,
       });
     } catch (error) {
-      const message = error instanceof ApiError ? `${error.message}（${error.errorCode}）` : String(error);
+      const message = error instanceof ApiError ? error.message : String(error);
       this.setData({ loading: false, errorText: message });
     }
   },
@@ -210,7 +210,7 @@ Page<CountData, WechatMiniprogram.Page.CustomOption>({
       this.setData({ editing: '', keypad: '' });
       await this.refresh();
     } catch (error) {
-      const message = error instanceof ApiError ? `${error.message}（${error.errorCode}）` : String(error);
+      const message = error instanceof ApiError ? error.message : String(error);
       this.setData({ errorText: message });
     }
   },
@@ -247,7 +247,7 @@ Page<CountData, WechatMiniprogram.Page.CustomOption>({
         success: () => wx.navigateBack({ delta: 1 }),
       });
     } catch (error) {
-      const message = error instanceof ApiError ? `${error.message}（${error.errorCode}）` : String(error);
+      const message = error instanceof ApiError ? error.message : String(error);
       this.setData({ errorText: message });
     } finally {
       this.setData({ applying: false });

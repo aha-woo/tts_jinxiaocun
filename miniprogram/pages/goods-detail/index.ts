@@ -484,7 +484,7 @@ Page<GoodsDetailData, WechatMiniprogram.Page.CustomOption>({
       wx.showToast({ title: next ? '已开启分批管理' : '已切回移动平均', icon: 'none' });
       await this.load();
     } catch (error) {
-      const message = error instanceof ApiError ? `${error.message}（${error.errorCode}）` : String(error);
+      const message = error instanceof ApiError ? error.message : String(error);
       wx.showToast({ title: message, icon: 'none' });
     }
   },
@@ -529,7 +529,7 @@ Page<GoodsDetailData, WechatMiniprogram.Page.CustomOption>({
         },
       });
     } catch (error) {
-      const message = error instanceof ApiError ? `${error.message}（${error.errorCode}）` : String(error);
+      const message = error instanceof ApiError ? error.message : String(error);
       wx.showToast({ title: message, icon: 'none' });
     }
   },
