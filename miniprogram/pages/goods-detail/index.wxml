@@ -1,0 +1,171 @@
+<!-- 货品详情：概览指标 + 档案编辑 + 批次余量 + 出入库流水台账 -->
+<view class="page {{wide ? 'page--wide' : ''}}">
+  <view class="page__gap">
+    <view wx:if="{{errorText}}" class="bar" style="background:var(--dgrb);border-color:#e0b9b0;color:var(--dgr)">
+      <text>{{errorText}}</text>
+    </view>
+
+    <view wx:if="{{loading}}" class="card empty">读取中…</view>
+
+    <block wx:elif="{{name}}">
+      <!-- 顶部概览卡 -->
+      <view class="card pad gd-hero">
+        <view class="gd-hero__top">
+          <view class="gd-hero__title-wrap">
+            <text class="gd-hero__title serif">{{name}}</text>
+            <text class="gd-hero__sub">基本单位：{{baseUnit}}</text>
+          </view>
+          <view class="gd-hero__badges">
+            <text wx:if="{{isDraft}}" class="gd-badge gd-badge--wn">待补价草稿</text>
+            <text wx:if="{{negative}}" class="gd-badge gd-badge--dgr">负库存</text>
+            <text wx:elif="{{low}}" class="gd-badge gd-badge--ac">低库存</text>
+            <text class="gd-badge {{trackBatch ? 'gd-badge--vl' : ''}}">{{trackBatch ? '分批核算' : '移动平均'}}</text>
+          </view>
+        </view>
+
+        <view class="gd-kpis">
+          <view class="gd-kpi">
+            <text class="gd-kpi__k">当前库存</text>
+            <text class="gd-kpi__v serif-num {{negative ? 'gd-kpi__v--dgr' : low ? 'gd-kpi__v--ac' : ''}}">{{stockDisplay}}</text>
+          </view>
+          <view class="gd-kpi">
+            <text class="gd-kpi__k">参考进价 / 均价</text>
+            <text class="gd-kpi__v serif-num">{{avgCostText}}</text>
+          </view>
+          <view class="gd-kpi">
+            <text class="gd-kpi__k">最近售价</text>
+            <text class="gd-kpi__v serif-num">{{salePriceText}}</text>
+          </view>
+          <view class="gd-kpi">
+            <text class="gd-kpi__k">库存货值</text>
+            <text class="gd-kpi__v serif-num">{{stockValueText}}</text>
+          </view>
+        </view>
+      </view>
+
+      <!-- 档案编辑与管理 -->
+      <view class="card pad gd-sec">
+        <view class="gd-sec__h">
+          <text class="gd-sec__t serif">档案参数与管理</text>
+          <text class="gd-sec__hint">修改后立即生效，不影响历史已结单据</text>
+        </view>
+
+        <view class="gd-form">
+          <view wx:if="{{!costHidden}}" class="gd-field">
+            <text class="gd-field__lbl">最近进价（元 / {{baseUnit}}）</text>
+            <input
+              class="gd-field__in"
+              type="digit"
+              value="{{purchaseInput}}"
+              placeholder="待补"
+              bindinput="onPurchaseInput"
+            />
+          </view>
+
+          <view class="gd-field">
+            <text class="gd-field__lbl">最近售价（元 / {{baseUnit}}）</text>
+            <input
+              class="gd-field__in"
+              type="digit"
+              value="{{saleInput}}"
+              placeholder="未设"
+              bindinput="onSaleInput"
+            />
+          </view>
+
+          <view class="gd-field">
+            <text class="gd-field__lbl">低库存预警线（{{baseUnit}}）</text>
+            <input
+              class="gd-field__in"
+              type="digit"
+              value="{{lowStockInput}}"
+              placeholder="默认 5"
+              bindinput="onLowStockInput"
+            />
+          </view>
+        </view>
+
+        <button class="cta gd-save-btn" loading="{{saving}}" disabled="{{saving}}" bindtap="onSaveParams">
+          保存参数
+        </button>
+
+        <view class="gd-actions">
+          <button class="sub" bindtap="onToggleBatch">
+            {{trackBatch ? '切回移动平均' : '开启按批次管理'}}
+          </button>
+          <button class="sub sub--ac" bindtap="onOpenMerge">
+            合并重复商品
+          </button>
+        </view>
+
+        <view wx:if="{{aliases.length > 0 || unitConversions.length > 0}}" class="gd-extra">
+          <view wx:if="{{aliases.length > 0}}" class="gd-extra__row">
+            <text class="gd-extra__k">语音别名</text>
+            <view class="gd-tags">
+              <text wx:for="{{aliases}}" wx:key="*this" class="gd-tag">{{item}}</text>
+            </view>
+          </view>
+          <view wx:if="{{unitConversions.length > 0}}" class="gd-extra__row">
+            <text class="gd-extra__k">单位换算</text>
+            <view class="gd-tags">
+              <text wx:for="{{unitConversions}}" wx:key="*this" class="gd-tag">{{item}}</text>
+            </view>
+          </view>
+        </view>
+      </view>
+
+      <!-- 在库批次（开启分批或已有批记录时显示） -->
+      <view wx:if="{{trackBatch || batches.length > 0}}" class="card">
+        <view class="gd-card-h">
+          <text class="gd-sec__t serif">在库批次</text>
+          <text class="gd-sec__hint">{{batches.length}} 批</text>
+        </view>
+        <view wx:if="{{batches.length === 0}}" class="empty">暂无在库批次</view>
+        <view wx:else>
+          <view wx:for="{{batches}}" wx:key="batchId" class="gd-batch">
+            <view class="gd-batch__l">
+              <text class="gd-batch__t">{{item.titleText}}</text>
+              <text class="gd-batch__s">{{item.qtyText}} · 成本 {{item.unitCostText}}</text>
+              <text wx:if="{{item.expiryDate}}" class="gd-batch__e">到期 {{item.expiryDate}}</text>
+            </view>
+            <text class="gd-batch__tag {{item.isVirtual ? 'gd-batch__tag--virtual' : item.isOpen ? 'gd-batch__tag--open' : ''}}">
+              {{item.statusText}}
+            </text>
+          </view>
+        </view>
+      </view>
+
+      <!-- 出入库流水台账 -->
+      <view class="card">
+        <view class="gd-card-h">
+          <text class="gd-sec__t serif">出入库流水</text>
+          <text class="gd-sec__hint">最近 {{movements.length}} 笔</text>
+        </view>
+        <view wx:if="{{movements.length === 0}}" class="empty">暂无出入库流水</view>
+        <block wx:else>
+          <view class="gd-mv-head">
+            <text>日期</text>
+            <text>业务</text>
+            <text class="gd-mv-r">变动</text>
+            <text class="gd-mv-r">单号 / 成本</text>
+          </view>
+          <view wx:for="{{movements}}" wx:key="key" class="gd-mv-row">
+            <text class="gd-mv-date">{{item.dateText}}</text>
+            <text class="gd-mv-type">{{item.reasonText}}</text>
+            <text class="gd-mv-qty gd-mv-r serif-num {{item.isIn ? 'gd-mv-qty--in' : 'gd-mv-qty--out'}}">{{item.qtyText}}</text>
+            <text class="gd-mv-sub gd-mv-r">{{item.subText}}</text>
+          </view>
+        </block>
+      </view>
+    </block>
+  </view>
+
+  <action-sheet
+    visible="{{sheet.visible}}"
+    title="{{sheet.title}}"
+    subtitle="{{sheet.subtitle}}"
+    actions="{{sheet.actions}}"
+    bind:select="onSheetSelect"
+    bind:close="onSheetClose"
+  />
+</view>

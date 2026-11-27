@@ -12,7 +12,7 @@
 from __future__ import annotations
 
 import uuid
-from decimal import Decimal
+from decimal import ROUND_HALF_UP, Decimal
 
 from fastapi import APIRouter
 from fastapi.responses import JSONResponse
@@ -23,7 +23,9 @@ from app.api.v1._shared import WRITE_ROLES, assert_writable, can_view_cost, ids_
 from app.common.envelope import ok
 from app.common.errors import AppError
 from app.deps import AuthContextDep, TenantSessionDep
-from app.models.catalog import Product
+from app.domain.report_service import ReportService, _qty_text
+from app.models.catalog import Product, ProductAlias, UnitConversion
+from app.models.inventory import Inventory
 from app.models.ops import Gap
 from app.services.gaps import resolve_gaps
 from app.services.product_merge import merge_products
@@ -186,6 +188,120 @@ def resolve_unified_gap(
     row.resolved_at = now_utc()
     session.flush()
     return JSONResponse(status_code=200, content=ok({"gap_id": str(row.gap_id), "status": "resolved"}))
+
+
+@router.get("/{product_id}", summary="商品详情（库存、别名、单位换算与出入库流水）")
+def get_product_detail(
+    product_id: uuid.UUID,
+    context: AuthContextDep,
+    session: TenantSessionDep,
+) -> JSONResponse:
+    """只读返回单品档案、当前门店库存、货值、别名、单位换算及最近 30 条出入库流水。"""
+    ids = ids_of(context)
+    show_cost = can_view_cost(session, context)
+
+    product = session.execute(
+        select(Product)
+        .where(Product.tenant_id == ids.tenant_id, Product.product_id == product_id)
+        .limit(1)
+    ).scalar_one_or_none()
+    if product is None:
+        raise AppError("E_VALIDATION", message="商品不存在或已删除")
+
+    inventory = session.execute(
+        select(Inventory)
+        .where(
+            Inventory.tenant_id == ids.tenant_id,
+            Inventory.store_id == ids.store_id,
+            Inventory.product_id == product_id,
+        )
+        .limit(1)
+    ).scalar_one_or_none()
+
+    qty_base = inventory.qty_base if inventory is not None else Decimal("0")
+    store_avg_cost_fen: int | None = None
+    if inventory is not None and inventory.avg_cost_fen is not None:
+        store_avg_cost_fen = int(inventory.avg_cost_fen)
+    elif product.avg_cost_fen is not None:
+        store_avg_cost_fen = int(product.avg_cost_fen)
+
+    effective_cost_fen: int | None = None
+    if show_cost:
+        effective_cost_fen = (
+            store_avg_cost_fen
+            if store_avg_cost_fen is not None
+            else (
+                int(product.last_purchase_price_fen)
+                if product.last_purchase_price_fen is not None
+                else None
+            )
+        )
+
+    stock_value_fen: int | None = None
+    if show_cost and effective_cost_fen is not None and effective_cost_fen > 0:
+        stock_value_fen = int(
+            (qty_base * Decimal(effective_cost_fen)).quantize(Decimal("1"), rounding=ROUND_HALF_UP)
+        )
+
+    alias_rows = session.execute(
+        select(ProductAlias.alias_text)
+        .where(ProductAlias.tenant_id == ids.tenant_id, ProductAlias.product_id == product_id)
+    ).scalars()
+    aliases = sorted({str(text) for text in alias_rows if text})
+
+    conv_rows = session.execute(
+        select(UnitConversion)
+        .where(
+            UnitConversion.tenant_id == ids.tenant_id,
+            UnitConversion.product_id == product_id,
+            UnitConversion.status == "approved",
+        )
+        .order_by(UnitConversion.from_unit.asc())
+    ).scalars()
+    unit_conversions = [
+        {
+            "from_unit": str(conv.from_unit),
+            "to_unit": str(conv.to_unit),
+            "ratio": _qty_text(conv.ratio),
+        }
+        for conv in conv_rows
+    ]
+
+    raw_movements = ReportService(session).stock_movement(
+        tenant_id=ids.tenant_id,
+        store_id=ids.store_id,
+        product_id=product_id,
+        limit=30,
+    )
+    movements: list[dict[str, object]] = []
+    for move in raw_movements:
+        item = move.as_dict()
+        if not show_cost:
+            item["unit_cost_fen"] = None
+        movements.append(item)
+
+    return JSONResponse(
+        status_code=200,
+        content=ok(
+            {
+                "product": _as_dict(product, show_cost=show_cost),
+                "inventory": {
+                    "qty_base": str(qty_base),
+                    "qty_display": f"{_qty_text(qty_base)}{product.base_unit}",
+                    "negative_flag": bool(inventory.negative_flag)
+                    if inventory is not None
+                    else (qty_base < 0),
+                    "avg_cost_fen": store_avg_cost_fen if show_cost else None,
+                    "stock_value_fen": stock_value_fen,
+                },
+                "aliases": aliases,
+                "unit_conversions": unit_conversions,
+                "movements": movements,
+                "cost_hidden": not show_cost,
+                "readonly": True,
+            }
+        ),
+    )
 
 
 @router.patch("/{product_id}", summary="补商品价格 / 批次开关 / 负库存覆盖")

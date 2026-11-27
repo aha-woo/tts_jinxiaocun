@@ -1,33 +1,58 @@
-<!-- 货品：手机端卡片列表；电脑版微信大屏（>=768px）桌面工具栏 + 4 列库存表格 -->
+<!-- 货品：支持「传统多列表格 / 高密度卡片」一键切换 + 汇总条 + 独立货品详情页 -->
 <view class="page {{wide ? 'page--wide' : ''}}">
   <view class="page__gap">
     <view class="goods-bar">
-      <button class="cta cta--ink goods-bar__cta" bindtap="onStartCount">
-        <view class="ico ico--btn ico--count-white"></view>
-        <text>开始盘点 · 边说边数</text>
-      </button>
+      <!-- 第一行：搜索 + 表格/卡片视图切换 -->
+      <view class="goods-bar__top">
+        <view class="goods-search">
+          <view class="ico ico--sm ico--search-mu"></view>
+          <input
+            class="goods-search__in"
+            value="{{keyword}}"
+            placeholder="搜索商品名 / 进价状态"
+            confirm-type="search"
+            bindinput="onSearchInput"
+          />
+          <text wx:if="{{keyword}}" class="goods-search__clr" bindtap="onClearSearch">清空</text>
+        </view>
 
-      <view class="goods-search">
-        <view class="ico ico--sm ico--search-mu"></view>
-        <input
-          class="goods-search__in"
-          value="{{keyword}}"
-          placeholder="搜索商品名 / 进价状态"
-          confirm-type="search"
-          bindinput="onSearchInput"
-        />
-        <text wx:if="{{keyword}}" class="goods-search__clr" bindtap="onClearSearch">清空</text>
+        <view class="view-switch">
+          <view
+            class="view-switch__btn {{viewMode === 'table' ? 'view-switch__btn--on' : ''}}"
+            data-mode="table"
+            bindtap="onSwitchView"
+          >
+            <view class="ico ico--sm {{viewMode === 'table' ? 'ico--table-ink' : 'ico--table-mu'}}"></view>
+            <text>表格</text>
+          </view>
+          <view
+            class="view-switch__btn {{viewMode === 'card' ? 'view-switch__btn--on' : ''}}"
+            data-mode="card"
+            bindtap="onSwitchView"
+          >
+            <view class="ico ico--sm {{viewMode === 'card' ? 'ico--card-ink' : 'ico--card-mu'}}"></view>
+            <text>卡片</text>
+          </view>
+        </view>
       </view>
 
-      <view class="chips">
-        <view class="chip {{filter === 'all' ? 'chip--on' : ''}}" data-filter="all" bindtap="onFilter">
-          全部 {{total}}
+      <!-- 第二行：筛选胶囊 + 紧凑盘点按钮 -->
+      <view class="goods-bar__sub">
+        <view class="chips">
+          <view class="chip {{filter === 'all' ? 'chip--on' : ''}}" data-filter="all" bindtap="onFilter">
+            全部 {{total}}
+          </view>
+          <view wx:if="{{negativeCount > 0}}" class="chip {{filter === 'negative' ? 'chip--on' : ''}}" data-filter="negative" bindtap="onFilter">
+            负库存 {{negativeCount}}
+          </view>
+          <view class="chip {{filter === 'low' ? 'chip--on' : ''}}" data-filter="low" bindtap="onFilter">快没了</view>
+          <view wx:if="{{!costHidden}}" class="chip {{filter === 'nocost' ? 'chip--on' : ''}}" data-filter="nocost" bindtap="onFilter">缺进价</view>
         </view>
-        <view wx:if="{{negativeCount > 0}}" class="chip {{filter === 'negative' ? 'chip--on' : ''}}" data-filter="negative" bindtap="onFilter">
-          负库存 {{negativeCount}}
-        </view>
-        <view class="chip {{filter === 'low' ? 'chip--on' : ''}}" data-filter="low" bindtap="onFilter">快没了</view>
-        <view wx:if="{{!costHidden}}" class="chip {{filter === 'nocost' ? 'chip--on' : ''}}" data-filter="nocost" bindtap="onFilter">缺进价</view>
+
+        <button class="goods-count-btn" bindtap="onStartCount">
+          <view class="ico ico--sm ico--count-white"></view>
+          <text>盘点</text>
+        </button>
       </view>
     </view>
 
@@ -43,53 +68,140 @@
       <text>{{errorText}}</text>
     </view>
 
-    <view class="card">
-      <!-- 桌面端 4 列表头（手机端隐藏） -->
-      <view wx:if="{{!loading && shown.length > 0}}" class="dtbl-head gtbl__head">
-        <text>货品与标签</text>
-        <text>参考进价 / 成本</text>
-        <text class="gtbl__h-right">当前库存</text>
-        <text class="gtbl__h-right">操作</text>
+    <!-- 库存汇总条 -->
+    <view wx:if="{{!loading && rows.length > 0}}" class="card gsum">
+      <view class="gsum__item">
+        <text class="gsum__k">当前品规</text>
+        <text class="gsum__v serif-num">{{shownCount}} 件</text>
       </view>
-
-      <view wx:if="{{loading}}" class="empty">读取中…</view>
-      <view wx:elif="{{shown.length === 0}}" class="empty">{{keyword ? '没有搜到匹配的货品' : '这里还没有货'}}</view>
-      <view
-        wx:for="{{shown}}"
-        wx:key="id"
-        class="gi"
-        data-id="{{item.id}}"
-        bindtap="onOpen"
-      >
-        <view class="gi__md">
-          <view class="gi__top">
-            <text class="gi__name">{{item.name}}</text>
-            <text wx:if="{{item.trackBatch}}" class="gi__pill">分批</text>
-            <text wx:if="{{item.negative}}" class="gi__pill gi__pill--neg">负库存</text>
-            <text wx:elif="{{item.low}}" class="gi__pill">低库存</text>
-          </view>
-          <text class="gi__sub gi__sub--mobile {{item.missingCost ? 'gi__sub--warn' : ''}}">{{item.costText}}</text>
-        </view>
-        <view class="gi__cost-col">
-          <text class="gi__cost-txt {{item.missingCost ? 'gi__sub--warn' : ''}}">{{item.costText}}</text>
-        </view>
-        <view class="gi__rt {{item.negative ? 'gi__rt--neg' : item.low ? 'gi__rt--low' : ''}}">
-          <text>{{item.stock}}</text>
-          <text class="gi__unit">{{item.unit}}</text>
-        </view>
-        <view class="gi__act">
-          <text class="gi__act-link">分批 / 合并 ›</text>
-        </view>
+      <view class="gsum__item">
+        <text class="gsum__k">负/低库存</text>
+        <text class="gsum__v serif-num {{shownIssueCount > 0 ? 'gsum__v--warn' : ''}}">{{shownIssueCount}} 件</text>
+      </view>
+      <view wx:if="{{!costHidden}}" class="gsum__item">
+        <text class="gsum__k">库存总货值</text>
+        <text class="gsum__v serif-num gsum__v--ac">{{totalValueText}}</text>
+      </view>
+      <view wx:else class="gsum__item">
+        <text class="gsum__k">分批管理</text>
+        <text class="gsum__v serif-num">{{shownBatchCount}} 件</text>
       </view>
     </view>
-  </view>
 
-  <action-sheet
-    visible="{{sheet.visible}}"
-    title="{{sheet.title}}"
-    subtitle="{{sheet.subtitle}}"
-    actions="{{sheet.actions}}"
-    bind:select="onSheetSelect"
-    bind:close="onSheetClose"
-  />
+    <!-- 主列表卡 -->
+    <view class="card">
+      <view wx:if="{{loading}}" class="empty">读取中…</view>
+      <view wx:elif="{{shown.length === 0}}" class="empty">{{keyword ? '没有搜到匹配的货品' : '这里还没有货'}}</view>
+
+      <!-- 模式 A：传统进销存多列表格 -->
+      <block wx:elif="{{viewMode === 'table'}}">
+        <scroll-view scroll-x="true" enhanced="true" show-scrollbar="false" class="gtbl-wrap">
+          <view class="gtbl {{costHidden ? 'gtbl--nocost' : ''}}">
+            <!-- 表头 -->
+            <view class="gtbl__head">
+              <view class="gtbl__th gtbl__sticky gtbl__sticky--head {{sortKey === 'name' ? 'gtbl__th--on' : ''}}" data-key="name" bindtap="onSort">
+                <text>货品</text>
+                <text wx:if="{{sortKey === 'name'}}" class="gtbl__sort">{{sortDir === 'asc' ? '↑' : '↓'}}</text>
+              </view>
+              <view class="gtbl__th gtbl__th--right {{sortKey === 'stock' ? 'gtbl__th--on' : ''}}" data-key="stock" bindtap="onSort">
+                <text>库存</text>
+                <text wx:if="{{sortKey === 'stock'}}" class="gtbl__sort">{{sortDir === 'asc' ? '↑' : '↓'}}</text>
+              </view>
+              <view wx:if="{{!costHidden}}" class="gtbl__th gtbl__th--right {{sortKey === 'cost' ? 'gtbl__th--on' : ''}}" data-key="cost" bindtap="onSort">
+                <text>均价/进价</text>
+                <text wx:if="{{sortKey === 'cost'}}" class="gtbl__sort">{{sortDir === 'asc' ? '↑' : '↓'}}</text>
+              </view>
+              <view class="gtbl__th gtbl__th--right {{sortKey === 'sale' ? 'gtbl__th--on' : ''}}" data-key="sale" bindtap="onSort">
+                <text>售价</text>
+                <text wx:if="{{sortKey === 'sale'}}" class="gtbl__sort">{{sortDir === 'asc' ? '↑' : '↓'}}</text>
+              </view>
+              <view wx:if="{{!costHidden}}" class="gtbl__th gtbl__th--right {{sortKey === 'value' ? 'gtbl__th--on' : ''}}" data-key="value" bindtap="onSort">
+                <text>库存货值</text>
+                <text wx:if="{{sortKey === 'value'}}" class="gtbl__sort">{{sortDir === 'asc' ? '↑' : '↓'}}</text>
+              </view>
+              <view class="gtbl__th gtbl__th--center">
+                <text>核算</text>
+              </view>
+            </view>
+
+            <!-- 表格数据行 -->
+            <view
+              wx:for="{{shown}}"
+              wx:key="id"
+              class="gtbl__row"
+              data-id="{{item.id}}"
+              bindtap="onOpen"
+            >
+              <view class="gtbl__td gtbl__sticky gtbl__name-cell">
+                <text class="gtbl__name">{{item.name}}</text>
+                <view class="gtbl__tags" wx:if="{{item.negative || item.low || item.trackBatch}}">
+                  <text wx:if="{{item.negative}}" class="gtbl__tag gtbl__tag--neg">负</text>
+                  <text wx:elif="{{item.low}}" class="gtbl__tag gtbl__tag--low">低</text>
+                  <text wx:if="{{item.trackBatch}}" class="gtbl__tag gtbl__tag--batch">批</text>
+                </view>
+              </view>
+
+              <view class="gtbl__td gtbl__td--right gtbl__stock {{item.negative ? 'gi__rt--neg' : item.low ? 'gi__rt--low' : ''}}">
+                <text class="serif-num">{{item.stock}}</text>
+                <text class="gtbl__unit">{{item.unit}}</text>
+              </view>
+
+              <view wx:if="{{!costHidden}}" class="gtbl__td gtbl__td--right gtbl__num {{item.missingCost ? 'gi__sub--warn' : ''}}">
+                <text>{{item.costValText}}</text>
+              </view>
+
+              <view class="gtbl__td gtbl__td--right gtbl__num">
+                <text>{{item.saleValText}}</text>
+              </view>
+
+              <view wx:if="{{!costHidden}}" class="gtbl__td gtbl__td--right gtbl__num gtbl__val">
+                <text>{{item.valueText}}</text>
+              </view>
+
+              <view class="gtbl__td gtbl__td--center">
+                <text class="gtbl__mode {{item.trackBatch ? 'gtbl__mode--batch' : ''}}">{{item.batchModeText}}</text>
+              </view>
+            </view>
+          </view>
+        </scroll-view>
+        <view class="gtbl__foot">
+          <text class="gtbl__foot-mobile">左右滑动查看更多列 · 点任意货品进详情改价与查流水</text>
+          <text class="gtbl__foot-wide">点击表头可排序 · 点任意货品查看详细档案、批次与流水</text>
+        </view>
+      </block>
+
+      <!-- 模式 B：高密度卡片列表 -->
+      <block wx:else>
+        <view
+          wx:for="{{shown}}"
+          wx:key="id"
+          class="gi"
+          data-id="{{item.id}}"
+          bindtap="onOpen"
+        >
+          <view class="gi__md">
+            <view class="gi__top">
+              <text class="gi__name">{{item.name}}</text>
+              <text wx:if="{{item.trackBatch}}" class="gi__pill">分批</text>
+              <text wx:if="{{item.negative}}" class="gi__pill gi__pill--neg">负库存</text>
+              <text wx:elif="{{item.low}}" class="gi__pill">低库存</text>
+            </view>
+            <view class="gi__meta-row">
+              <text wx:if="{{!costHidden}}" class="gi__meta {{item.missingCost ? 'gi__sub--warn' : ''}}">进价 {{item.costValText}}</text>
+              <text class="gi__meta">售价 {{item.saleValText}}</text>
+              <text wx:if="{{!costHidden}}" class="gi__meta">货值 {{item.valueText}}</text>
+              <text class="gi__meta">{{item.batchModeText}}</text>
+            </view>
+          </view>
+          <view class="gi__rt-wrap">
+            <view class="gi__rt {{item.negative ? 'gi__rt--neg' : item.low ? 'gi__rt--low' : ''}}">
+              <text>{{item.stock}}</text>
+              <text class="gi__unit">{{item.unit}}</text>
+            </view>
+            <text class="gi__act-link">详情 ›</text>
+          </view>
+        </view>
+      </block>
+    </view>
+  </view>
 </view>

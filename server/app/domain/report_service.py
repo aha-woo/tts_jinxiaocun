@@ -58,6 +58,7 @@ class StockBrief:
     avg_cost_fen: int | None = None
     last_purchase_price_fen: int | None = None
     last_sale_price_fen: int | None = None
+    low_stock_qty: str | None = None
     status: str = "active"
 
     def as_dict(self) -> dict[str, Any]:
@@ -74,6 +75,7 @@ class StockBrief:
             "avg_cost_fen": self.avg_cost_fen,
             "last_purchase_price_fen": self.last_purchase_price_fen,
             "last_sale_price_fen": self.last_sale_price_fen,
+            "low_stock_qty": self.low_stock_qty,
             "status": self.status,
         }
 
@@ -88,6 +90,9 @@ class StockMovement:
     biz_date: str
     qty_base: str
     unit: str
+    reason: str = ""
+    unit_cost_fen: int | None = None
+    occurred_at: str = ""
 
     def as_dict(self) -> dict[str, Any]:
         """JSON 形态。"""
@@ -98,6 +103,9 @@ class StockMovement:
             "biz_date": self.biz_date,
             "qty_base": self.qty_base,
             "unit": self.unit,
+            "reason": self.reason,
+            "unit_cost_fen": self.unit_cost_fen,
+            "occurred_at": self.occurred_at,
         }
 
 
@@ -247,6 +255,9 @@ class ReportService:
                     last_sale_price_fen=int(product.last_sale_price_fen)
                     if product.last_sale_price_fen is not None
                     else None,
+                    low_stock_qty=str(product.low_stock_qty)
+                    if product.low_stock_qty is not None
+                    else None,
                     status=str(product.status),
                 )
             )
@@ -298,6 +309,9 @@ class ReportService:
                     last_sale_price_fen=int(product.last_sale_price_fen)
                     if product.last_sale_price_fen is not None
                     else None,
+                    low_stock_qty=str(product.low_stock_qty)
+                    if product.low_stock_qty is not None
+                    else None,
                     status=str(product.status),
                 )
             )
@@ -344,6 +358,11 @@ class ReportService:
                     else move.occurred_at.date().isoformat(),
                     qty_base=str(move.qty_base),
                     unit=str(product.base_unit),
+                    reason=str(move.reason),
+                    unit_cost_fen=int(move.unit_cost_fen)
+                    if move.unit_cost_fen is not None
+                    else None,
+                    occurred_at=move.occurred_at.isoformat() if move.occurred_at else "",
                 )
             )
         return rows

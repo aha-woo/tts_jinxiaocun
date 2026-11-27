@@ -1001,6 +1001,45 @@ export function listProductGaps(): Promise<{
   return callApi('/api/v1/products/gaps', { method: 'GET' });
 }
 
+export interface ProductMovementRow {
+  doc_id: string;
+  doc_no: string;
+  doc_type: string;
+  biz_date: string;
+  qty_base: string;
+  unit: string;
+  reason?: string;
+  unit_cost_fen?: number | null;
+  occurred_at?: string;
+}
+
+export interface ProductUnitConversionRow {
+  from_unit: string;
+  to_unit: string;
+  ratio: string;
+}
+
+export interface ProductDetailPayload {
+  product: ProductGap;
+  inventory: {
+    qty_base: string;
+    qty_display: string;
+    negative_flag: boolean;
+    avg_cost_fen: number | null;
+    stock_value_fen: number | null;
+  };
+  aliases: string[];
+  unit_conversions: ProductUnitConversionRow[];
+  movements: ProductMovementRow[];
+  cost_hidden: boolean;
+  readonly: boolean;
+}
+
+/** 单个商品详情（档案、门店库存、货值、别名、单位换算与出入库流水）。 */
+export function getProductDetail(productId: string): Promise<ProductDetailPayload> {
+  return callApi(`/api/v1/products/${productId}`, { method: 'GET' });
+}
+
 /** 补商品价格 / 批次开关 / 负库存覆盖。 */
 export function patchProductPrice(
   productId: string,

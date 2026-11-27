@@ -39,12 +39,13 @@ def query_stock(
     """按商品名模糊查库存；``low_only`` 只看低库存；按角色裁剪进价与成本。"""
     ids = ids_of(context)
     show_cost = can_view_cost(session, context)
+    safe_limit = min(max(1, limit), 500)
     service = ReportService(session)
     rows = (
-        service.low_stock(tenant_id=ids.tenant_id, store_id=ids.store_id, limit=limit)
+        service.low_stock(tenant_id=ids.tenant_id, store_id=ids.store_id, limit=safe_limit)
         if low_only
         else service.stock_of(
-            tenant_id=ids.tenant_id, store_id=ids.store_id, product_name=name, limit=limit
+            tenant_id=ids.tenant_id, store_id=ids.store_id, product_name=name, limit=safe_limit
         )
     )
     items: list[dict[str, object]] = []

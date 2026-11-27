@@ -1,0 +1,6 @@
+{
+  "navigationBarTitleText": "货品详情",
+  "usingComponents": {
+    "action-sheet": "/components/action-sheet/action-sheet"
+  }
+}

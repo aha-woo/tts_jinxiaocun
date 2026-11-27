@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import uuid
+from decimal import Decimal
 from typing import Iterator
 
 import pytest
@@ -10,7 +11,8 @@ from fastapi.testclient import TestClient
 
 from app.config import Settings
 from app.main import create_app
-from app.models.catalog import Product
+from app.models.catalog import Product, ProductAlias, UnitConversion
+from app.models.inventory import Inventory, InventoryMovement
 
 
 def _settings() -> Settings:
@@ -33,6 +35,8 @@ def shop() -> Iterator[dict[str, object]]:
         data = login.json()["data"]
         headers = {"Authorization": f"Bearer {data['jwt']}"}
         tenant_id = uuid.UUID(data["tenant_id"])
+        store_id = uuid.UUID(data["store_id"])
+        member_id = uuid.UUID(data["member_id"])
         cheap = uuid.uuid4()
         priced = uuid.uuid4()
         with database.session(bypass_scope=True) as session:
@@ -42,8 +46,51 @@ def shop() -> Iterator[dict[str, object]]:
                     tenant_id=tenant_id,
                     product_id=priced,
                     name="有价货",
-                    base_unit="件",
+                    spec="500ml",
+                    base_unit="瓶",
                     last_purchase_price_fen=800,
+                    last_sale_price_fen=1500,
+                    avg_cost_fen=800,
+                    low_stock_qty=Decimal("12"),
+                )
+            )
+            session.add(
+                Inventory(
+                    tenant_id=tenant_id,
+                    store_id=store_id,
+                    product_id=priced,
+                    qty_base=Decimal("24"),
+                    avg_cost_fen=800,
+                )
+            )
+            session.add(
+                ProductAlias(
+                    tenant_id=tenant_id,
+                    product_id=priced,
+                    member_id=None,
+                    alias_text="大瓶水",
+                    source="personal",
+                )
+            )
+            session.add(
+                UnitConversion(
+                    tenant_id=tenant_id,
+                    product_id=priced,
+                    from_unit="箱",
+                    to_unit="瓶",
+                    ratio=Decimal("24"),
+                    status="approved",
+                )
+            )
+            session.add(
+                InventoryMovement(
+                    tenant_id=tenant_id,
+                    store_id=store_id,
+                    product_id=priced,
+                    reason="purchase",
+                    qty_base=Decimal("24"),
+                    unit_cost_fen=800,
+                    created_by=member_id,
                 )
             )
         yield {
@@ -75,3 +122,29 @@ def test_patch_price_removes_from_gaps(shop: dict[str, object]) -> None:
     assert patched.json()["data"]["product"]["last_purchase_price_fen"] == 800
     resp = client.get("/api/v1/products/gaps", headers=shop["headers"])
     assert resp.json()["data"]["items"] == []
+
+
+def test_product_detail_and_stock_fields(shop: dict[str, object]) -> None:
+    client = shop["client"]
+    resp = client.get(f"/api/v1/products/{shop['priced']}", headers=shop["headers"])
+    assert resp.status_code == 200, resp.text
+    data = resp.json()["data"]
+    assert data["product"]["name"] == "有价货"
+    assert data["product"]["low_stock_qty"] == "12.0000"
+    assert data["inventory"]["qty_display"] == "24瓶"
+    assert data["inventory"]["stock_value_fen"] == 19200
+    assert data["aliases"] == ["大瓶水"]
+    assert data["unit_conversions"] == [{"from_unit": "箱", "to_unit": "瓶", "ratio": "24"}]
+    assert len(data["movements"]) == 1
+    assert data["movements"][0]["reason"] == "purchase"
+    assert data["movements"][0]["unit_cost_fen"] == 800
+
+    missing = client.get(f"/api/v1/products/{uuid.uuid4()}", headers=shop["headers"])
+    assert missing.status_code == 422
+    assert missing.json()["code"] != 0
+
+    stock = client.get("/api/v1/query/stock?limit=100", headers=shop["headers"])
+    assert stock.status_code == 200, stock.text
+    items = stock.json()["data"]["items"]
+    assert len(items) == 1
+    assert items[0]["low_stock_qty"] == "12.0000"

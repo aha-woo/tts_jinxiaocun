@@ -2,6 +2,7 @@
   "pages": [
     "pages/index/index",
     "pages/goods/index",
+    "pages/goods-detail/index",
     "pages/debts/index",
     "pages/mine/index",
     "pages/card/index",
